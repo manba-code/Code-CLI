@@ -1,0 +1,1925 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index b4ceb1d..90a2629 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -34,6 +34,7 @@ java -jar target/paicli-1.0-SNAPSHOT.jar wechat start   # 前台启动微信通
+ /wechat                   # 交互式 CLI 内扫码绑定并后台启动微信通道
+ mvn test -Pquick          # 常规回归
+ mvn test -Pphase16-smoke  # TUI 相关
++mvn test -Pagent-eval     # 真实 LLM 三组 A/B 质量评测；显式运行才产生 Token 费用
+ mvn test -Dtest=XxxTest -DskipTests=false   # 针对性
+ mvn test -DskipTests=false                  # 全量回归
+ /init                    # 生成精简项目级记忆 PAI.md；已有文件不覆盖，/init --force 可重写
+@@ -145,6 +146,19 @@ src/main/java/com/paicli/
+ - 三条路径都走 `executeTools()`，不手写 for-loop
+ - 默认最多 4 个并发，结果保持原始顺序
+ 
++### Multi-Agent 编排
++
++- `AgentOrchestrator` 的 WorkerPool 预热 2 个 Worker，按独立步骤压力扩容至 4 个；单步和并行路径都必须通过 `Lease` 独占租借，禁止绕过池直接复用 Worker。
++- Worker 完成整个步骤（包括 Reviewer 反馈修正）后才归还；`Lease.close()` 负责清理对话，`AgentOrchestrator.close()` 负责关闭池，CLI/TUI 调用方必须使用 try-with-resources。
++- Planner 应按“可独立验收的交付物”拆步，不把搜索、读取、修改、测试等 Worker 内部动作机械拆成串行步骤；计划解析允许从前后说明或 Markdown 代码块中提取一个完整 JSON 对象。
++- Worker 每次执行都在本地生成 `StepEvidence`，记录工具名、参数和结果摘要；`FILE_READ` 至少需要成功的 `read_file`，`FILE_WRITE` 至少需要成功的 `write_file` / `create_project`，`COMMAND` / `VERIFICATION` 至少需要 `execute_command` 的 exit code 0。证据不足时不得调用 Reviewer，而是占用同一份最多 2 次的修正预算重试 Worker。
++- Reviewer 必须同时检查原始步骤、Worker 总结和真实工具证据，不能仅凭 Worker 自述批准；一次非法审查协议会只重试 Reviewer，不重复执行 Worker，第二次仍非法则步骤 `FAILED`。
++- 只有 Reviewer 返回有效 JSON 且布尔字段 `approved=true`，步骤才进入 `COMPLETED` 并解锁下游。纯文本、非法 JSON、缺失/非布尔 `approved` 均视为审查协议失败。
++- 明确拒绝最多触发 2 次修正执行；持续拒绝为 `REVIEW_REJECTED`，Worker/Reviewer/协议异常为 `FAILED`，依赖未成功步骤为 `BLOCKED`。三类状态都不得解锁下游。
++- 并行步骤各自创建独立 Reviewer，避免 `conversationHistory` 竞争；动态 Worker 和 Reviewer 必须继承当前 external context 与 Skill 配置。
++- Planner/Reviewer 的 system prompt 不注入工具清单，只有 Worker 获得工具提示和实际 tool definitions；`execute_command` 按 Windows `cmd.exe`、Unix-like `bash` 选择 Shell。
++- Multi-Agent 质量结论必须来自 `agent-eval` 的客观隐藏测试，不得用 Stub 单测或单次模型输出宣称优于单 Agent；评测默认不进入 CI。
++
+ ### Web + Browser
+ 
+ - 每轮 system prompt 会注入当前日期/时区，用于相对日期理解；联网搜索不再由 prompt 的 Freshness Policy 强制，是否调用 `web_search` 交给模型基于工具 schema 和用户目标自主决定。
+@@ -204,7 +218,8 @@ src/main/java/com/paicli/
+ | 代码搜索工具 | `mvn test -Dtest=ToolRegistryTest,CodeSearchGoldenSetTest,ApprovalPolicyTest` |
+ | 命令解析 | `mvn test -Dtest=CliCommandParserTest,PlanReviewInputParserTest,MainInputNormalizationTest` |
+ | DAG/Plan | `mvn test -Dtest=ExecutionPlanTest` |
+-| Multi-Agent | `mvn test -Dtest=AgentRoleTest,AgentMessageTest,AgentOrchestratorTest` |
++| Multi-Agent | `mvn test -Dtest=WorkerPoolTest,AgentRoleTest,AgentMessageTest,AgentOrchestratorTest,SubAgentTest,StepEvidencePolicyTest` |
++| Agent A/B 质量 | `mvn test -Pagent-eval`（真实 API、非确定性、有费用） |
+ | TUI/终端 | `mvn test -Pphase16-smoke` |
+ | RAG | `mvn test -Dtest=CodeChunkerTest,CodeAnalyzerTest,VectorStoreTest,CodeIndexTest` |
+ | 常规回归 | `mvn test -Pquick` |
+diff --git a/README.md b/README.md
+index c5ac2b5..255cdc3 100644
+--- a/README.md
++++ b/README.md
+@@ -15,6 +15,9 @@ mvn test -Pphase16-smoke
+ # 常规快速回归，跳过外部进程 / 网络超时 / 命令超时类慢测试
+ mvn test -Pquick
+ 
++# 真实 LLM Agent A/B 质量评测（会产生网络请求和 Token 费用，默认不运行）
++mvn test -Pagent-eval
++
+ # 代码搜索 deterministic golden set
+ mvn test -Dtest=CodeSearchGoldenSetTest -DskipTests=false
+ 
+@@ -22,6 +25,10 @@ mvn test -Dtest=CodeSearchGoldenSetTest -DskipTests=false
+ mvn test -DskipTests=false
+ ```
+ 
++`agent-eval` 会在隔离工作区中用隐藏测试比较 ReAct、Plan-and-Execute 和完整 Multi-Agent，
++生成成功率、调用次数、Token、耗时与 Reviewer 误放行/误拒报告。配置项和报告说明见
++[`docs/agent-quality-ab-evaluation.md`](docs/agent-quality-ab-evaluation.md)。
++
+ ## 演进历程
+ 
+ ### 第一期：ReAct Agent CLI
+@@ -61,7 +68,14 @@ mvn test -DskipTests=false
+ - 三个角色：规划者（Planner）、执行者（Worker）、检查者（Reviewer）
+ - 主从架构：编排器（Orchestrator）协调子代理（SubAgent）
+ - 规划者拆解任务 -> 执行者执行 -> 检查者审查质量
+-- 审查未通过时带反馈重试（最多 2 次），冲突自动解决
++- Planner 按可独立验收的交付物拆步，计划解析可容忍 JSON 代码块前后的简短说明；工具搜索、修改和测试由 Worker 在步骤内完成
++- Worker 池预热 2 个实例，按独立步骤压力扩容至 4 个；Lease 保证实例独占、任务后清理会话并归还
++- Worker 每次执行会生成局部 `StepEvidence`；读取、写入、命令/验证步骤必须分别提供成功的工具调用证据，证据不足不会进入 Reviewer
++- Reviewer 同时接收原始要求、Worker 总结和工具证据，不能只凭“已完成”或 `BUILD SUCCESS` 等文字自述放行
++- Reviewer 返回非法协议时只重试一次审查，不重复执行 Worker；证据补做与业务拒绝修正共享最多 2 次 Worker 重试预算
++- 审查明确不通过时携带反馈最多修正 2 次；只有有效 JSON `approved: true` 才完成步骤
++- 持续拒绝标记 `REVIEW_REJECTED`，执行/审查异常标记 `FAILED`，依赖后继标记 `BLOCKED`
++- 只有 Worker 接收工具提示与 tool definitions；`execute_command` 会按 Windows / Unix-like 平台选择对应 Shell
+ - 新增 `/team` CLI 命令，进入多 Agent 协作模式
+ 
+ ### 第六期：Human-in-the-Loop + 审批流
+@@ -306,7 +320,10 @@ Tips for getting started:
+ 
+ - 👥 多 Agent 协作（规划者 + 执行者 + 检查者）
+ - 🎯 主从架构编排器自动分配任务
+-- 🔍 检查者审查质量，未通过自动重试
++- 🧵 Worker 池预热 2 个并按需扩容到 4 个，Lease 保证同一实例不会被并发占用
++- 🧾 Worker 为读取、写入、命令和验证步骤记录真实工具证据；证据不足时先补做，不提交审查
++- 🔎 Reviewer 基于原始步骤、Worker 总结和工具证据判定，非法审查协议只重试 Reviewer 一次
++- 🔍 检查者严格审查质量，明确拒绝后最多修正 2 次；未通过步骤不会解锁下游
+ - 🛠️ 执行者共享工具集，支持文件操作与代码检索
+ 
+ ### 第六期
+diff --git a/docs/agents-reference.md b/docs/agents-reference.md
+index b64134e..5e90d11 100644
+--- a/docs/agents-reference.md
++++ b/docs/agents-reference.md
+@@ -112,8 +112,20 @@ scheme 白名单(http/https) / 主机黑名单(localhost/loopback/link-local/sit
+ 
+ ### Multi-Agent
+ 
+-- 三角色：Planner / Worker(默认 2 个) / Reviewer
+-- 流程：规划 → 按依赖分配 Worker → Reviewer 审查 → 未通过重试(最多 2 次)
++- 三角色：Planner / Worker / Reviewer。WorkerPool 预热 2 个实例，并按同一依赖批次的压力扩容至 4 个。
++- 单步和并行步骤都通过 `WorkerPool.Lease` 独占 Worker；步骤结束时先清理对话再归还，Orchestrator 关闭时回收池。
++- Planner 按可独立验收的交付物拆解任务，不把搜索、读取、修改、测试等 Worker 内部动作拆成流水账步骤；计划入口可从 Markdown 代码块或前后说明中提取一个完整 JSON 对象。
++- 流程：规划 → 按依赖分配 Worker → 校验 Worker 工具证据 → Reviewer 基于证据审查 → 明确拒绝时携带反馈修正（最多 2 次）。
++- `SubAgent.executeWithEvidence` 为单次 Worker 执行生成局部 `StepEvidence`，不会借助共享全局监听器，也不会泄漏到下一个 Worker 执行。证据记录工具名、截断后的参数和结果，Reviewer 输入总预算为 16 KB。
++- 最低证据规则：`FILE_READ` 需要成功 `read_file`；`FILE_WRITE` 需要成功 `write_file` 或 `create_project`；`COMMAND` / `VERIFICATION` 需要 `execute_command` 返回 exit code 0；`ANALYSIS` 允许纯文本结果。
++- 证据不足时 Orchestrator 不调用 Reviewer，而是携带缺失项反馈重试同一 Worker；证据重试和 Reviewer 明确拒绝后的修正共享最多 2 次 Worker 重试预算。
++- Reviewer 收到原始步骤、Worker 总结和实际工具证据，不得仅凭 Worker 自述、意图表达或没有测试数量的 `BUILD SUCCESS` 批准。首次非法 JSON 协议只重试 Reviewer，不重新执行 Worker；第二次仍非法则 `FAILED`。
++- 只有有效 JSON 中布尔字段 `approved=true` 才进入 `COMPLETED`；持续拒绝为 `REVIEW_REJECTED`，执行/审查/协议异常为 `FAILED`，依赖未成功的步骤终结为 `BLOCKED`。
++- `FAILED` / `REVIEW_REJECTED` / `BLOCKED` 均不解锁下游；独立分支继续执行。
++- 并行步骤使用独立 Reviewer 上下文；动态创建的 Worker/Reviewer 继承当前 external context 和 Skill 配置。
++- 只有 Worker 的 system prompt 和 LLM 请求启用工具；Planner/Reviewer 均不注入工具清单。`execute_command` 在 Windows 使用 `cmd.exe`，在 Unix-like 系统使用 `bash`。
++- 当前 Multi-Agent 各角色仍共享同一个一次性消费的 `SkillContextBuffer`；配置传播不等于消费隔离，并行角色间的 Skill 正文归属仍是已知边界。
++- `agent-eval` Profile 在隔离工作区中对比 ReAct、Plan-and-Execute 和完整 Multi-Agent；运行完成后才注入隐藏测试，并同时检查文件变更白名单。它属于真实 LLM 非确定性评测，默认不进入 quick/CI，详细说明见 `docs/agent-quality-ab-evaluation.md`。
+ - SubAgent IOException 返回 ERROR 类型
+ - 所有子代理共享 ToolRegistry 和 MemoryManager
+ 
+@@ -240,10 +252,10 @@ ReAct 主循环 / 对话历史 / 工具调用与结果回灌
+ 规划后执行 / 计划审阅 / DAG 任务执行 / 并行批次 / 失败重规划
+ 
+ ### AgentOrchestrator.java
+-Multi-Agent 编排器 / 三角色管理 / 按依赖分配 / 审查重试
++Multi-Agent 编排器 / 三角色管理 / WorkerPool 动态扩容与 Lease 生命周期 / 按依赖分配 / StepEvidence 门槛 / 严格审查与阻塞传播
+ 
+ ### SubAgent.java
+-可配置角色子代理 / 独立对话历史 / Worker 用工具、Planner/Reviewer 不用
++可配置角色子代理 / 独立对话历史 / Worker 用工具并生成局部执行证据 / Planner、Reviewer 不用工具
+ 
+ ### Planner.java
+ LLM 生成计划 JSON / 简单任务最小计划 / 重编号 task_1..N / 依赖计算
+diff --git a/src/main/java/com/paicli/agent/Agent.java b/src/main/java/com/paicli/agent/Agent.java
+index 5f69697..281f118 100644
+--- a/src/main/java/com/paicli/agent/Agent.java
++++ b/src/main/java/com/paicli/agent/Agent.java
+@@ -62,15 +62,23 @@ public class Agent {
+     }
+ 
+     public Agent(LlmClient llmClient, ToolRegistry toolRegistry) {
++        this(llmClient, toolRegistry, null);
++    }
++
++    /**
++     * 使用调用方提供的 MemoryManager 构造 Agent。
++     * 主要用于需要隔离长期记忆存储的运行环境，例如质量评测和嵌入式会话。
++     */
++    public Agent(LlmClient llmClient, ToolRegistry toolRegistry, MemoryManager memoryManager) {
+         this.llmClient = llmClient;
+         this.toolRegistry = toolRegistry;
+         this.conversationHistory = new ArrayList<>();
+-        this.memoryManager = new MemoryManager(llmClient);
++        this.memoryManager = memoryManager != null ? memoryManager : new MemoryManager(llmClient);
+         this.historyCompactor = new ConversationHistoryCompactor(llmClient);
+-        this.toolRegistry.setContextProfile(memoryManager.getContextProfile());
++        this.toolRegistry.setContextProfile(this.memoryManager.getContextProfile());
+         this.toolRegistry.setCurrentModel(llmClient.getProviderName(), llmClient.getModelName());
+         this.memoryManager.setProjectPath(this.toolRegistry.getProjectPath());
+-        this.toolRegistry.setScopedMemorySaver(memoryManager::storeFact);
++        this.toolRegistry.setScopedMemorySaver(this.memoryManager::storeFact);
+         conversationHistory.add(LlmClient.Message.system(buildSystemPrompt("")));
+     }
+ 
+@@ -86,14 +94,26 @@ public class Agent {
+         this.externalContextSupplier = externalContextSupplier == null ? () -> "" : externalContextSupplier;
+     }
+ 
++    public Supplier<String> getExternalContextSupplier() {
++        return externalContextSupplier;
++    }
++
+     public void setSkillRegistry(SkillRegistry skillRegistry) {
+         this.skillRegistry = skillRegistry;
+     }
+ 
++    public SkillRegistry getSkillRegistry() {
++        return skillRegistry;
++    }
++
+     public void setSkillContextBuffer(SkillContextBuffer skillContextBuffer) {
+         this.skillContextBuffer = skillContextBuffer;
+     }
+ 
++    public SkillContextBuffer getSkillContextBuffer() {
++        return skillContextBuffer;
++    }
++
+     public void setRenderer(Renderer renderer) {
+         this.renderer = renderer;
+     }
+diff --git a/src/main/java/com/paicli/agent/AgentOrchestrator.java b/src/main/java/com/paicli/agent/AgentOrchestrator.java
+index 4d2f0cb..53134eb 100644
+--- a/src/main/java/com/paicli/agent/AgentOrchestrator.java
++++ b/src/main/java/com/paicli/agent/AgentOrchestrator.java
+@@ -1,10 +1,13 @@
+ package com.paicli.agent;
+ 
+ import com.fasterxml.jackson.databind.JsonNode;
++import com.fasterxml.jackson.databind.DeserializationFeature;
+ import com.fasterxml.jackson.databind.ObjectMapper;
+ import com.paicli.llm.LlmClient;
+ import com.paicli.memory.MemoryManager;
+ import com.paicli.runtime.CancellationContext;
++import com.paicli.skill.SkillContextBuffer;
++import com.paicli.skill.SkillRegistry;
+ import com.paicli.tool.ToolRegistry;
+ import com.paicli.util.AnsiStyle;
+ import org.slf4j.Logger;
+@@ -16,6 +19,8 @@ import java.nio.charset.StandardCharsets;
+ import java.util.*;
+ import java.util.concurrent.*;
+ import java.util.function.Supplier;
++import java.util.regex.Matcher;
++import java.util.regex.Pattern;
+ 
+ /**
+  * Agent 编排器 - Multi-Agent 系统的"主"
+@@ -32,50 +37,79 @@ import java.util.function.Supplier;
+  * 6. 所有子任务完成后，编排器汇总返回最终结果
+  *
+  * 并行策略：
+- * - 同一依赖批次内部 **并行** 执行（最多 Worker 池大小并发，默认 2）
++ * - 同一依赖批次内部 **并行** 执行（Worker 池预热 2 个，按需扩容到 4 个）
+  * - 每个并行步骤使用独立的 PrintStream 缓冲流式输出，批次结束后按 step_id 顺序 flush 到 stdout，
+  *   避免多线程写同一个终端流造成交错，同时仍让用户看到结构化的执行过程
+  * - 单步批次仍走直连流式路径，保持"实时打字"的观感
+- * - Worker 通过 {@link java.util.concurrent.BlockingQueue} 池化分配，确保同一 Worker 不会被两个步骤并发占用
++ * - Worker 通过 {@link WorkerPool.Lease} 独占租借，步骤结束后清理对话并归还
+  * - Reviewer 在并行路径中按步骤即时创建独立实例，避免对话历史竞争
++ * - 只有 Reviewer 返回有效 JSON 且 approved=true 的步骤才会完成；拒绝、审查异常会阻断依赖步骤
+  */
+-public class AgentOrchestrator {
++public class AgentOrchestrator implements AutoCloseable {
+     private static final Logger log = LoggerFactory.getLogger(AgentOrchestrator.class);
+     private static final ObjectMapper mapper = new ObjectMapper();
+     private static final int MAX_RETRIES_PER_STEP = 2;
++    private static final int MIN_WORKERS = 2;
++    private static final int MAX_WORKERS = 4;
++    private static final int BATCH_SHUTDOWN_WAIT_SECONDS = 5;
++    private static final Pattern JSON_CODE_BLOCK = Pattern.compile(
++            "(?is)```(?:json)?\\s*(\\{.*?})\\s*```");
+ 
+     private final LlmClient llmClient;
+     private final SubAgent planner;
+-    private final List<SubAgent> workers;
++    private final WorkerPool workerPool;
+     private final SubAgent reviewer;
+     private final MemoryManager memoryManager;
+     private final ToolRegistry toolRegistry;
+     private final PrintStream out;
+     private Supplier<String> externalContextSupplier = () -> "";
++    private SkillRegistry skillRegistry;
++    private SkillContextBuffer skillContextBuffer;
+ 
+     // 执行步骤的数据结构（package-private 供测试访问）
+     record ExecutionStep(String id, String description, String type,
+                                   List<String> dependencies, String result,
+-                                  StepStatus status) {
++                                  String statusDetail, StepStatus status) {
+         static ExecutionStep pending(String id, String description, String type, List<String> dependencies) {
+-            return new ExecutionStep(id, description, type, dependencies, null, StepStatus.PENDING);
++            return new ExecutionStep(id, description, type, dependencies, null, null, StepStatus.PENDING);
+         }
+ 
+         ExecutionStep withResult(String result) {
+-            return new ExecutionStep(id, description, type, dependencies, result, StepStatus.COMPLETED);
++            return new ExecutionStep(id, description, type, dependencies, result, null, StepStatus.COMPLETED);
+         }
+ 
+-        ExecutionStep withFailed(String result) {
+-            return new ExecutionStep(id, description, type, dependencies, result, StepStatus.FAILED);
++        ExecutionStep withFailed(String detail) {
++            return new ExecutionStep(id, description, type, dependencies, null, detail, StepStatus.FAILED);
++        }
++
++        ExecutionStep withFailed(String result, String detail) {
++            return new ExecutionStep(id, description, type, dependencies, result, detail, StepStatus.FAILED);
++        }
++
++        ExecutionStep withReviewRejected(String result, String reviewIssues) {
++            return new ExecutionStep(id, description, type, dependencies,
++                    result, reviewIssues, StepStatus.REVIEW_REJECTED);
+         }
+ 
+         ExecutionStep started() {
+-            return new ExecutionStep(id, description, type, dependencies, result, StepStatus.RUNNING);
++            return new ExecutionStep(id, description, type, dependencies,
++                    result, statusDetail, StepStatus.RUNNING);
++        }
++
++        ExecutionStep withBlocked(String detail) {
++            return new ExecutionStep(id, description, type, dependencies, null, detail, StepStatus.BLOCKED);
+         }
+     }
+ 
+     enum StepStatus {
+-        PENDING, RUNNING, COMPLETED, FAILED
++        PENDING, RUNNING, COMPLETED, REVIEW_REJECTED, FAILED, BLOCKED
++    }
++
++    enum ReviewVerdict {
++        APPROVED, REJECTED, INVALID
++    }
++
++    private record ReviewOutcome(AgentMessage message, ReviewVerdict verdict) {
+     }
+ 
+     public AgentOrchestrator(LlmClient llmClient) {
+@@ -100,19 +134,16 @@ public class AgentOrchestrator {
+         memoryManager.setProjectPath(this.toolRegistry.getProjectPath());
+         this.toolRegistry.setScopedMemorySaver(memoryManager::storeFact);
+         this.planner = new SubAgent("planner", AgentRole.PLANNER, llmClient, toolRegistry);
+-        this.workers = List.of(
+-                new SubAgent("worker-1", AgentRole.WORKER, llmClient, toolRegistry),
+-                new SubAgent("worker-2", AgentRole.WORKER, llmClient, toolRegistry)
+-        );
++        this.workerPool = new WorkerPool(MIN_WORKERS, MAX_WORKERS, this::createWorker);
+         this.reviewer = new SubAgent("reviewer", AgentRole.REVIEWER, llmClient, toolRegistry);
+         this.memoryManager = memoryManager;
+     }
+ 
+     public void setExternalContextSupplier(Supplier<String> externalContextSupplier) {
+         this.externalContextSupplier = externalContextSupplier == null ? () -> "" : externalContextSupplier;
+-        planner.setExternalContextSupplier(this.externalContextSupplier);
+-        workers.forEach(worker -> worker.setExternalContextSupplier(this.externalContextSupplier));
+-        reviewer.setExternalContextSupplier(this.externalContextSupplier);
++        configureSubAgent(planner);
++        workerPool.forEachWorker(this::configureSubAgent);
++        configureSubAgent(reviewer);
+     }
+ 
+     /**
+@@ -120,16 +151,13 @@ public class AgentOrchestrator {
+      * 但共享同一 SkillContextBuffer——简化实现，避免角色级 buffer 隔离的工程开销。
+      * 任务书 §3.6 描述的"角色独立 buffer"作为可观察的优化项暂未启用。
+      */
+-    public void setSkillSystem(com.paicli.skill.SkillRegistry skillRegistry,
+-                               com.paicli.skill.SkillContextBuffer skillContextBuffer) {
+-        planner.setSkillRegistry(skillRegistry);
+-        planner.setSkillContextBuffer(skillContextBuffer);
+-        for (SubAgent worker : workers) {
+-            worker.setSkillRegistry(skillRegistry);
+-            worker.setSkillContextBuffer(skillContextBuffer);
+-        }
+-        reviewer.setSkillRegistry(skillRegistry);
+-        reviewer.setSkillContextBuffer(skillContextBuffer);
++    public void setSkillSystem(SkillRegistry skillRegistry,
++                               SkillContextBuffer skillContextBuffer) {
++        this.skillRegistry = skillRegistry;
++        this.skillContextBuffer = skillContextBuffer;
++        configureSubAgent(planner);
++        workerPool.forEachWorker(this::configureSubAgent);
++        configureSubAgent(reviewer);
+     }
+ 
+     /**
+@@ -173,7 +201,6 @@ public class AgentOrchestrator {
+         // 3. 执行阶段：按依赖顺序分配给执行者
+         out.println(AnsiStyle.heading("⚡ 第二阶段：执行"));
+         Map<String, Integer> retryCount = new ConcurrentHashMap<>();
+-        int singleStepCursor = 0;
+         int batchIndex = 0;
+ 
+         while (true) {
+@@ -189,15 +216,22 @@ public class AgentOrchestrator {
+             if (executable.size() == 1) {
+                 // 单步批次：直接串行流式输出，保持实时打字观感
+                 ExecutionStep step = executable.get(0);
+-                SubAgent worker = workers.get(singleStepCursor % workers.size());
+-                singleStepCursor++;
+                 String context = buildStepContext(steps, step);
+-                runStep(step, steps, retryCount, worker, reviewer, context, out);
+-                worker.clearHistory();
++                try (WorkerPool.Lease lease = workerPool.acquire()) {
++                    runStep(step, steps, retryCount, lease.worker(), reviewer, context, out);
++                } catch (InterruptedException e) {
++                    Thread.currentThread().interrupt();
++                    updateStep(steps, step.id(), step.withFailed("等待 Worker 时被中断"));
++                    out.println("❌ 步骤 [" + step.id() + "] 等待 Worker 时被中断\n");
++                } catch (RuntimeException e) {
++                    log.error("Step {} failed unexpectedly", step.id(), e);
++                    updateStep(steps, step.id(), step.withFailed("步骤执行异常: " + e.getMessage()));
++                    out.println("❌ 步骤 [" + step.id() + "] 执行异常：" + e.getMessage() + "\n");
++                }
+             } else {
+                 // 多步批次：真正并行执行，每步用独立的 PrintStream 缓冲，完成后按 step_id 顺序 flush
+                 out.println("⚡ 批次 #" + batchIndex + "：" + executable.size()
+-                        + " 个独立步骤并行执行（最多 " + workers.size() + " 个并发 Worker）\n");
++                        + " 个独立步骤并行执行（最多 " + workerPool.maxWorkers() + " 个并发 Worker）\n");
+                 runBatchParallel(executable, steps, retryCount);
+             }
+         }
+@@ -205,7 +239,14 @@ public class AgentOrchestrator {
+         // 5. 处理因前置失败而无法执行的残留步骤（显式提示用户）
+         for (ExecutionStep step : steps) {
+             if (step.status() == StepStatus.PENDING) {
+-                out.println("⏭️ 步骤 [" + step.id() + "] 因前置步骤失败被跳过: " + step.description());
++                String blockedBy = step.dependencies().stream()
++                        .filter(dep -> findStepStatus(steps, dep) != StepStatus.COMPLETED)
++                        .map(dep -> dep + "(" + Optional.ofNullable(findStepStatus(steps, dep))
++                                .map(Enum::name).orElse("MISSING") + ")")
++                        .collect(java.util.stream.Collectors.joining(", "));
++                String detail = "前置步骤未完成: " + (blockedBy.isBlank() ? "未知依赖" : blockedBy);
++                updateStep(steps, step.id(), step.withBlocked(detail));
++                out.println("⏭️ 步骤 [" + step.id() + "] 因前置步骤失败或未通过审查被跳过: " + step.description());
+             }
+         }
+ 
+@@ -221,11 +262,11 @@ public class AgentOrchestrator {
+      */
+     List<ExecutionStep> parsePlan(String planJson) {
+         try {
+-            String cleaned = planJson.replaceAll("```json\\s*", "")
+-                    .replaceAll("```\\s*", "")
+-                    .trim();
++            String cleaned = extractPlanJson(planJson);
+ 
+-            JsonNode root = mapper.readTree(cleaned);
++            JsonNode root = mapper.reader()
++                    .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
++                    .readTree(cleaned);
+             JsonNode stepsNode = root.path("steps");
+ 
+             if (!stepsNode.isArray() || stepsNode.isEmpty()) {
+@@ -269,7 +310,7 @@ public class AgentOrchestrator {
+                     if (idx >= 0 && idx < steps.size()) {
+                         ExecutionStep old = steps.get(idx);
+                         steps.set(idx, new ExecutionStep(old.id(), old.description(), old.type(),
+-                                deps, old.result(), old.status()));
++                                deps, old.result(), old.statusDetail(), old.status()));
+                     }
+                 }
+             }
+@@ -281,6 +322,51 @@ public class AgentOrchestrator {
+         }
+     }
+ 
++    /**
++     * Planner 偶尔会在 JSON 代码块前后补一句说明。计划入口允许提取其中唯一的 JSON 对象，
++     * Reviewer 的审批协议仍保持严格 JSON-only，避免把审查异常误判为通过。
++     */
++    private String extractPlanJson(String planContent) {
++        if (planContent == null) {
++            return "";
++        }
++        String trimmed = planContent.trim();
++        Matcher fenced = JSON_CODE_BLOCK.matcher(trimmed);
++        if (fenced.find()) {
++            return fenced.group(1).trim();
++        }
++
++        int start = trimmed.indexOf('{');
++        if (start < 0) {
++            return trimmed;
++        }
++
++        int depth = 0;
++        boolean inString = false;
++        boolean escaped = false;
++        for (int i = start; i < trimmed.length(); i++) {
++            char current = trimmed.charAt(i);
++            if (inString) {
++                if (escaped) {
++                    escaped = false;
++                } else if (current == '\\') {
++                    escaped = true;
++                } else if (current == '"') {
++                    inString = false;
++                }
++                continue;
++            }
++            if (current == '"') {
++                inString = true;
++            } else if (current == '{') {
++                depth++;
++            } else if (current == '}' && --depth == 0) {
++                return trimmed.substring(start, i + 1);
++            }
++        }
++        return trimmed;
++    }
++
+     /**
+      * 获取当前可执行的步骤（依赖已全部完成）
+      */
+@@ -297,43 +383,44 @@ public class AgentOrchestrator {
+                 .toList();
+     }
+ 
++    private StepStatus findStepStatus(List<ExecutionStep> steps, String stepId) {
++        return steps.stream()
++                .filter(step -> step.id().equals(stepId))
++                .map(ExecutionStep::status)
++                .findFirst()
++                .orElse(null);
++    }
++
+     /**
+      * 解析检查者的审批结果
+      *
+-     * 解析失败时采取保守策略：默认判为"不通过"，避免在审查者异常输出时让问题结果直接放行。
++     * 仅接受包含布尔 approved 字段的 JSON；格式异常由调用方按审查协议失败处理。
+      */
+     boolean parseReviewApproval(String reviewContent) {
++        return parseReviewVerdict(reviewContent) == ReviewVerdict.APPROVED;
++    }
++
++    ReviewVerdict parseReviewVerdict(String reviewContent) {
+         if (reviewContent == null || reviewContent.isEmpty()) {
+-            log.warn("Reviewer returned empty content, defaulting to rejected");
+-            return false;
++            log.warn("Reviewer returned empty content");
++            return ReviewVerdict.INVALID;
+         }
+         try {
+             String cleaned = reviewContent.replaceAll("```json\\s*", "")
+                     .replaceAll("```\\s*", "")
+                     .trim();
+-            JsonNode root = mapper.readTree(cleaned);
++            JsonNode root = mapper.reader()
++                    .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
++                    .readTree(cleaned);
+             JsonNode approvedNode = root.path("approved");
+-            if (approvedNode.isMissingNode() || approvedNode.isNull()) {
+-                log.warn("Reviewer JSON missing 'approved' field, defaulting to rejected");
+-                return false;
++            if (!approvedNode.isBoolean()) {
++                log.warn("Reviewer JSON missing boolean 'approved' field");
++                return ReviewVerdict.INVALID;
+             }
+-            return approvedNode.asBoolean(false);
++            return approvedNode.asBoolean() ? ReviewVerdict.APPROVED : ReviewVerdict.REJECTED;
+         } catch (Exception e) {
+-            // 无法解析 JSON：必须同时不含否定关键词且含有肯定关键词，才视为通过
+-            String lower = reviewContent.toLowerCase();
+-            boolean hasNegativeKeyword = lower.contains("未通过") || lower.contains("不通过")
+-                    || lower.contains("不合格") || lower.contains("有问题")
+-                    || lower.contains("\"approved\": false") || lower.contains("\"approved\":false");
+-            boolean hasPositiveKeyword = lower.contains("通过") || lower.contains("合格")
+-                    || lower.contains("\"approved\": true") || lower.contains("\"approved\":true");
+-            if (hasNegativeKeyword) {
+-                return false;
+-            }
+-            if (!hasPositiveKeyword) {
+-                log.warn("Reviewer output unparseable and contains no explicit approval, defaulting to rejected");
+-                return false;
+-            }
+-            return true;
++            log.warn("Reviewer output is not valid JSON", e);
++            return ReviewVerdict.INVALID;
+         }
+     }
+ 
+@@ -409,13 +496,12 @@ public class AgentOrchestrator {
+      */
+     private void runBatchParallel(List<ExecutionStep> batch, List<ExecutionStep> steps,
+                                   Map<String, Integer> retryCount) {
+-        int parallelism = Math.min(batch.size(), workers.size());
++        int parallelism = Math.min(batch.size(), workerPool.maxWorkers());
+         ExecutorService executor = Executors.newFixedThreadPool(parallelism, r -> {
+             Thread t = new Thread(r, "paicli-multi-agent");
+             t.setDaemon(true);
+             return t;
+         });
+-        BlockingQueue<SubAgent> workerPool = new LinkedBlockingQueue<>(workers);
+         Map<String, ByteArrayOutputStream> buffers = new ConcurrentHashMap<>();
+         List<Future<?>> futures = new ArrayList<>();
+ 
+@@ -426,12 +512,9 @@ public class AgentOrchestrator {
+             String context = buildStepContext(steps, step);
+ 
+             futures.add(executor.submit(() -> {
+-                SubAgent worker = null;
+-                SubAgent localReviewer = new SubAgent(
+-                        "reviewer-" + step.id(), AgentRole.REVIEWER, llmClient, toolRegistry);
+-                try {
+-                    worker = workerPool.take();
+-                    runStep(step, steps, retryCount, worker, localReviewer, context, stepOut);
++                SubAgent localReviewer = createReviewer("reviewer-" + step.id());
++                try (WorkerPool.Lease lease = workerPool.acquire()) {
++                    runStep(step, steps, retryCount, lease.worker(), localReviewer, context, stepOut);
+                 } catch (InterruptedException e) {
+                     Thread.currentThread().interrupt();
+                     updateStep(steps, step.id(), step.withFailed("并行执行被中断"));
+@@ -441,27 +524,32 @@ public class AgentOrchestrator {
+                     updateStep(steps, step.id(), step.withFailed("并行执行异常: " + e.getMessage()));
+                     stepOut.println("❌ 步骤 [" + step.id() + "] 并行执行异常：" + e.getMessage() + "\n");
+                 } finally {
+-                    if (worker != null) {
+-                        worker.clearHistory();
+-                        workerPool.offer(worker);
+-                    }
+                     stepOut.flush();
+                 }
+                 return null;
+             }));
+         }
+ 
++        boolean interrupted = false;
+         for (Future<?> f : futures) {
+             try {
+                 f.get();
+             } catch (InterruptedException e) {
+                 Thread.currentThread().interrupt();
+                 log.warn("Batch wait interrupted");
++                interrupted = true;
++                break;
+             } catch (ExecutionException e) {
+                 log.error("Parallel step task failed", e.getCause());
+             }
+         }
+-        executor.shutdownNow();
++        if (interrupted || CancellationContext.isCancelled()) {
++            futures.forEach(future -> future.cancel(true));
++            executor.shutdownNow();
++        } else {
++            executor.shutdown();
++        }
++        awaitBatchTermination(executor);
+ 
+         // 按 step_id 顺序 flush 各步骤的缓冲输出，保证用户看到的执行过程有稳定顺序
+         for (ExecutionStep step : batch) {
+@@ -473,6 +561,18 @@ public class AgentOrchestrator {
+         }
+     }
+ 
++    private void awaitBatchTermination(ExecutorService executor) {
++        try {
++            if (!executor.awaitTermination(BATCH_SHUTDOWN_WAIT_SECONDS, TimeUnit.SECONDS)) {
++                log.warn("Multi-agent batch did not terminate within {} seconds", BATCH_SHUTDOWN_WAIT_SECONDS);
++                executor.shutdownNow();
++            }
++        } catch (InterruptedException e) {
++            Thread.currentThread().interrupt();
++            executor.shutdownNow();
++        }
++    }
++
+     /**
+      * 执行单个步骤（Worker 执行 + Reviewer 审查 + 最多 2 次重试）。
+      *
+@@ -483,6 +583,7 @@ public class AgentOrchestrator {
+                          SubAgent worker, SubAgent reviewer, String context,
+                          PrintStream out) {
+         out.println("🛠️ " + worker.getName() + " 执行步骤 [" + step.id() + "]: " + step.description());
++        updateStep(steps, step.id(), step.started());
+         if (CancellationContext.isCancelled()) {
+             updateStep(steps, step.id(), step.withFailed("用户取消"));
+             out.println("⏹️ 步骤 [" + step.id() + "] 已取消\n");
+@@ -490,91 +591,218 @@ public class AgentOrchestrator {
+         }
+ 
+         AgentMessage taskMsg = AgentMessage.task("orchestrator", step.description());
+-        AgentMessage result = worker.executeWithContext(taskMsg, context, out);
++        int retries = retryCount.getOrDefault(step.id(), 0);
++        WorkerExecution execution = worker.executeWithEvidence(taskMsg, context, out);
++
++        while (true) {
++            if (CancellationContext.isCancelled()) {
++                updateStep(steps, step.id(), step.withFailed("用户取消"));
++                out.println("⏹️ 步骤 [" + step.id() + "] 已取消\n");
++                return;
++            }
++
++            AgentMessage workerMessage = execution.message();
++            if (workerMessage.type() == AgentMessage.Type.ERROR) {
++                updateStep(steps, step.id(), step.withFailed(workerMessage.content()));
++                out.println("❌ 步骤 [" + step.id() + "] 执行失败：" + workerMessage.content() + "\n");
++                return;
++            }
++            if (workerMessage.content() == null || workerMessage.content().isBlank()) {
++                updateStep(steps, step.id(), step.withFailed("执行结果为空"));
++                out.println("❌ 步骤 [" + step.id() + "] 执行失败：结果为空\n");
++                return;
++            }
++
++            StepEvidencePolicy.Assessment evidenceAssessment =
++                    StepEvidencePolicy.assess(step.type(), execution.evidence());
++            if (evidenceAssessment.satisfied()) {
++                break;
++            }
++            if (retries >= MAX_RETRIES_PER_STEP) {
++                String detail = "执行证据不足：" + evidenceAssessment.detail();
++                updateStep(steps, step.id(), step.withFailed(workerMessage.content(), detail));
++                out.println("❌ 步骤 [" + step.id() + "] 连续缺少必要执行证据，未进入 Reviewer\n");
++                return;
++            }
++
++            retries++;
++            retryCount.put(step.id(), retries);
++            out.println("⚠️ 步骤 [" + step.id() + "] 执行证据不足，正在要求 Worker 补充实际操作...");
++            out.println("   反馈: " + evidenceAssessment.detail() + "\n");
++            String evidenceFeedback = context + "\n\n之前的执行没有满足完成条件：\n"
++                    + evidenceAssessment.detail()
++                    + "\n请实际调用所需工具完成任务，不要只描述准备做什么。";
++            execution = worker.executeWithEvidence(taskMsg, evidenceFeedback, out);
++        }
++
++        AgentMessage result = execution.message();
++        StepEvidence acceptedEvidence = execution.evidence();
++
++        out.println("🔍 " + reviewer.getName() + " 正在审查步骤 [" + step.id() + "] 的结果...");
++        ReviewOutcome reviewOutcome = reviewWithProtocolRetry(
++                reviewer, step.description(), result.content(), acceptedEvidence, out);
++        AgentMessage reviewResult = reviewOutcome.message();
+         if (CancellationContext.isCancelled()) {
+             updateStep(steps, step.id(), step.withFailed("用户取消"));
+             out.println("⏹️ 步骤 [" + step.id() + "] 已取消\n");
+             return;
+         }
+ 
+-        if (result.type() == AgentMessage.Type.ERROR) {
+-            updateStep(steps, step.id(), step.withFailed(result.content()));
+-            out.println("❌ 步骤 [" + step.id() + "] 执行失败：" + result.content() + "\n");
+-            return;
+-        }
+-        if (result.content() == null || result.content().isBlank()) {
+-            updateStep(steps, step.id(), step.withFailed("执行结果为空"));
+-            out.println("❌ 步骤 [" + step.id() + "] 执行失败：结果为空\n");
+-            return;
+-        }
+-
+-        out.println("🔍 " + reviewer.getName() + " 正在审查步骤 [" + step.id() + "] 的结果...");
+-        AgentMessage reviewResult = reviewer.review(step.description(), result.content(), out);
+-        reviewer.clearHistory();
+-
+         if (reviewResult.type() == AgentMessage.Type.ERROR) {
+             log.warn("Reviewer failed for step {}: {}", step.id(), reviewResult.content());
+-            out.println("⚠️ 步骤 [" + step.id() + "] 审查阶段 LLM 调用失败，保留当前执行结果\n");
+-            updateStep(steps, step.id(), step.withResult(result.content()));
++            String issues = "Reviewer 调用失败，当前结果未经验证：" + reviewResult.content();
++            out.println("❌ 步骤 [" + step.id() + "] 审查阶段 LLM 调用失败，结果未获通过\n");
++            updateStep(steps, step.id(), step.withFailed(result.content(), issues));
+             return;
+         }
+ 
+-        boolean approved = parseReviewApproval(reviewResult.content());
++        ReviewVerdict verdict = reviewOutcome.verdict();
+         String acceptedResult = result.content();
+ 
+-        if (approved) {
++        if (verdict == ReviewVerdict.INVALID) {
++            String issues = "Reviewer 连续两次返回无效审查格式，当前结果未经验证";
++            updateStep(steps, step.id(), step.withFailed(acceptedResult, issues));
++            out.println("❌ 步骤 [" + step.id() + "] Reviewer 协议纠正后仍格式无效，结果未获通过\n");
++            return;
++        }
++
++        if (verdict == ReviewVerdict.APPROVED) {
+             updateStep(steps, step.id(), step.withResult(acceptedResult));
+             out.println("✅ 步骤 [" + step.id() + "] 审查通过\n");
+             return;
+         }
+ 
+-        int retries = retryCount.getOrDefault(step.id(), 0);
+         String issues = parseReviewIssues(reviewResult.content());
+         log.info("Step {} rejected (retry {}/{}): {}", step.id(), retries, MAX_RETRIES_PER_STEP, issues);
++        boolean correctionExecutionFailed = false;
+ 
+-        while (!approved && retries < MAX_RETRIES_PER_STEP) {
++        while (verdict == ReviewVerdict.REJECTED && retries < MAX_RETRIES_PER_STEP) {
++            if (CancellationContext.isCancelled()) {
++                updateStep(steps, step.id(), step.withFailed("用户取消"));
++                out.println("⏹️ 步骤 [" + step.id() + "] 已取消\n");
++                return;
++            }
+             retries++;
+             retryCount.put(step.id(), retries);
+             out.println("⚠️ 步骤 [" + step.id() + "] 审查未通过，正在重新执行...");
+             out.println("   反馈: " + issues + "\n");
+ 
+             String feedbackContext = context + "\n\n之前的执行结果被审查拒绝，原因：\n" + issues;
+-            AgentMessage retryResult = worker.executeWithContext(taskMsg, feedbackContext, out);
++            WorkerExecution retryExecution = worker.executeWithEvidence(taskMsg, feedbackContext, out);
++            AgentMessage retryResult = retryExecution.message();
++            if (CancellationContext.isCancelled()) {
++                updateStep(steps, step.id(), step.withFailed("用户取消"));
++                out.println("⏹️ 步骤 [" + step.id() + "] 已取消\n");
++                return;
++            }
+             if (retryResult.type() == AgentMessage.Type.ERROR) {
+                 log.warn("Step {} retry {} failed at LLM layer: {}", step.id(), retries, retryResult.content());
+                 issues = "重试时 LLM 调用失败：" + retryResult.content();
+-                approved = false;
++                correctionExecutionFailed = true;
+                 continue;
+             }
+             if (retryResult.content() == null || retryResult.content().isBlank()) {
+-                acceptedResult = "执行结果为空";
+-                approved = false;
+                 issues = "执行结果为空";
++                correctionExecutionFailed = true;
+                 log.info("Step {} retry {} returned empty result", step.id(), retries);
+                 continue;
+             }
+ 
++            StepEvidencePolicy.Assessment retryEvidenceAssessment =
++                    StepEvidencePolicy.assess(step.type(), retryExecution.evidence());
++            if (!retryEvidenceAssessment.satisfied()) {
++                issues = "修正执行证据不足：" + retryEvidenceAssessment.detail();
++                correctionExecutionFailed = true;
++                log.info("Step {} retry {} lacked evidence: {}", step.id(), retries,
++                        retryEvidenceAssessment.detail());
++                continue;
++            }
++
++            correctionExecutionFailed = false;
+             acceptedResult = retryResult.content();
+-            AgentMessage retryReview = reviewer.review(step.description(), acceptedResult, out);
+-            reviewer.clearHistory();
++            acceptedEvidence = retryExecution.evidence();
++            ReviewOutcome retryReviewOutcome = reviewWithProtocolRetry(
++                    reviewer, step.description(), acceptedResult, acceptedEvidence, out);
++            AgentMessage retryReview = retryReviewOutcome.message();
++            if (CancellationContext.isCancelled()) {
++                updateStep(steps, step.id(), step.withFailed("用户取消"));
++                out.println("⏹️ 步骤 [" + step.id() + "] 已取消\n");
++                return;
++            }
+ 
+             if (retryReview.type() == AgentMessage.Type.ERROR) {
+                 log.warn("Reviewer failed for step {} retry {}: {}", step.id(), retries, retryReview.content());
+-                approved = true;
+-                issues = "";
+-                break;
++                issues = "Reviewer 调用失败，当前结果未经验证：" + retryReview.content();
++                out.println("❌ 步骤 [" + step.id() + "] 重试后的审查调用失败，结果未获通过\n");
++                updateStep(steps, step.id(), step.withFailed(acceptedResult, issues));
++                return;
+             }
+ 
+-            approved = parseReviewApproval(retryReview.content());
++            verdict = retryReviewOutcome.verdict();
++            if (verdict == ReviewVerdict.INVALID) {
++                issues = "Reviewer 连续两次返回无效审查格式，当前结果未经验证";
++                out.println("❌ 步骤 [" + step.id() + "] Reviewer 协议纠正后仍格式无效，结果未获通过\n");
++                updateStep(steps, step.id(), step.withFailed(acceptedResult, issues));
++                return;
++            }
+             issues = parseReviewIssues(retryReview.content());
+         }
+ 
+-        updateStep(steps, step.id(), step.withResult(acceptedResult));
+-        if (approved) {
++        if (verdict == ReviewVerdict.APPROVED) {
++            updateStep(steps, step.id(), step.withResult(acceptedResult));
+             out.println("✅ 步骤 [" + step.id() + "] 重试后审查通过\n");
++        } else if (correctionExecutionFailed) {
++            updateStep(steps, step.id(), step.withFailed(acceptedResult, issues));
++            out.println("❌ 步骤 [" + step.id() + "] 修正执行失败，未能完成质量复核\n");
+         } else {
+-            out.println("⚠️ 步骤 [" + step.id() + "] 超过最大重试次数，保留当前结果\n");
++            updateStep(steps, step.id(), step.withReviewRejected(acceptedResult, issues));
++            out.println("❌ 步骤 [" + step.id() + "] 超过最大重试次数，标记为审查未通过\n");
++        }
++    }
++
++    private ReviewOutcome reviewWithProtocolRetry(SubAgent reviewer, String originalTask,
++                                                  String executionResult, StepEvidence evidence,
++                                                  PrintStream out) {
++        AgentMessage first = reviewer.review(originalTask, executionResult, evidence, out);
++        reviewer.clearHistory();
++        if (first.type() == AgentMessage.Type.ERROR) {
++            return new ReviewOutcome(first, ReviewVerdict.INVALID);
++        }
++
++        ReviewVerdict firstVerdict = parseReviewVerdict(first.content());
++        if (firstVerdict != ReviewVerdict.INVALID) {
++            return new ReviewOutcome(first, firstVerdict);
++        }
++
++        out.println("⚠️ Reviewer 输出不符合审批协议，正在进行一次格式纠正...");
++        String correctedTask = originalTask
++                + "\n\n协议纠正：上一次输出不是有效审批 JSON。本次禁止输出工具调用或解释，"
++                + "只返回包含布尔 approved 字段的 JSON。";
++        AgentMessage corrected = reviewer.review(correctedTask, executionResult, evidence, out);
++        reviewer.clearHistory();
++        if (corrected.type() == AgentMessage.Type.ERROR) {
++            return new ReviewOutcome(corrected, ReviewVerdict.INVALID);
+         }
++        return new ReviewOutcome(corrected, parseReviewVerdict(corrected.content()));
++    }
++
++    private SubAgent createWorker(int number) {
++        SubAgent worker = new SubAgent(
++                "worker-" + number, AgentRole.WORKER, llmClient, toolRegistry);
++        configureSubAgent(worker);
++        return worker;
++    }
++
++    private SubAgent createReviewer(String name) {
++        SubAgent localReviewer = new SubAgent(name, AgentRole.REVIEWER, llmClient, toolRegistry);
++        configureSubAgent(localReviewer);
++        return localReviewer;
++    }
++
++    private void configureSubAgent(SubAgent agent) {
++        agent.setExternalContextSupplier(externalContextSupplier);
++        agent.setSkillRegistry(skillRegistry);
++        agent.setSkillContextBuffer(skillContextBuffer);
+     }
+ 
+     private String buildStepContext(List<ExecutionStep> steps, ExecutionStep currentStep) {
+@@ -620,22 +848,42 @@ public class AgentOrchestrator {
+         StringBuilder result = new StringBuilder();
+         boolean allCompleted = steps.stream().allMatch(step -> step.status() == StepStatus.COMPLETED);
+         boolean hasFailedSteps = steps.stream().anyMatch(step -> step.status() == StepStatus.FAILED);
++        boolean hasRejectedSteps = steps.stream().anyMatch(step -> step.status() == StepStatus.REVIEW_REJECTED);
++        boolean hasBlockedSteps = steps.stream().anyMatch(step -> step.status() == StepStatus.BLOCKED);
+ 
+         if (allCompleted) {
+             result.append("✅ 多 Agent 协作任务完成！\n\n");
+-        } else if (hasFailedSteps) {
+-            result.append("⚠️ 多 Agent 协作任务未完全完成，存在失败步骤。\n\n");
+         } else {
+-            result.append("⚠️ 多 Agent 协作任务部分完成，仍有未执行步骤。\n\n");
+-        }
++            result.append("⚠️ 多 Agent 协作任务未完全完成");
++            List<String> reasons = new ArrayList<>();
++            if (hasFailedSteps) reasons.add("存在失败步骤");
++            if (hasRejectedSteps) reasons.add("存在未通过质量审查的步骤");
++            if (hasBlockedSteps) reasons.add("存在被阻塞步骤");
++            if (!reasons.isEmpty()) {
++                result.append("：").append(String.join("，", reasons));
++            }
++            result.append("。\n\n");
++        }
++        long completedCount = steps.stream().filter(step -> step.status() == StepStatus.COMPLETED).count();
++        long failedCount = steps.stream().filter(step -> step.status() == StepStatus.FAILED).count();
++        long rejectedCount = steps.stream().filter(step -> step.status() == StepStatus.REVIEW_REJECTED).count();
++        long blockedCount = steps.stream().filter(step -> step.status() == StepStatus.BLOCKED).count();
++        result.append("状态：完成 ").append(completedCount)
++                .append("，失败 ").append(failedCount)
++                .append("，审查未通过 ").append(rejectedCount)
++                .append("，阻塞 ").append(blockedCount).append("\n\n");
+         result.append("📋 执行总结：\n");
+ 
+         for (ExecutionStep step : steps) {
+             result.append("[").append(step.id()).append("] ");
+             if (step.status() == StepStatus.COMPLETED) {
+                 result.append("✅ ");
++            } else if (step.status() == StepStatus.REVIEW_REJECTED) {
++                result.append("🚫 ");
+             } else if (step.status() == StepStatus.FAILED) {
+                 result.append("❌ ");
++            } else if (step.status() == StepStatus.BLOCKED) {
++                result.append("⏭️ ");
+             } else {
+                 result.append("⏳ ");
+             }
+@@ -645,10 +893,26 @@ public class AgentOrchestrator {
+                 String preview = step.result().length() > 120
+                         ? step.result().substring(0, 120) + "..."
+                         : step.result();
+-                result.append("   结果：").append(preview).append("\n");
++                String resultLabel = step.status() == StepStatus.COMPLETED ? "结果" : "未批准候选";
++                result.append("   ").append(resultLabel).append("：").append(preview).append("\n");
++            }
++            if (step.statusDetail() != null && !step.statusDetail().isBlank()) {
++                String detailPreview = step.statusDetail().length() > 120
++                        ? step.statusDetail().substring(0, 120) + "..."
++                        : step.statusDetail();
++                result.append("   详情：").append(detailPreview).append("\n");
+             }
+         }
+ 
+         return result.toString();
+     }
++
++    WorkerPool.Stats workerPoolStats() {
++        return workerPool.stats();
++    }
++
++    @Override
++    public void close() {
++        workerPool.close();
++    }
+ }
+diff --git a/src/main/java/com/paicli/agent/SubAgent.java b/src/main/java/com/paicli/agent/SubAgent.java
+index 52640cf..b9d6717 100644
+--- a/src/main/java/com/paicli/agent/SubAgent.java
++++ b/src/main/java/com/paicli/agent/SubAgent.java
+@@ -86,7 +86,7 @@ public class SubAgent {
+                 .projectMemoryContext(buildProjectMemoryContext())
+                 .externalContext(buildExternalContext())
+                 .skillIndex(buildSkillIndex())
+-                .toolsEnabled(llmClient == null || llmClient.supportsTools())
++                .toolsEnabled(shouldUseTools() && (llmClient == null || llmClient.supportsTools()))
+                 .build());
+     }
+ 
+@@ -171,10 +171,15 @@ public class SubAgent {
+      * 避免多个 Agent 同时写入 System.out 造成输出交错。
+      */
+     public AgentMessage execute(AgentMessage task, PrintStream out) {
++        return executeCaptured(task, out).message();
++    }
++
++    private WorkerExecution executeCaptured(AgentMessage task, PrintStream out) {
+         log.info("[{}] executing task from {}: type={}", name, task.fromAgent(), task.type());
+         pruneHistoricalImagePayloads();
+         refreshSystemPrompt();
+         String taskContent = prependSkillBodies(task.content());
++        StepEvidence evidence = StepEvidence.empty();
+ 
+         // 将任务注入对话
+         conversationHistory.add(ImageReferenceParser.userMessage(
+@@ -194,7 +199,7 @@ public class SubAgent {
+                 log.warn("[{}] run exhausted budget: reason={}, iteration={}, tokens={}/{}",
+                         name, exitReason, budget.iteration(),
+                         budget.totalInputTokens() + budget.totalOutputTokens(), budget.tokenBudget());
+-                return AgentMessage.error(name, role, description);
++                return new WorkerExecution(AgentMessage.error(name, role, description), evidence);
+             }
+ 
+             budget.beginIteration();
+@@ -230,6 +235,7 @@ public class SubAgent {
+                     streamRenderer.resetBetweenIterations();
+ 
+                     List<ToolExecutionResult> toolResults = executeToolCalls(response.toolCalls());
++                    evidence = evidence.append(toolResults);
+                     for (ToolExecutionResult toolResult : toolResults) {
+                         conversationHistory.add(LlmClient.Message.tool(toolResult.id(), toolResult.result()));
+                     }
+@@ -242,12 +248,13 @@ public class SubAgent {
+ 
+                 streamRenderer.finish();
+ 
+-                return AgentMessage.result(name, role, response.content());
++                return new WorkerExecution(AgentMessage.result(name, role, response.content()), evidence);
+ 
+             } catch (IOException e) {
+                 log.error("[{}] LLM call failed", name, e);
+                 streamRenderer.finish();
+-                return AgentMessage.error(name, role, "LLM 调用失败: " + e.getMessage());
++                return new WorkerExecution(
++                        AgentMessage.error(name, role, "LLM 调用失败: " + e.getMessage()), evidence);
+             }
+         }
+     }
+@@ -260,13 +267,25 @@ public class SubAgent {
+     }
+ 
+     public AgentMessage executeWithContext(AgentMessage task, String context, PrintStream out) {
++        return enrichTask(task, context, out, false).message();
++    }
++
++    WorkerExecution executeWithEvidence(AgentMessage task, String context, PrintStream out) {
++        return enrichTask(task, context, out, true);
++    }
++
++    private WorkerExecution enrichTask(AgentMessage task, String context, PrintStream out,
++                                       boolean captureEvidence) {
+         String enrichedContent = task.content();
+         if (context != null && !context.isEmpty()) {
+             enrichedContent = context + "\n\n当前任务：" + task.content();
+         }
+         AgentMessage enrichedTask = new AgentMessage(task.fromAgent(), task.fromRole(),
+                 enrichedContent, task.type());
+-        return execute(enrichedTask, out);
++        WorkerExecution execution = executeCaptured(enrichedTask, out);
++        return captureEvidence
++                ? execution
++                : new WorkerExecution(execution.message(), StepEvidence.empty());
+     }
+ 
+     /**
+@@ -277,7 +296,14 @@ public class SubAgent {
+     }
+ 
+     public AgentMessage review(String originalTask, String executionResult, PrintStream out) {
+-        String reviewInput = "原始任务：" + originalTask + "\n\n执行结果：\n" + executionResult;
++        return review(originalTask, executionResult, StepEvidence.empty(), out);
++    }
++
++    AgentMessage review(String originalTask, String executionResult,
++                        StepEvidence evidence, PrintStream out) {
++        String reviewInput = "原始任务：" + originalTask
++                + "\n\nWorker 最终总结：\n" + executionResult
++                + "\n\n实际工具执行证据：\n" + evidence.toReviewerContext();
+         AgentMessage reviewTask = AgentMessage.task("orchestrator", reviewInput);
+         return execute(reviewTask, out);
+     }
+diff --git a/src/main/java/com/paicli/cli/Main.java b/src/main/java/com/paicli/cli/Main.java
+index 93edb10..8a865f0 100644
+--- a/src/main/java/com/paicli/cli/Main.java
++++ b/src/main/java/com/paicli/cli/Main.java
+@@ -820,10 +820,11 @@ public class Main {
+                     snapshotMode = "team";
+                     LlmClient activeClient = llmClient;
+                     runTask = () -> {
+-                        AgentOrchestrator orchestrator = createTeamAgent(activeClient, reactAgent, ui);
+-                        orchestrator.setExternalContextSupplier(mcpServerManager::resourceIndexForPrompt);
+-                        orchestrator.setSkillSystem(skillRegistry, skillContextBuffer);
+-                        return orchestrator.run(taskInput);
++                        try (AgentOrchestrator orchestrator = createTeamAgent(activeClient, reactAgent, ui)) {
++                            orchestrator.setExternalContextSupplier(mcpServerManager::resourceIndexForPrompt);
++                            orchestrator.setSkillSystem(skillRegistry, skillContextBuffer);
++                            return orchestrator.run(taskInput);
++                        }
+                     };
+                 } else {
+                     snapshotMode = "react";
+diff --git a/src/main/java/com/paicli/prompt/PromptAssembler.java b/src/main/java/com/paicli/prompt/PromptAssembler.java
+index 3698c17..7c1fec6 100644
+--- a/src/main/java/com/paicli/prompt/PromptAssembler.java
++++ b/src/main/java/com/paicli/prompt/PromptAssembler.java
+@@ -93,15 +93,17 @@ public class PromptAssembler {
+     }
+ 
+     private static String stripToolSections(String base) {
+-        String withoutTools = base.replaceFirst("(?s)\\n## Tools\\n.*?(?=\\n## Browser Policy\\n)", "\n");
+-        return withoutTools.replaceFirst("(?s)\\n## Tool Policy\\n.*?(?=\\n## Browser Policy\\n)", "\n");
++        String withoutTools = base.replaceFirst(
++                "(?s)\\R## Tools\\R.*?(?=\\R## Browser Policy\\R)", "\n");
++        return withoutTools.replaceFirst(
++                "(?s)\\R## Tool Policy\\R.*?(?=\\R## Browser Policy\\R)", "\n");
+     }
+ 
+     private static String noToolsSection() {
+         return """
+                 ## Tool Availability
+ 
+-                当前模型不支持 PaiCLI 原生工具调用。本轮不要声称已经读取、搜索、执行或修改了任何本地文件、命令、浏览器、MCP resource 或外部工具结果。
++                当前角色或模型不提供 PaiCLI 原生工具调用。本轮不要声称已经读取、搜索、执行或修改了任何本地文件、命令、浏览器、MCP resource 或外部工具结果。
+ 
+                 绝对不要输出伪造的工具标签或 XML，例如 `<toolcall>`、`<read_file>`、`<list_dir>`。如果用户请求必须依赖本地文件、代码搜索、命令执行或联网工具，请直接说明当前 provider 不支持工具调用，并提示切换到支持 tools 的 provider 后重试。
+                 """;
+diff --git a/src/main/java/com/paicli/tool/ToolRegistry.java b/src/main/java/com/paicli/tool/ToolRegistry.java
+index c314b8e..16e98b6 100644
+--- a/src/main/java/com/paicli/tool/ToolRegistry.java
++++ b/src/main/java/com/paicli/tool/ToolRegistry.java
+@@ -1303,7 +1303,7 @@ public class ToolRegistry {
+ 
+         Process process = null;
+         try {
+-            ProcessBuilder pb = new ProcessBuilder("bash", "-c", normalized);
++            ProcessBuilder pb = createCommandProcess(normalized);
+             pb.directory(new File(projectPath));
+             pb.redirectErrorStream(true);
+             process = pb.start();
+@@ -1313,7 +1313,7 @@ public class ToolRegistry {
+ 
+             boolean finished = process.waitFor(commandTimeoutSeconds, TimeUnit.SECONDS);
+             if (!finished) {
+-                process.destroyForcibly();
++                destroyProcessTree(process);
+                 process.waitFor(2, TimeUnit.SECONDS);
+                 outputFuture.cancel(true);
+                 return "命令执行超时（" + commandTimeoutSeconds + "秒），已强制终止";
+@@ -1325,12 +1325,12 @@ public class ToolRegistry {
+         } catch (InterruptedException e) {
+             Thread.currentThread().interrupt();
+             if (process != null) {
+-                process.destroyForcibly();
++                destroyProcessTree(process);
+             }
+             return "用户取消了此次工具调用";
+         } catch (Exception e) {
+             if (process != null) {
+-                process.destroyForcibly();
++                destroyProcessTree(process);
+             }
+             return "执行命令失败: " + e.getMessage();
+         } finally {
+@@ -1338,6 +1338,23 @@ public class ToolRegistry {
+         }
+     }
+ 
++    private ProcessBuilder createCommandProcess(String command) {
++        if (isWindows()) {
++            return new ProcessBuilder("cmd.exe", "/d", "/s", "/c", command);
++        }
++        return new ProcessBuilder("bash", "-c", command);
++    }
++
++    private static boolean isWindows() {
++        return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
++    }
++
++    private static void destroyProcessTree(Process process) {
++        List<ProcessHandle> descendants = process.toHandle().descendants().toList();
++        descendants.forEach(ProcessHandle::destroyForcibly);
++        process.destroyForcibly();
++    }
++
+     private String readProcessOutput(Process process) throws Exception {
+         StringBuilder output = new StringBuilder();
+         try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+diff --git a/src/main/java/com/paicli/tui/TuiSessionController.java b/src/main/java/com/paicli/tui/TuiSessionController.java
+index 5fdbdfb..040fc97 100644
+--- a/src/main/java/com/paicli/tui/TuiSessionController.java
++++ b/src/main/java/com/paicli/tui/TuiSessionController.java
+@@ -267,11 +267,7 @@ public final class TuiSessionController implements AutoCloseable {
+                             reactAgent.getMemoryManager(),
+                             (goal, plan) -> PlanExecuteAgent.PlanReviewDecision.execute()
+                     ).run(input);
+-                    case TEAM -> new AgentOrchestrator(
+-                            llmClient,
+-                            reactAgent.getToolRegistry(),
+-                            reactAgent.getMemoryManager()
+-                    ).run(input);
++                    case TEAM -> runTeamTask(input);
+                 }));
+         } catch (Exception e) {
+             output = "执行失败: " + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+@@ -286,6 +282,17 @@ public final class TuiSessionController implements AutoCloseable {
+         appendAssistant(cleanOutput(output));
+     }
+ 
++    private String runTeamTask(String input) {
++        try (AgentOrchestrator orchestrator = new AgentOrchestrator(
++                llmClient,
++                reactAgent.getToolRegistry(),
++                reactAgent.getMemoryManager())) {
++            orchestrator.setExternalContextSupplier(reactAgent.getExternalContextSupplier());
++            orchestrator.setSkillSystem(reactAgent.getSkillRegistry(), reactAgent.getSkillContextBuffer());
++            return orchestrator.run(input);
++        }
++    }
++
+     private String formatSnapshots() {
+         try {
+             List<TurnSnapshot> snapshots = reactAgent.getToolRegistry().getSnapshotService().listSnapshots(20);
+diff --git a/src/main/resources/prompts/modes/team-planner.md b/src/main/resources/prompts/modes/team-planner.md
+index 930fc32..8262e2f 100644
+--- a/src/main/resources/prompts/modes/team-planner.md
++++ b/src/main/resources/prompts/modes/team-planner.md
+@@ -22,11 +22,12 @@
+ 
+ 1. 每个步骤必须有唯一 id，如 `step_1`、`step_2`。
+ 2. `dependencies` 列出依赖的步骤 id。
+-3. 步骤描述要具体，让执行者能直接理解。
+-4. 简单任务可以只拆成 1-3 步。
+-5. 复杂任务拆成 5-10 步。
+-6. 不要为了凑步数引入无关操作。
+-7. 多个步骤可以独立完成时，不要添加依赖，保持 `dependencies` 为空，让编排器并行分配给多个 Worker。
+-8. 只有后一步确实需要前一步结果时，才写 dependencies。
++3. 每个步骤必须交付一个可独立验收的结果，描述中写清实现目标与验证标准。
++4. 搜索、读取、分析、修改、运行测试通常是 Worker 完成一个交付物时的内部动作，不要机械拆成多个串行步骤。
++5. 简单的单文件修改通常只规划 1 个“实现并验证”步骤，确有独立交付物时才拆成 2-3 步。
++6. 复杂任务按可独立验收的交付物拆解，通常为 3-8 步。
++7. 不要为了凑步数引入无关操作。
++8. 多个步骤可以独立完成时，不要添加依赖，保持 `dependencies` 为空，让编排器并行分配给多个 Worker。
++9. 只有后一步确实需要前一步的交付结果时，才写 dependencies。
+ 
+ 只输出 JSON，不要有其他内容。
+diff --git a/src/main/resources/prompts/modes/team-reviewer.md b/src/main/resources/prompts/modes/team-reviewer.md
+index 4c36aee..97f43b8 100644
+--- a/src/main/resources/prompts/modes/team-reviewer.md
++++ b/src/main/resources/prompts/modes/team-reviewer.md
+@@ -8,6 +8,11 @@
+ 2. 结果是否正确，有无明显错误。
+ 3. 是否遗漏重要步骤或细节。
+ 4. 输出格式是否规范。
++5. 必须以“实际工具执行证据”为准，不得只相信 Worker 的自然语言自述。
++6. Worker 声称读取文件时，应有 `read_file` 证据；声称修改文件时，应有 `write_file` 等实际修改证据。
++7. Worker 声称命令或测试通过时，应有 `execute_command`、退出码和关键输出；只有 `BUILD SUCCESS` 但没有测试数量，不能证明业务验收规则全部通过。
++8. “准备执行”“将要修改”“建议运行测试”表示尚未完成，证据不足时必须返回 `approved=false`。
++9. 你没有工具调用权限，不得输出 `read_file`、`write_file` 等伪工具请求。
+ 
+ 请以 JSON 格式输出检查结果：
+ 
+@@ -22,4 +27,4 @@
+ 
+ 如果 `approved` 为 true，`issues` 为空即可。如果 `approved` 为 false，请详细说明问题并给出改进建议。
+ 
+-只输出 JSON，不要有其他内容。
++只输出一个 JSON 对象，不要使用 Markdown 代码块，不要输出推理、解释或工具调用。
+diff --git a/src/test/java/com/paicli/agent/AgentOrchestratorTest.java b/src/test/java/com/paicli/agent/AgentOrchestratorTest.java
+index 4a2d364..d87b5cb 100644
+--- a/src/test/java/com/paicli/agent/AgentOrchestratorTest.java
++++ b/src/test/java/com/paicli/agent/AgentOrchestratorTest.java
+@@ -19,6 +19,8 @@ import java.util.Queue;
+ import java.util.concurrent.CountDownLatch;
+ import java.util.concurrent.TimeUnit;
+ import java.util.concurrent.atomic.AtomicInteger;
++import java.util.concurrent.atomic.AtomicReference;
++import java.util.function.BiConsumer;
+ import java.util.function.Function;
+ 
+ import static org.junit.jupiter.api.Assertions.*;
+@@ -114,6 +116,45 @@ class AgentOrchestratorTest {
+         assertEquals(1, steps.size());
+     }
+ 
++    @Test
++    void shouldParsePlanWithExplanationAroundMarkdownCodeBlock() {
++        AgentOrchestrator orchestrator = new AgentOrchestrator(new GLMClient("test-key"));
++        String planJson = """
++                下面是执行计划：
++                ```json
++                {
++                    "summary": "简单任务",
++                    "steps": [
++                        {
++                            "id": "t1",
++                            "description": "实现并验证功能",
++                            "type": "FILE_WRITE",
++                            "dependencies": []
++                        }
++                    ]
++                }
++                ```
++                请按计划执行。
++                """;
++
++        List<AgentOrchestrator.ExecutionStep> steps = orchestrator.parsePlan(planJson);
++
++        assertEquals(1, steps.size());
++        assertEquals("实现并验证功能", steps.get(0).description());
++    }
++
++    @Test
++    void shouldParsePlanWithPlainTextPrefix() {
++        AgentOrchestrator orchestrator = new AgentOrchestrator(new GLMClient("test-key"));
++        String planJson = "计划如下：{\"steps\":[{\"id\":\"s1\",\"description\":\"完成交付\","
++                + "\"type\":\"FILE_WRITE\",\"dependencies\":[]}]} 后续说明";
++
++        List<AgentOrchestrator.ExecutionStep> steps = orchestrator.parsePlan(planJson);
++
++        assertEquals(1, steps.size());
++        assertEquals("完成交付", steps.get(0).description());
++    }
++
+     @Test
+     void shouldParsePlanWithTasksField() {
+         // 兼容 "tasks" 字段（Plan-and-Execute 的格式）
+@@ -187,30 +228,27 @@ class AgentOrchestratorTest {
+     void shouldParseReviewApproval() {
+         AgentOrchestrator orchestrator = new AgentOrchestrator(new GLMClient("test-key"));
+ 
+-        // 正常通过的 JSON
++        // 只有结构正确且 approved 为布尔 true 的 JSON 才能通过
+         assertTrue(orchestrator.parseReviewApproval(
+                 "{\"approved\": true, \"summary\": \"通过\", \"issues\": []}"));
++        assertEquals(AgentOrchestrator.ReviewVerdict.APPROVED, orchestrator.parseReviewVerdict(
++                "```json\n{\"approved\": true, \"issues\": []}\n```"));
+ 
+-        // 未通过的 JSON
+         assertFalse(orchestrator.parseReviewApproval(
+                 "{\"approved\": false, \"summary\": \"未通过\", \"issues\": [\"缺少错误处理\"]}"));
++        assertEquals(AgentOrchestrator.ReviewVerdict.REJECTED, orchestrator.parseReviewVerdict(
++                "{\"approved\": false, \"issues\": [\"缺少错误处理\"]}"));
+ 
+-        // null 或空内容采取保守策略：默认不通过
++        // 空、纯文本、非法 JSON、缺字段或非布尔字段均属于无效审查协议
+         assertFalse(orchestrator.parseReviewApproval(null));
+         assertFalse(orchestrator.parseReviewApproval(""));
+-
+-        // 含否定关键词的纯文本
+         assertFalse(orchestrator.parseReviewApproval("执行结果未通过审查"));
+-        assertFalse(orchestrator.parseReviewApproval("代码质量不合格"));
+-
+-        // 含肯定关键词的非 JSON 文本
+-        assertTrue(orchestrator.parseReviewApproval("审查通过，代码质量良好"));
+-
+-        // 既无肯定关键词也无 JSON：保守判为不通过
+-        assertFalse(orchestrator.parseReviewApproval("hmm"));
+-
+-        // JSON 缺少 approved 字段：保守判为不通过
++        assertFalse(orchestrator.parseReviewApproval("审查通过，代码质量良好"));
+         assertFalse(orchestrator.parseReviewApproval("{\"summary\": \"无 approved 字段\"}"));
++        assertFalse(orchestrator.parseReviewApproval("{\"approved\": true} 尾随文本"));
++        assertFalse(orchestrator.parseReviewApproval("{\"approved\": true}{\"approved\": false}"));
++        assertEquals(AgentOrchestrator.ReviewVerdict.INVALID,
++                orchestrator.parseReviewVerdict("{\"approved\": \"true\"}"));
+     }
+ 
+     @Test
+@@ -257,7 +295,7 @@ class AgentOrchestratorTest {
+                             {
+                               "id": "s1",
+                               "description": "执行任务",
+-                              "type": "COMMAND",
++                              "type": "ANALYSIS",
+                               "dependencies": []
+                             }
+                           ]
+@@ -290,11 +328,105 @@ class AgentOrchestratorTest {
+     }
+ 
+     @Test
+-    void shouldRunIndependentStepsInParallel(@TempDir Path tempDir) throws Exception {
+-        // 两个互相独立的步骤同属一个依赖批次。若并行执行生效，两个 worker 应同时在 chat() 内等待。
+-        CountDownLatch workersInFlight = new CountDownLatch(2);
++    void shouldRequireReadEvidenceBeforeReviewerAndRecover(@TempDir Path tempDir) throws Exception {
++        Path source = tempDir.resolve("src/App.java");
++        java.nio.file.Files.createDirectories(source.getParent());
++        java.nio.file.Files.writeString(source, "class App {}\n");
++        AtomicReference<String> reviewerInput = new AtomicReference<>();
++        StubGLMClient llmClient = new StubGLMClient(List.of(
++                response("{\"steps\":[{\"id\":\"s1\",\"description\":\"读取 App.java\","
++                        + "\"type\":\"FILE_READ\",\"dependencies\":[]}]}"),
++                response("我将读取目标文件"),
++                toolCallResponse("read_file", "{\"path\":\"src/App.java\"}"),
++                response("已经读取并确认 App 类"),
++                response("{\"approved\":true,\"issues\":[]}" )
++        ), (messages, tools) -> {
++            String lastUser = DispatchingStubGLMClient.findLastUser(messages);
++            if (lastUser.contains("实际工具执行证据")) {
++                reviewerInput.set(lastUser);
++            }
++        });
++
++        try (AgentOrchestrator orchestrator = new AgentOrchestrator(
++                llmClient, configuredRegistry(tempDir), new NoOpMemoryManager(tempDir.toFile()))) {
++            String finalResult = orchestrator.run("读取文件并分析");
++
++            assertTrue(finalResult.contains("已经读取并确认 App 类"));
++            assertEquals(5, llmClient.calls());
++            assertNotNull(reviewerInput.get());
++            assertTrue(reviewerInput.get().contains("read_file"));
++            assertTrue(reviewerInput.get().contains("class App"));
++        }
++    }
++
++    @Test
++    void shouldFailWithoutCallingReviewerWhenEvidenceRetriesExhausted(@TempDir Path tempDir) {
++        StubGLMClient llmClient = new StubGLMClient(List.of(
++                response("{\"steps\":[{\"id\":\"s1\",\"description\":\"读取 App.java\","
++                        + "\"type\":\"FILE_READ\",\"dependencies\":[]}]}"),
++                response("准备读取"),
++                response("我将读取"),
++                response("建议下一步读取")
++        ));
++
++        try (AgentOrchestrator orchestrator = new AgentOrchestrator(
++                llmClient, configuredRegistry(tempDir), new NoOpMemoryManager(tempDir.toFile()))) {
++            String finalResult = orchestrator.run("读取文件");
++
++            assertTrue(finalResult.contains("执行证据不足"));
++            assertTrue(finalResult.contains("状态：完成 0，失败 1"));
++            assertEquals(4, llmClient.calls(), "Planner + three Worker attempts; Reviewer must not run");
++        }
++    }
++
++    @Test
++    void shouldRetryInvalidReviewerProtocolOnceWithoutRerunningWorker(@TempDir Path tempDir) {
++        StubGLMClient llmClient = new StubGLMClient(List.of(
++                response("{\"steps\":[{\"id\":\"s1\",\"description\":\"分析任务\","
++                        + "\"type\":\"ANALYSIS\",\"dependencies\":[]}]}"),
++                response("分析结果"),
++                response("{\"tool\":\"read_file\",\"path\":\"src/App.java\"}"),
++                response("{\"approved\":true,\"issues\":[]}")
++        ));
++
++        try (AgentOrchestrator orchestrator = new AgentOrchestrator(
++                llmClient, configuredRegistry(tempDir), new NoOpMemoryManager(tempDir.toFile()))) {
++            String finalResult = orchestrator.run("分析任务");
++
++            assertTrue(finalResult.contains("分析结果"));
++            assertTrue(finalResult.contains("多 Agent 协作任务完成"));
++            assertEquals(4, llmClient.calls(), "Protocol retry must not rerun Worker");
++        }
++    }
++
++    @Test
++    void shouldFailWhenReviewerProtocolRetryIsStillInvalid(@TempDir Path tempDir) {
++        StubGLMClient llmClient = new StubGLMClient(List.of(
++                response("{\"steps\":[{\"id\":\"s1\",\"description\":\"分析任务\","
++                        + "\"type\":\"ANALYSIS\",\"dependencies\":[]}]}"),
++                response("分析结果"),
++                response("{\"tool\":\"read_file\"}"),
++                response("仍然不是审批 JSON")
++        ));
++
++        try (AgentOrchestrator orchestrator = new AgentOrchestrator(
++                llmClient, configuredRegistry(tempDir), new NoOpMemoryManager(tempDir.toFile()))) {
++            String finalResult = orchestrator.run("分析任务");
++
++            assertTrue(finalResult.contains("Reviewer 连续两次返回无效审查格式"));
++            assertTrue(finalResult.contains("状态：完成 0，失败 1"));
++            assertEquals(4, llmClient.calls());
++        }
++    }
++
++    @Test
++    void shouldExpandWorkerPoolForFourIndependentSteps(@TempDir Path tempDir) throws Exception {
++        CountDownLatch workersInFlight = new CountDownLatch(4);
+         AtomicInteger peakConcurrency = new AtomicInteger();
+         AtomicInteger currentConcurrency = new AtomicInteger();
++        AtomicInteger configuredWorkers = new AtomicInteger();
++        AtomicInteger configuredReviewers = new AtomicInteger();
++        String contextMarker = "DYNAMIC_CONTEXT_MARKER";
+ 
+         Function<String, LlmClient.ChatResponse> dispatcher = body -> {
+             if (body.contains("请为以下任务制定执行计划")) {
+@@ -303,11 +435,18 @@ class AgentOrchestratorTest {
+                           "summary": "并行两步",
+                           "steps": [
+                             {"id": "a", "description": "任务A", "type": "ANALYSIS", "dependencies": []},
+-                            {"id": "b", "description": "任务B", "type": "ANALYSIS", "dependencies": []}
++                            {"id": "b", "description": "任务B", "type": "ANALYSIS", "dependencies": []},
++                            {"id": "c", "description": "任务C", "type": "ANALYSIS", "dependencies": []},
++                            {"id": "d", "description": "任务D", "type": "ANALYSIS", "dependencies": []}
+                           ]
+                         }
+                         """);
+             }
++            if (body.contains("原始任务")) {
++                return response("""
++                        {"approved": true, "summary": "通过", "issues": []}
++                        """);
++            }
+             if (body.contains("任务A")) {
+                 return awaitBarrierThenReturn(workersInFlight, currentConcurrency, peakConcurrency,
+                         response("任务A 的结果"));
+@@ -316,27 +455,44 @@ class AgentOrchestratorTest {
+                 return awaitBarrierThenReturn(workersInFlight, currentConcurrency, peakConcurrency,
+                         response("任务B 的结果"));
+             }
+-            if (body.contains("原始任务")) {
+-                return response("""
+-                        {"approved": true, "summary": "通过", "issues": []}
+-                        """);
++            if (body.contains("任务C")) {
++                return awaitBarrierThenReturn(workersInFlight, currentConcurrency, peakConcurrency,
++                        response("任务C 的结果"));
++            }
++            if (body.contains("任务D")) {
++                return awaitBarrierThenReturn(workersInFlight, currentConcurrency, peakConcurrency,
++                        response("任务D 的结果"));
+             }
+             return response("fallback");
+         };
+ 
+-        DispatchingStubGLMClient llmClient = new DispatchingStubGLMClient(dispatcher);
++        DispatchingStubGLMClient llmClient = new DispatchingStubGLMClient(dispatcher, (messages, tools) -> {
++            String systemPrompt = messages.isEmpty() || messages.get(0).content() == null
++                    ? "" : messages.get(0).content();
++            String lastUser = DispatchingStubGLMClient.findLastUser(messages);
++            if (tools != null && systemPrompt.contains(contextMarker)) {
++                configuredWorkers.incrementAndGet();
++            } else if (lastUser.contains("原始任务") && systemPrompt.contains(contextMarker)) {
++                configuredReviewers.incrementAndGet();
++            }
++        });
+         AgentOrchestrator orchestrator = new AgentOrchestrator(
+                 llmClient,
+                 new ToolRegistry(),
+                 new NoOpMemoryManager(tempDir.toFile())
+         );
++        orchestrator.setExternalContextSupplier(() -> contextMarker);
+ 
+         String finalResult = orchestrator.run("测试并行执行");
+ 
+         assertTrue(finalResult.contains("任务A"), "finalResult should mention task A");
+         assertTrue(finalResult.contains("任务B"), "finalResult should mention task B");
+-        // 两个 Worker 同时持有 chat() 调用 → 并发峰值至少为 2
+-        assertEquals(2, peakConcurrency.get(), "Expected two workers to run concurrently");
++        assertTrue(finalResult.contains("任务C"), "finalResult should mention task C");
++        assertTrue(finalResult.contains("任务D"), "finalResult should mention task D");
++        assertEquals(4, peakConcurrency.get(), "Expected worker pool to expand to four concurrent workers");
++        assertEquals(4, orchestrator.workerPoolStats().total());
++        assertEquals(4, configuredWorkers.get(), "Every dynamically created Worker should inherit context");
++        assertEquals(4, configuredReviewers.get(), "Every per-step Reviewer should inherit context");
+     }
+ 
+     private static LlmClient.ChatResponse awaitBarrierThenReturn(CountDownLatch latch,
+@@ -347,7 +503,7 @@ class AgentOrchestratorTest {
+         peak.updateAndGet(prev -> Math.max(prev, now));
+         latch.countDown();
+         try {
+-            assertTrue(latch.await(5, TimeUnit.SECONDS), "Both workers should reach chat() concurrently");
++            assertTrue(latch.await(5, TimeUnit.SECONDS), "All workers should reach chat() concurrently");
+         } catch (InterruptedException e) {
+             Thread.currentThread().interrupt();
+         } finally {
+@@ -374,6 +530,12 @@ class AgentOrchestratorTest {
+                               "description": "第二步",
+                               "type": "ANALYSIS",
+                               "dependencies": ["s1"]
++                            },
++                            {
++                              "id": "s3",
++                              "description": "第三步",
++                              "type": "ANALYSIS",
++                              "dependencies": ["s2"]
+                             }
+                           ]
+                         }
+@@ -391,13 +553,129 @@ class AgentOrchestratorTest {
+ 
+         assertTrue(finalResult.contains("未完全完成"));
+         assertTrue(finalResult.contains("[step_1] ❌ 第一步"));
+-        assertTrue(finalResult.contains("[step_2] ⏳ 第二步"));
++        assertTrue(finalResult.contains("[step_2] ⏭️ 第二步"));
++        assertTrue(finalResult.contains("[step_3] ⏭️ 第三步"));
++        assertFalse(finalResult.contains("⏳"));
++    }
++
++    @Test
++    void shouldRejectStepAfterTwoCorrectionRetriesAndBlockDependentStep(@TempDir Path tempDir) {
++        StubGLMClient llmClient = new StubGLMClient(List.of(
++                response("""
++                        {"steps":[
++                          {"id":"s1","description":"实现功能","type":"ANALYSIS","dependencies":[]},
++                          {"id":"s2","description":"发布功能","type":"ANALYSIS","dependencies":["s1"]}
++                        ]}
++                        """),
++                response("候选结果1"),
++                response("{\"approved\":false,\"issues\":[\"缺测试\"]}"),
++                response("候选结果2"),
++                response("{\"approved\":false,\"issues\":[\"仍缺测试\"]}"),
++                response("候选结果3"),
++                response("{\"approved\":false,\"issues\":[\"质量仍不达标\"]}")
++        ));
++
++        try (AgentOrchestrator orchestrator = new AgentOrchestrator(
++                llmClient, new ToolRegistry(), new NoOpMemoryManager(tempDir.toFile()))) {
++            String finalResult = orchestrator.run("测试严格审查");
++
++            assertTrue(finalResult.contains("[step_1] 🚫 实现功能"));
++            assertTrue(finalResult.contains("质量仍不达标"));
++            assertTrue(finalResult.contains("[step_2] ⏭️ 发布功能"));
++            assertTrue(finalResult.contains("状态：完成 0，失败 0，审查未通过 1，阻塞 1"));
++            assertFalse(finalResult.contains("多 Agent 协作任务完成"));
++        }
++    }
++
++    @Test
++    void shouldFailStepWhenReviewerCallErrors(@TempDir Path tempDir) {
++        StubGLMClient llmClient = new StubGLMClient(List.of(
++                response("{\"steps\":[{\"id\":\"s1\",\"description\":\"实现功能\",\"type\":\"ANALYSIS\",\"dependencies\":[]}] }"),
++                response("未经审查的候选结果")
++        ));
++
++        try (AgentOrchestrator orchestrator = new AgentOrchestrator(
++                llmClient, new ToolRegistry(), new NoOpMemoryManager(tempDir.toFile()))) {
++            String finalResult = orchestrator.run("测试 Reviewer 故障");
++
++            assertTrue(finalResult.contains("[step_1] ❌ 实现功能"));
++            assertTrue(finalResult.contains("Reviewer 调用失败"));
++            assertTrue(finalResult.contains("未经审查的候选结果"));
++            assertTrue(finalResult.contains("状态：完成 0，失败 1，审查未通过 0，阻塞 0"));
++        }
++    }
++
++    @Test
++    void shouldFailSingleStepWhenWorkerThrowsRuntimeException(@TempDir Path tempDir) {
++        DispatchingStubGLMClient llmClient = new DispatchingStubGLMClient(body -> {
++            if (body.contains("请为以下任务制定执行计划")) {
++                return response("{\"steps\":[{\"id\":\"s1\",\"description\":\"执行任务\",\"type\":\"ANALYSIS\",\"dependencies\":[]}]}" );
++            }
++            throw new IllegalStateException("worker boom");
++        });
++
++        try (AgentOrchestrator orchestrator = new AgentOrchestrator(
++                llmClient, new ToolRegistry(), new NoOpMemoryManager(tempDir.toFile()))) {
++            String finalResult = orchestrator.run("测试 Worker 运行时异常");
++
++            assertTrue(finalResult.contains("[step_1] ❌ 执行任务"));
++            assertTrue(finalResult.contains("步骤执行异常: worker boom"));
++            assertTrue(finalResult.contains("状态：完成 0，失败 1，审查未通过 0，阻塞 0"));
++        }
++    }
++
++    @Test
++    void shouldFailSingleStepWhenReviewerThrowsRuntimeException(@TempDir Path tempDir) {
++        DispatchingStubGLMClient llmClient = new DispatchingStubGLMClient(body -> {
++            if (body.contains("请为以下任务制定执行计划")) {
++                return response("{\"steps\":[{\"id\":\"s1\",\"description\":\"执行任务\",\"type\":\"ANALYSIS\",\"dependencies\":[]}]}" );
++            }
++            if (body.contains("原始任务")) {
++                throw new IllegalStateException("reviewer boom");
++            }
++            return response("候选结果");
++        });
++
++        try (AgentOrchestrator orchestrator = new AgentOrchestrator(
++                llmClient, new ToolRegistry(), new NoOpMemoryManager(tempDir.toFile()))) {
++            String finalResult = orchestrator.run("测试 Reviewer 运行时异常");
++
++            assertTrue(finalResult.contains("[step_1] ❌ 执行任务"));
++            assertTrue(finalResult.contains("步骤执行异常: reviewer boom"));
++            assertTrue(finalResult.contains("状态：完成 0，失败 1，审查未通过 0，阻塞 0"));
++        }
++    }
++
++    @Test
++    void shouldCloseOwnedWorkerPool() {
++        AgentOrchestrator orchestrator = new AgentOrchestrator(new GLMClient("test-key"));
++        assertEquals(2, orchestrator.workerPoolStats().total());
++        assertFalse(orchestrator.workerPoolStats().closed());
++
++        orchestrator.close();
++
++        assertTrue(orchestrator.workerPoolStats().closed());
++        assertEquals(0, orchestrator.workerPoolStats().total());
+     }
+ 
+     private static LlmClient.ChatResponse response(String content) {
+         return new LlmClient.ChatResponse("assistant", content, null, 100, 20);
+     }
+ 
++    private static LlmClient.ChatResponse toolCallResponse(String name, String arguments) {
++        return new LlmClient.ChatResponse(
++                "assistant", "", null,
++                List.of(new LlmClient.ToolCall(
++                        "call-1", new LlmClient.ToolCall.Function(name, arguments))),
++                100, 20);
++    }
++
++    private static ToolRegistry configuredRegistry(Path projectPath) {
++        ToolRegistry registry = new ToolRegistry();
++        registry.setProjectPath(projectPath.toString());
++        return registry;
++    }
++
+     private static final class NoOpMemoryManager extends MemoryManager {
+         private NoOpMemoryManager(File storageDir) {
+             super(new GLMClient("test-key"), 32768, 200000, new LongTermMemory(storageDir));
+@@ -406,10 +684,18 @@ class AgentOrchestratorTest {
+ 
+     private static final class StubGLMClient extends GLMClient {
+         private final Queue<ChatResponse> responses;
++        private final BiConsumer<List<Message>, List<Tool>> requestObserver;
++        private final AtomicInteger calls = new AtomicInteger();
+ 
+         private StubGLMClient(List<ChatResponse> responses) {
++            this(responses, (messages, tools) -> { });
++        }
++
++        private StubGLMClient(List<ChatResponse> responses,
++                              BiConsumer<List<Message>, List<Tool>> requestObserver) {
+             super("test-key");
+             this.responses = new ArrayDeque<>(responses);
++            this.requestObserver = requestObserver;
+         }
+ 
+         @Override
+@@ -419,6 +705,8 @@ class AgentOrchestratorTest {
+ 
+         @Override
+         public ChatResponse chat(List<Message> messages, List<Tool> tools, StreamListener listener) throws IOException {
++            calls.incrementAndGet();
++            requestObserver.accept(messages, tools);
+             ChatResponse response = responses.poll();
+             if (response == null) {
+                 throw new IOException("缺少预设响应");
+@@ -428,6 +716,10 @@ class AgentOrchestratorTest {
+             }
+             return response;
+         }
++
++        private int calls() {
++            return calls.get();
++        }
+     }
+ 
+     /**
+@@ -435,10 +727,17 @@ class AgentOrchestratorTest {
+      */
+     private static final class DispatchingStubGLMClient extends GLMClient {
+         private final Function<String, ChatResponse> dispatcher;
++        private final BiConsumer<List<Message>, List<Tool>> requestObserver;
+ 
+         private DispatchingStubGLMClient(Function<String, ChatResponse> dispatcher) {
++            this(dispatcher, (messages, tools) -> { });
++        }
++
++        private DispatchingStubGLMClient(Function<String, ChatResponse> dispatcher,
++                                         BiConsumer<List<Message>, List<Tool>> requestObserver) {
+             super("test-key");
+             this.dispatcher = dispatcher;
++            this.requestObserver = requestObserver;
+         }
+ 
+         @Override
+@@ -448,6 +747,7 @@ class AgentOrchestratorTest {
+ 
+         @Override
+         public ChatResponse chat(List<Message> messages, List<Tool> tools, StreamListener listener) throws IOException {
++            requestObserver.accept(messages, tools);
+             String lastUserMessage = findLastUser(messages);
+             ChatResponse response = dispatcher.apply(lastUserMessage);
+             if (response == null) {
+diff --git a/src/test/java/com/paicli/agent/SubAgentTest.java b/src/test/java/com/paicli/agent/SubAgentTest.java
+index 9cf3075..79c8f6c 100644
+--- a/src/test/java/com/paicli/agent/SubAgentTest.java
++++ b/src/test/java/com/paicli/agent/SubAgentTest.java
+@@ -20,12 +20,20 @@ class SubAgentTest {
+ 
+     @Test
+     void shouldOnlyEnableToolsForWorker() throws Exception {
+-        assertFalse(invokeShouldUseTools(new SubAgent("planner", AgentRole.PLANNER,
+-                new GLMClient("test-key"), new ToolRegistry())));
+-        assertTrue(invokeShouldUseTools(new SubAgent("worker", AgentRole.WORKER,
+-                new GLMClient("test-key"), new ToolRegistry())));
+-        assertFalse(invokeShouldUseTools(new SubAgent("reviewer", AgentRole.REVIEWER,
+-                new GLMClient("test-key"), new ToolRegistry())));
++        SubAgent planner = new SubAgent("planner", AgentRole.PLANNER,
++                new GLMClient("test-key"), new ToolRegistry());
++        SubAgent worker = new SubAgent("worker", AgentRole.WORKER,
++                new GLMClient("test-key"), new ToolRegistry());
++        SubAgent reviewer = new SubAgent("reviewer", AgentRole.REVIEWER,
++                new GLMClient("test-key"), new ToolRegistry());
++
++        assertFalse(invokeShouldUseTools(planner));
++        assertTrue(invokeShouldUseTools(worker));
++        assertFalse(invokeShouldUseTools(reviewer));
++        assertFalse(invokeGetSystemPrompt(planner).contains("你可以使用以下工具"));
++        assertTrue(invokeGetSystemPrompt(worker).contains("你可以使用以下工具"));
++        assertFalse(invokeGetSystemPrompt(reviewer).contains("你可以使用以下工具"));
++        assertTrue(invokeGetSystemPrompt(planner).contains("当前角色或模型不提供 PaiCLI 原生工具调用"));
+     }
+ 
+     @Test
+@@ -138,12 +146,47 @@ class SubAgentTest {
+         assertTrue(output.contains("答案"), "content should still appear");
+     }
+ 
++    @Test
++    void shouldKeepWorkerEvidenceLocalToOneExecution() {
++        MultiCallStreamClient llm = new MultiCallStreamClient(List.of(
++                new CallScript(listener -> { }, new LlmClient.ChatResponse(
++                        "assistant", "列出目录", null,
++                        List.of(new LlmClient.ToolCall(
++                                "call-1",
++                                new LlmClient.ToolCall.Function("list_dir", "{\"path\":\".\"}"))),
++                        10, 5)),
++                new CallScript(listener -> { }, response("第一次完成")),
++                new CallScript(listener -> { }, response("第二次完成"))
++        ));
++        SubAgent worker = new SubAgent("worker", AgentRole.WORKER, llm, new ToolRegistry());
++        PrintStream sink = new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8);
++
++        WorkerExecution first = worker.executeWithEvidence(
++                AgentMessage.task("orchestrator", "列出目录"), "", sink);
++        WorkerExecution second = worker.executeWithEvidence(
++                AgentMessage.task("orchestrator", "只做分析"), "", sink);
++
++        assertTrue(first.evidence().usedTool("list_dir"));
++        assertTrue(second.evidence().toolCalls().isEmpty(),
++                "Evidence from a previous lease/execution must not leak into the next step");
++    }
++
+     private boolean invokeShouldUseTools(SubAgent agent) throws Exception {
+         Method method = SubAgent.class.getDeclaredMethod("shouldUseTools");
+         method.setAccessible(true);
+         return (boolean) method.invoke(agent);
+     }
+ 
++    private static LlmClient.ChatResponse response(String content) {
++        return new LlmClient.ChatResponse("assistant", content, null, 10, 5);
++    }
++
++    private String invokeGetSystemPrompt(SubAgent agent) throws Exception {
++        Method method = SubAgent.class.getDeclaredMethod("getSystemPrompt");
++        method.setAccessible(true);
++        return (String) method.invoke(agent);
++    }
++
+     /**
+      * 可编排 delta 下发顺序的 stub GLM 客户端，用于测试流式渲染在异常顺序下的行为。
+      */
+diff --git a/src/test/java/com/paicli/prompt/PromptAssemblerTest.java b/src/test/java/com/paicli/prompt/PromptAssemblerTest.java
+index cb2e3da..949fbbb 100644
+--- a/src/test/java/com/paicli/prompt/PromptAssemblerTest.java
++++ b/src/test/java/com/paicli/prompt/PromptAssemblerTest.java
+@@ -66,7 +66,7 @@ class PromptAssemblerTest {
+ 
+         assertTrue(prompt.contains("## Language"));
+         assertTrue(prompt.contains("## Tool Availability"));
+-        assertTrue(prompt.contains("当前模型不支持 PaiCLI 原生工具调用"));
++        assertTrue(prompt.contains("当前角色或模型不提供 PaiCLI 原生工具调用"));
+         assertTrue(prompt.contains("绝对不要输出伪造的工具标签"));
+         assertTrue(prompt.contains("<toolcall>"));
+         assertFalse(prompt.contains("## Tools"));
+diff --git a/src/test/java/com/paicli/tool/ToolRegistryTest.java b/src/test/java/com/paicli/tool/ToolRegistryTest.java
+index 26e15c9..7d53a74 100644
+--- a/src/test/java/com/paicli/tool/ToolRegistryTest.java
++++ b/src/test/java/com/paicli/tool/ToolRegistryTest.java
+@@ -11,6 +11,7 @@ import java.nio.file.Files;
+ import java.nio.file.Path;
+ import java.util.ArrayList;
+ import java.util.List;
++import java.util.Locale;
+ import java.util.concurrent.CountDownLatch;
+ import java.util.concurrent.TimeUnit;
+ import java.util.concurrent.atomic.AtomicInteger;
+@@ -27,9 +28,10 @@ class ToolRegistryTest {
+         ToolRegistry registry = new ToolRegistry();
+         registry.setProjectPath(tempDir.toString());
+ 
+-        String result = registry.executeTool("execute_command", "{\"command\":\"pwd\"}");
++        String result = registry.executeTool("execute_command",
++                "{\"command\":\"" + workingDirectoryCommand() + "\"}");
+ 
+-        assertTrue(result.contains(tempDir.toString()));
++        assertTrue(result.toLowerCase(Locale.ROOT).contains(tempDir.toString().toLowerCase(Locale.ROOT)));
+     }
+ 
+     @Test
+@@ -177,7 +179,8 @@ class ToolRegistryTest {
+         ToolRegistry registry = new ToolRegistry(1);
+         registry.setProjectPath(tempDir.toString());
+ 
+-        String result = registry.executeTool("execute_command", "{\"command\":\"sleep 2\"}");
++        String result = registry.executeTool("execute_command",
++                "{\"command\":\"" + slowCommand() + "\"}");
+ 
+         assertTrue(result.contains("命令执行超时"));
+     }
+@@ -366,4 +369,16 @@ class ToolRegistryTest {
+             System.setProperty(key, previous);
+         }
+     }
++
++    private static String workingDirectoryCommand() {
++        return isWindows() ? "cd" : "pwd";
++    }
++
++    private static String slowCommand() {
++        return isWindows() ? "ping -n 4 127.0.0.1 > nul" : "sleep 2";
++    }
++
++    private static boolean isWindows() {
++        return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
++    }
+ }

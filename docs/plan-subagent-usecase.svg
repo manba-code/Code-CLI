@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="900" viewBox="0 0 1500 900">
+  <rect width="1500" height="900" fill="white"/>
+  <text x="750" y="44" text-anchor="middle" font-size="22" font-weight="bold" fill="#111" font-family="Noto Sans SC, Microsoft YaHei, Arial">PaiCLI PlanExecuteAgent / SubAgent - 代码用例图</text>
+
+  <!-- ===== Actor: CLI User ===== -->
+  <circle cx="60" cy="202" r="18" fill="none" stroke="#333" stroke-width="2"/>
+  <line x1="60" y1="220" x2="60" y2="260" stroke="#333" stroke-width="2"/>
+  <line x1="35" y1="238" x2="85" y2="238" stroke="#333" stroke-width="2"/>
+  <line x1="60" y1="260" x2="38" y2="290" stroke="#333" stroke-width="2"/>
+  <line x1="60" y1="260" x2="82" y2="290" stroke="#333" stroke-width="2"/>
+  <text x="60" y="310" text-anchor="middle" font-size="14" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">CLI 用户</text>
+
+  <ellipse cx="200" cy="220" rx="90" ry="32" fill="#7b5ea7" stroke="#7b5ea7" stroke-width="1.5"/>
+  <text x="200" y="225" text-anchor="middle" font-size="13" fill="white" font-family="Noto Sans SC, Microsoft YaHei, Arial">Plan 执行域</text>
+  <line x1="78" y1="220" x2="108" y2="220" stroke="#aaaaaa" stroke-width="1.2"/>
+
+  <ellipse cx="460" cy="100" rx="100" ry="28" fill="#f8f8f8" stroke="#bbbbbb" stroke-width="1.5"/>
+  <text x="460" y="105" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">接收 /plan 输入</text>
+  <ellipse cx="460" cy="180" rx="100" ry="28" fill="#f8f8f8" stroke="#bbbbbb" stroke-width="1.5"/>
+  <text x="460" y="185" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">创建执行计划</text>
+  <ellipse cx="460" cy="260" rx="100" ry="28" fill="#f8f8f8" stroke="#bbbbbb" stroke-width="1.5"/>
+  <text x="460" y="265" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">审阅计划</text>
+  <ellipse cx="460" cy="340" rx="100" ry="28" fill="#f8f8f8" stroke="#bbbbbb" stroke-width="1.5"/>
+  <text x="460" y="345" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">按 DAG 执行任务</text>
+
+  <line x1="290" y1="220" x2="360" y2="100" stroke="#cccccc" stroke-width="1"/>
+  <line x1="290" y1="220" x2="360" y2="180" stroke="#cccccc" stroke-width="1"/>
+  <line x1="290" y1="220" x2="360" y2="260" stroke="#cccccc" stroke-width="1"/>
+  <line x1="290" y1="220" x2="360" y2="340" stroke="#cccccc" stroke-width="1"/>
+
+  <ellipse cx="700" cy="180" rx="100" ry="28" fill="#f8f8f8" stroke="#bbbbbb" stroke-width="1.5"/>
+  <text x="700" y="185" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">Planner.createPlan</text>
+  <line x1="560" y1="180" x2="600" y2="180" stroke="#cccccc" stroke-width="1"/>
+
+  <ellipse cx="700" cy="260" rx="100" ry="28" fill="#f8f8f8" stroke="#bbbbbb" stroke-width="1.5"/>
+  <text x="700" y="257" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">执行 / 补充</text>
+  <text x="700" y="273" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">取消</text>
+  <line x1="560" y1="260" x2="600" y2="260" stroke="#cccccc" stroke-width="1"/>
+
+  <ellipse cx="700" cy="340" rx="100" ry="28" fill="#f8f8f8" stroke="#bbbbbb" stroke-width="1.5"/>
+  <text x="700" y="337" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">单任务 / 并行</text>
+  <text x="700" y="353" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">批次执行</text>
+  <line x1="560" y1="340" x2="600" y2="340" stroke="#cccccc" stroke-width="1"/>
+
+  <ellipse cx="940" cy="300" rx="100" ry="28" fill="#f8f8f8" stroke="#bbbbbb" stroke-width="1.5"/>
+  <text x="940" y="305" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">LLM 多轮执行</text>
+  <line x1="800" y1="340" x2="840" y2="300" stroke="#cccccc" stroke-width="1"/>
+
+  <ellipse cx="940" cy="380" rx="100" ry="28" fill="#f8f8f8" stroke="#bbbbbb" stroke-width="1.5"/>
+  <text x="940" y="377" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">工具调用并回填</text>
+  <text x="940" y="393" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">消息历史</text>
+  <line x1="800" y1="340" x2="840" y2="380" stroke="#cccccc" stroke-width="1"/>
+
+  <!-- ===== Actor: Orchestrator ===== -->
+  <circle cx="60" cy="602" r="18" fill="none" stroke="#333" stroke-width="2"/>
+  <line x1="60" y1="620" x2="60" y2="660" stroke="#333" stroke-width="2"/>
+  <line x1="35" y1="638" x2="85" y2="638" stroke="#333" stroke-width="2"/>
+  <line x1="60" y1="660" x2="38" y2="690" stroke="#333" stroke-width="2"/>
+  <line x1="60" y1="660" x2="82" y2="690" stroke="#333" stroke-width="2"/>
+  <text x="60" y="710" text-anchor="middle" font-size="14" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">Orchestrator</text>
+
+  <ellipse cx="200" cy="620" rx="90" ry="32" fill="#3a7bd5" stroke="#3a7bd5" stroke-width="1.5"/>
+  <text x="200" y="625" text-anchor="middle" font-size="13" fill="white" font-family="Noto Sans SC, Microsoft YaHei, Arial">SubAgent 域</text>
+  <line x1="78" y1="620" x2="108" y2="620" stroke="#aaaaaa" stroke-width="1.2"/>
+
+  <ellipse cx="460" cy="500" rx="100" ry="28" fill="#f8f8f8" stroke="#bbbbbb" stroke-width="1.5"/>
+  <text x="460" y="505" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">初始化角色代理</text>
+  <ellipse cx="460" cy="580" rx="100" ry="28" fill="#f8f8f8" stroke="#bbbbbb" stroke-width="1.5"/>
+  <text x="460" y="585" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">执行 AgentMessage</text>
+  <ellipse cx="460" cy="660" rx="100" ry="28" fill="#f8f8f8" stroke="#bbbbbb" stroke-width="1.5"/>
+  <text x="460" y="665" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">注入上下文执行</text>
+  <ellipse cx="460" cy="740" rx="100" ry="28" fill="#f8f8f8" stroke="#bbbbbb" stroke-width="1.5"/>
+  <text x="460" y="745" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">审查执行结果</text>
+
+  <line x1="290" y1="620" x2="360" y2="500" stroke="#cccccc" stroke-width="1"/>
+  <line x1="290" y1="620" x2="360" y2="580" stroke="#cccccc" stroke-width="1"/>
+  <line x1="290" y1="620" x2="360" y2="660" stroke="#cccccc" stroke-width="1"/>
+  <line x1="290" y1="620" x2="360" y2="740" stroke="#cccccc" stroke-width="1"/>
+
+  <ellipse cx="700" cy="500" rx="100" ry="28" fill="#f8f8f8" stroke="#bbbbbb" stroke-width="1.5"/>
+  <text x="700" y="497" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">选择 Planner / Worker</text>
+  <text x="700" y="513" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">Reviewer Prompt</text>
+  <line x1="560" y1="500" x2="600" y2="500" stroke="#cccccc" stroke-width="1"/>
+
+  <ellipse cx="700" cy="580" rx="100" ry="28" fill="#f8f8f8" stroke="#bbbbbb" stroke-width="1.5"/>
+  <text x="700" y="577" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">循环调用 LLM</text>
+  <text x="700" y="593" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">直到返回结果</text>
+  <line x1="560" y1="580" x2="600" y2="580" stroke="#cccccc" stroke-width="1"/>
+
+  <ellipse cx="700" cy="660" rx="100" ry="28" fill="#f8f8f8" stroke="#bbbbbb" stroke-width="1.5"/>
+  <text x="700" y="657" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">Worker 可用工具</text>
+  <text x="700" y="673" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">其他角色禁用</text>
+  <line x1="560" y1="660" x2="600" y2="660" stroke="#cccccc" stroke-width="1"/>
+
+  <ellipse cx="700" cy="740" rx="100" ry="28" fill="#f8f8f8" stroke="#bbbbbb" stroke-width="1.5"/>
+  <text x="700" y="745" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">返回 AgentMessage</text>
+  <line x1="560" y1="740" x2="600" y2="740" stroke="#cccccc" stroke-width="1"/>
+
+  <ellipse cx="940" cy="580" rx="100" ry="28" fill="#f8f8f8" stroke="#bbbbbb" stroke-width="1.5"/>
+  <text x="940" y="577" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">预算 / 压缩</text>
+  <text x="940" y="593" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">保护循环</text>
+  <line x1="800" y1="580" x2="840" y2="580" stroke="#cccccc" stroke-width="1"/>
+
+  <ellipse cx="940" cy="660" rx="100" ry="28" fill="#f8f8f8" stroke="#bbbbbb" stroke-width="1.5"/>
+  <text x="940" y="657" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">执行工具并追加</text>
+  <text x="940" y="673" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">tool message</text>
+  <line x1="800" y1="660" x2="840" y2="660" stroke="#cccccc" stroke-width="1"/>
+
+  <!-- ===== Shared infrastructure ===== -->
+  <ellipse cx="1200" cy="260" rx="110" ry="30" fill="#2e8b57" stroke="#2e8b57" stroke-width="1.5"/>
+  <text x="1200" y="265" text-anchor="middle" font-size="13" fill="white" font-family="Noto Sans SC, Microsoft YaHei, Arial">共享基础设施</text>
+
+  <ellipse cx="1200" cy="340" rx="100" ry="28" fill="#f8f8f8" stroke="#bbbbbb" stroke-width="1.5"/>
+  <text x="1200" y="345" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">LlmClient</text>
+  <ellipse cx="1200" cy="420" rx="100" ry="28" fill="#f8f8f8" stroke="#bbbbbb" stroke-width="1.5"/>
+  <text x="1200" y="425" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">ToolRegistry</text>
+  <ellipse cx="1200" cy="500" rx="100" ry="28" fill="#f8f8f8" stroke="#bbbbbb" stroke-width="1.5"/>
+  <text x="1200" y="497" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">Prompt / Skill</text>
+  <text x="1200" y="513" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">External Context</text>
+  <ellipse cx="1200" cy="580" rx="100" ry="28" fill="#f8f8f8" stroke="#bbbbbb" stroke-width="1.5"/>
+  <text x="1200" y="577" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">LSP / Image</text>
+  <text x="1200" y="593" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">补充消息</text>
+  <ellipse cx="1200" cy="660" rx="100" ry="28" fill="#f8f8f8" stroke="#bbbbbb" stroke-width="1.5"/>
+  <text x="1200" y="657" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">流式渲染</text>
+  <text x="1200" y="673" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">reasoning / content</text>
+
+  <line x1="1040" y1="300" x2="1100" y2="340" stroke="#cccccc" stroke-width="1"/>
+  <line x1="1040" y1="380" x2="1100" y2="420" stroke="#cccccc" stroke-width="1"/>
+  <line x1="1040" y1="580" x2="1100" y2="580" stroke="#cccccc" stroke-width="1"/>
+  <line x1="1040" y1="660" x2="1100" y2="420" stroke="#cccccc" stroke-width="1"/>
+  <line x1="1040" y1="580" x2="1100" y2="660" stroke="#cccccc" stroke-width="1"/>
+
+  <!-- Legend -->
+  <rect x="1080" y="80" width="330" height="120" rx="8" fill="white" stroke="#cccccc" stroke-width="1.2"/>
+  <text x="1245" y="110" text-anchor="middle" font-size="14" font-weight="bold" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">图例</text>
+  <ellipse cx="1165" cy="145" rx="70" ry="22" fill="#f8f8f8" stroke="#bbbbbb" stroke-width="1.5"/>
+  <text x="1165" y="150" text-anchor="middle" font-size="12" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">已有用例</text>
+  <ellipse cx="1320" cy="145" rx="70" ry="22" fill="#7b5ea7" stroke="#7b5ea7" stroke-width="1.5"/>
+  <text x="1320" y="150" text-anchor="middle" font-size="12" fill="white" font-family="Noto Sans SC, Microsoft YaHei, Arial">业务域</text>
+</svg>
