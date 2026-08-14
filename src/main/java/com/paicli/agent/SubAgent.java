@@ -37,7 +37,8 @@ import java.util.function.Supplier;
  * 子代理 - 可配置角色的轻量 Agent
  *
  * 每个 SubAgent 有独立的角色、系统提示词和对话历史，
- * 但共享 LLM 客户端和工具注册表。
+ * 但共享 LLM 客户端和工具注册表。共享 ToolRegistry 只代表工具能力、项目路径和策略配置
+ * 一致，不代表不同 SubAgent 共享 conversationHistory。
  */
 public class SubAgent implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(SubAgent.class);
@@ -45,8 +46,10 @@ public class SubAgent implements AutoCloseable {
 
     private final String name;
     private final AgentRole role;
+    // 共享依赖由上层管理生命周期；SubAgent.close() 不关闭它们。
     private final LlmClient llmClient;
     private final ToolRegistry toolRegistry;
+    // conversationHistory 是实例私有的任务上下文，也是 Worker/Reviewer 隔离的核心边界。
     private final List<LlmClient.Message> conversationHistory;
     private Supplier<String> externalContextSupplier = () -> "";
     private SkillRegistry skillRegistry;
@@ -259,7 +262,10 @@ public class SubAgent implements AutoCloseable {
     }
 
     /**
-     * 执行任务（带上下文注入），用于 Worker 接收额外上下文
+     * 执行任务（带上下文注入），用于 Worker 接收依赖步骤结果。
+     *
+     * <p>上下文只拼入本次 user message，不写入共享 ToolRegistry；因此跨步骤传递是显式的，
+     * 不依赖 Worker 的复用顺序。</p>
      */
     public AgentMessage executeWithContext(AgentMessage task, String context) {
         return executeWithContext(task, context, System.out);
@@ -276,7 +282,8 @@ public class SubAgent implements AutoCloseable {
     }
 
     /**
-     * 检查结果（Reviewer 专用）
+     * 检查结果（Reviewer 专用）。审查输入只包含原始步骤和本次执行结果，调用方负责在
+     * 每轮审查后清理 Reviewer 历史。
      */
     public AgentMessage review(String originalTask, String executionResult) {
         return review(originalTask, executionResult, System.out);
@@ -289,7 +296,10 @@ public class SubAgent implements AutoCloseable {
     }
 
     /**
-     * 清空对话历史（保留系统提示词），用于处理下一个独立任务
+     * 清空任务历史但保留系统提示词，用于安全复用 Worker/Reviewer。
+     *
+     * <p>用户消息、assistant 消息和 tool 结果都会被移除，防止上一个独立步骤污染下一个步骤；
+     * Agent 仍保持可用，这与 {@link #close()} 的终止语义不同。</p>
      */
     public void clearHistory() {
         ensureOpen();
@@ -298,12 +308,16 @@ public class SubAgent implements AutoCloseable {
         conversationHistory.add(systemMsg);
     }
 
+    /**
+     * 返回该 SubAgent 是否已经结束自身生命周期。
+     */
     public boolean isClosed() {
         return closed.get();
     }
 
     /**
-     * 释放该 Agent 独占的任务上下文。共享 LLM 客户端和工具注册表由上层管理，不在此关闭。
+     * 释放该 Agent 独占的任务上下文并禁止后续使用。此操作幂等；共享 LLM 客户端和
+     * 工具注册表由上层管理，不在此关闭。
      */
     @Override
     public void close() {

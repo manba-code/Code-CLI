@@ -47,7 +47,9 @@ public class AgentOrchestrator implements AutoCloseable {
     private static final int MIN_WORKERS = 2;
     private static final int MAX_WORKERS = 4;
 
+    // LlmClient、ToolRegistry、MemoryManager 由调用方提供并共享；编排器只借用，不负责关闭。
     private final LlmClient llmClient;
+    // Planner、共享 Reviewer 和 WorkerPool 由当前编排器创建并拥有，close() 时统一释放。
     private final SubAgent planner;
     private final WorkerPool workerPool;
     private final SubAgent reviewer;
@@ -59,7 +61,11 @@ public class AgentOrchestrator implements AutoCloseable {
     private com.paicli.skill.SkillContextBuffer skillContextBuffer;
     private final AtomicBoolean closed = new AtomicBoolean();
 
-    // 执行步骤的数据结构（package-private 供测试访问）
+    /**
+     * 不可变的步骤状态快照。并行任务不原地修改对象，而是通过 {@link #updateStep}
+     * 用新快照替换旧值，便于依赖调度只根据明确的终态做下一批筛选。
+     * package-private 供同包测试验证依赖关系和状态转换。
+     */
     record ExecutionStep(String id, String description, String type,
                                   List<String> dependencies, String result,
                                   StepStatus status) {
@@ -111,6 +117,10 @@ public class AgentOrchestrator implements AutoCloseable {
         this.memoryManager = memoryManager;
     }
 
+    /**
+     * 更新所有现存角色的外部上下文来源。后续按压力创建的 Worker/Reviewer 会通过
+     * {@link #configureSubAgent(SubAgent)} 继承当前配置。
+     */
     public void setExternalContextSupplier(Supplier<String> externalContextSupplier) {
         ensureOpen();
         this.externalContextSupplier = externalContextSupplier == null ? () -> "" : externalContextSupplier;
@@ -173,7 +183,8 @@ public class AgentOrchestrator implements AutoCloseable {
         out.println(AnsiStyle.heading("📋 执行计划"));
         out.println(summarizeSteps(steps) + "\n");
 
-        // 3. 执行阶段：按依赖顺序分配给执行者
+        // 3. 执行阶段：每轮只选择依赖全部完成的步骤，形成一个 DAG 批次屏障。
+        // 当前批次全部结束后才重新筛选下一批，避免下游步骤提前读取尚未完成的结果。
         out.println(AnsiStyle.heading("⚡ 第二阶段：执行"));
         Map<String, Integer> retryCount = new ConcurrentHashMap<>();
         int batchIndex = 0;
@@ -200,7 +211,7 @@ public class AgentOrchestrator implements AutoCloseable {
                     out.println("❌ 步骤 [" + step.id() + "] 等待 Worker 时被中断\n");
                 }
             } else {
-                // 多步批次：真正并行执行，每步用独立的 PrintStream 缓冲，完成后按 step_id 顺序 flush
+                // 多步批次：真正并行执行，每步用独立的 PrintStream 缓冲，完成后按计划顺序 flush。
                 out.println("⚡ 批次 #" + batchIndex + "：" + executable.size()
                         + " 个独立步骤并行执行（最多 " + workerPool.maxWorkers() + " 个并发 Worker）\n");
                 runBatchParallel(executable, steps, retryCount);
@@ -287,7 +298,10 @@ public class AgentOrchestrator implements AutoCloseable {
     }
 
     /**
-     * 获取当前可执行的步骤（依赖已全部完成）
+     * 获取当前可执行的步骤（依赖已全部完成）。
+     *
+     * <p>失败依赖不会被视为完成，因此其下游步骤会继续保持 PENDING，最终由编排器
+     * 统一标记为因前置失败而跳过。</p>
      */
     List<ExecutionStep> getExecutableSteps(List<ExecutionStep> steps) {
         Map<String, StepStatus> statusMap = new HashMap<>();
@@ -397,6 +411,10 @@ public class AgentOrchestrator implements AutoCloseable {
         return toolRegistry;
     }
 
+    /**
+     * 串行化并行步骤对共享步骤列表的替换操作。列表本身是 ArrayList，不能让多个
+     * Worker 线程同时遍历定位并写入。
+     */
     private synchronized void updateStep(List<ExecutionStep> steps, String stepId, ExecutionStep updated) {
         for (int i = 0; i < steps.size(); i++) {
             if (steps.get(i).id().equals(stepId)) {
@@ -410,7 +428,8 @@ public class AgentOrchestrator implements AutoCloseable {
      * 并行执行一批相互独立的步骤。
      *
      * 每个步骤获取一个 Worker（池化，避免同一 Worker 被两个步骤并发占用），同时创建独立的 Reviewer 实例，
-     * 流式输出写入步骤本地的 ByteArrayOutputStream；所有任务完成后按 step_id 顺序将缓冲区 flush 到 stdout。
+     * 避免多个审查任务竞争同一个 conversationHistory。流式输出写入步骤本地的
+     * ByteArrayOutputStream；所有任务完成后按 batch 中的计划顺序将缓冲区 flush 到 stdout。
      */
     private void runBatchParallel(List<ExecutionStep> batch, List<ExecutionStep> steps,
                                   Map<String, Integer> retryCount) {
@@ -464,7 +483,7 @@ public class AgentOrchestrator implements AutoCloseable {
             workerPool.trimToMinimum();
         }
 
-        // 按 step_id 顺序 flush 各步骤的缓冲输出，保证用户看到的执行过程有稳定顺序
+        // batch 继承原计划顺序；这里按该顺序 flush，而不是按线程完成先后输出。
         for (ExecutionStep step : batch) {
             ByteArrayOutputStream buf = buffers.get(step.id());
             if (buf != null && buf.size() > 0) {
@@ -477,7 +496,9 @@ public class AgentOrchestrator implements AutoCloseable {
     /**
      * 执行单个步骤（Worker 执行 + Reviewer 审查 + 最多 2 次重试）。
      *
-     * 此方法被串行和并行两条路径共享，通过 {@code out} 控制流式输出目的地。
+     * 此方法被串行和并行两条路径共享，通过 {@code out} 控制流式输出目的地。同一步骤
+     * 的重试继续使用当前 Worker，使其保留本步骤内的执行历史；方法返回后 Lease 才会
+     * 清理 Worker 历史。Reviewer 每次审查后立即清理历史，避免重试审查受上次结论污染。
      */
     private void runStep(ExecutionStep step, List<ExecutionStep> steps,
                          Map<String, Integer> retryCount,
@@ -578,6 +599,13 @@ public class AgentOrchestrator implements AutoCloseable {
         }
     }
 
+    /**
+     * 只把当前步骤的直接依赖结果显式注入任务文本。
+     *
+     * <p>Worker 虽然共享 ToolRegistry，但不共享 conversationHistory；跨步骤信息通过这里
+     * 传递，而不是依赖某个 Worker 恰好执行过前置步骤。结果预览受长度限制，避免依赖链
+     * 无界放大上下文。</p>
+     */
     private String buildStepContext(List<ExecutionStep> steps, ExecutionStep currentStep) {
         StringBuilder context = new StringBuilder();
         context.append("总任务上下文：\n");
@@ -653,18 +681,27 @@ public class AgentOrchestrator implements AutoCloseable {
         return result.toString();
     }
 
+    /**
+     * 创建拥有独立会话历史的 Worker。共享的是 LLM 客户端和工具注册表，不是对话上下文。
+     */
     private SubAgent createWorker(int workerNumber) {
         SubAgent worker = new SubAgent("worker-" + workerNumber, AgentRole.WORKER, llmClient, toolRegistry);
         configureSubAgent(worker);
         return worker;
     }
 
+    /**
+     * 创建 Reviewer；并行路径按步骤创建独立实例，串行路径复用编排器持有的 Reviewer。
+     */
     private SubAgent createReviewer(String name) {
         SubAgent agent = new SubAgent(name, AgentRole.REVIEWER, llmClient, toolRegistry);
         configureSubAgent(agent);
         return agent;
     }
 
+    /**
+     * 为预热实例和动态扩容实例应用一致的外部上下文与 Skill 配置。
+     */
     private void configureSubAgent(SubAgent agent) {
         agent.setExternalContextSupplier(externalContextSupplier);
         agent.setSkillRegistry(skillRegistry);
@@ -681,6 +718,10 @@ public class AgentOrchestrator implements AutoCloseable {
         }
     }
 
+    /**
+     * 释放当前 Team 任务拥有的角色状态和 Worker 池。共享的 LlmClient、ToolRegistry、
+     * MemoryManager 仍由上层 CLI/TUI 生命周期管理。
+     */
     @Override
     public void close() {
         if (closed.compareAndSet(false, true)) {

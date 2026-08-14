@@ -27,6 +27,9 @@ final class WorkerPool implements AutoCloseable {
     private final int minWorkers;
     private final int maxWorkers;
     private final IntFunction<SubAgent> workerFactory;
+
+    // 以下集合和生命周期标记都由同一把锁保护。Worker 一旦从 availableWorkers 取出，
+    // 就只能通过对应 Lease 归还，避免同一实例被两个并行步骤同时占用。
     private final ReentrantLock lock = new ReentrantLock();
     private final Condition workerReturned = lock.newCondition();
     private final Deque<SubAgent> availableWorkers = new ArrayDeque<>();
@@ -53,6 +56,12 @@ final class WorkerPool implements AutoCloseable {
         }
     }
 
+    /**
+     * 独占租借一个 Worker。
+     *
+     * <p>优先复用空闲实例；无空闲实例且未达到上限时按需扩容；达到上限后等待其他
+     * Lease 归还。调用方必须使用 try-with-resources，保证成功、异常和中断路径都会归还。</p>
+     */
     Lease acquire() throws InterruptedException {
         lock.lockInterruptibly();
         try {
@@ -74,6 +83,9 @@ final class WorkerPool implements AutoCloseable {
 
     /**
      * 在批次边界关闭多余的空闲 Worker，避免步骤完成顺序导致池容量抖动。
+     *
+     * <p>仍被 Lease 持有的 Worker 不会被并发关闭；{@code trimRequested} 会把缩容请求
+     * 延迟到这些 Worker 归还时处理，直到总数回落到最小容量。</p>
      */
     void trimToMinimum() {
         List<SubAgent> removed = new ArrayList<>();
@@ -109,6 +121,12 @@ final class WorkerPool implements AutoCloseable {
         }
     }
 
+    /**
+     * 对当前池成员的快照执行配置动作。
+     *
+     * <p>配置动作在锁外执行，避免外部回调长时间占用池锁。之后动态创建的 Worker
+     * 由编排器的工厂方法注入同一份最新配置。</p>
+     */
     void forEachWorker(Consumer<SubAgent> action) {
         if (action == null) {
             return;
@@ -123,6 +141,12 @@ final class WorkerPool implements AutoCloseable {
         snapshot.forEach(action);
     }
 
+    /**
+     * 关闭池并唤醒等待租借的线程。
+     *
+     * <p>空闲 Worker 立即关闭；已租出的 Worker 保持运行，待 Lease 归还后再关闭，
+     * 避免清理动作与正在进行的 LLM/工具调用并发修改同一实例。</p>
+     */
     @Override
     public void close() {
         List<SubAgent> idleWorkers;
@@ -157,6 +181,12 @@ final class WorkerPool implements AutoCloseable {
         }
     }
 
+    /**
+     * 归还 Worker 时先重置任务历史，再决定复用或关闭。
+     *
+     * <p>历史清理失败的实例不能重新入池；池已关闭或存在缩容请求时，多余实例也会
+     * 从成员集合移除并关闭。</p>
+     */
     private void release(SubAgent worker) {
         boolean reusable = resetSafely(worker);
         boolean shouldClose;
@@ -204,6 +234,10 @@ final class WorkerPool implements AutoCloseable {
     record Stats(int total, int idle, int busy, int min, int max, boolean closed) {
     }
 
+    /**
+     * Worker 的独占使用凭证。关闭操作幂等，保证重复 close 不会把同一 Worker
+     * 重复放回空闲队列。
+     */
     final class Lease implements AutoCloseable {
         private final SubAgent worker;
         private final AtomicBoolean released = new AtomicBoolean();
