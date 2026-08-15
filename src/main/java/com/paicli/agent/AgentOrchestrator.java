@@ -203,6 +203,8 @@ public class AgentOrchestrator implements AutoCloseable {
                 // 单步批次：直接串行流式输出，保持实时打字观感
                 ExecutionStep step = executable.get(0);
                 String context = buildStepContext(steps, step);
+
+                // Lease 的作用域覆盖执行、审查和重试；退出作用域后才清理历史并归还 Worker。
                 try (WorkerPool.Lease lease = workerPool.acquire()) {
                     runStep(step, steps, retryCount, lease.worker(), reviewer, context, out);
                 } catch (InterruptedException e) {
@@ -304,11 +306,14 @@ public class AgentOrchestrator implements AutoCloseable {
      * 统一标记为因前置失败而跳过。</p>
      */
     List<ExecutionStep> getExecutableSteps(List<ExecutionStep> steps) {
+        // 先构造本轮状态快照，避免筛选过程中反复遍历步骤列表。
         Map<String, StepStatus> statusMap = new HashMap<>();
         for (ExecutionStep step : steps) {
             statusMap.put(step.id(), step.status());
         }
 
+        // 只有“尚未执行且全部依赖成功完成”的步骤能进入当前批次。
+        // FAILED 依赖不会放行下游，因此失败链路最终仍保持 PENDING 并被统一报告为跳过。
         return steps.stream()
                 .filter(step -> step.status() == StepStatus.PENDING)
                 .filter(step -> step.dependencies().stream()
@@ -433,6 +438,7 @@ public class AgentOrchestrator implements AutoCloseable {
      */
     private void runBatchParallel(List<ExecutionStep> batch, List<ExecutionStep> steps,
                                   Map<String, Integer> retryCount) {
+        // 线程数按当前批次大小收敛，但绝不超过 WorkerPool 的最大租借数。
         int parallelism = Math.min(batch.size(), workerPool.maxWorkers());
         ExecutorService executor = Executors.newFixedThreadPool(parallelism, r -> {
             Thread t = new Thread(r, "paicli-multi-agent");
@@ -443,12 +449,17 @@ public class AgentOrchestrator implements AutoCloseable {
         List<Future<?>> futures = new ArrayList<>();
 
         for (ExecutionStep step : batch) {
+            // 每个步骤写自己的缓冲区，避免多个线程直接争用终端输出流。
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             buffers.put(step.id(), baos);
             PrintStream stepOut = new PrintStream(baos, true, StandardCharsets.UTF_8);
+
+            // 当前批次的步骤互相独立；这里只读取上一批已完成的直接依赖结果。
             String context = buildStepContext(steps, step);
 
             futures.add(executor.submit(() -> {
+                // 并行步骤不能共享 Reviewer 的 conversationHistory，因此每步创建独立实例。
+                // Lease 则保证每个步骤在完整执行周期内独占一个 Worker。
                 try (SubAgent localReviewer = createReviewer("reviewer-" + step.id());
                      WorkerPool.Lease lease = workerPool.acquire()) {
                     runStep(step, steps, retryCount, lease.worker(), localReviewer, context, stepOut);
@@ -468,6 +479,7 @@ public class AgentOrchestrator implements AutoCloseable {
         }
 
         try {
+            // Future 等待形成批次屏障：所有同层步骤结束后，外层 run() 才会筛选下一层依赖。
             for (Future<?> f : futures) {
                 try {
                     f.get();
@@ -479,6 +491,7 @@ public class AgentOrchestrator implements AutoCloseable {
                 }
             }
         } finally {
+            // 批次线程池不跨批次复用；WorkerPool 单独保留最小容量，并关闭本批次扩出的实例。
             executor.shutdownNow();
             workerPool.trimToMinimum();
         }
@@ -512,6 +525,8 @@ public class AgentOrchestrator implements AutoCloseable {
         }
 
         AgentMessage taskMsg = AgentMessage.task("orchestrator", step.description());
+
+        // 依赖结果显式拼入本步骤消息；不依赖 Worker 之前是否执行过某个前置步骤。
         AgentMessage result = worker.executeWithContext(taskMsg, context, out);
         if (CancellationContext.isCancelled()) {
             updateStep(steps, step.id(), step.withFailed("用户取消"));
@@ -532,9 +547,12 @@ public class AgentOrchestrator implements AutoCloseable {
 
         out.println("🔍 " + reviewer.getName() + " 正在审查步骤 [" + step.id() + "] 的结果...");
         AgentMessage reviewResult = reviewer.review(step.description(), result.content(), out);
+
+        // Reviewer 的上一轮结论不应成为下一轮审查证据，只保留角色系统提示词。
         reviewer.clearHistory();
 
         if (reviewResult.type() == AgentMessage.Type.ERROR) {
+            // 审查服务不可用不回滚已经成功的 Worker 结果，按降级策略保留当前产物。
             log.warn("Reviewer failed for step {}: {}", step.id(), reviewResult.content());
             out.println("⚠️ 步骤 [" + step.id() + "] 审查阶段 LLM 调用失败，保留当前执行结果\n");
             updateStep(steps, step.id(), step.withResult(result.content()));
@@ -560,6 +578,7 @@ public class AgentOrchestrator implements AutoCloseable {
             out.println("⚠️ 步骤 [" + step.id() + "] 审查未通过，正在重新执行...");
             out.println("   反馈: " + issues + "\n");
 
+            // 重试继续使用同一个 Worker，让它能看到本步骤之前的尝试；Lease 归还时再统一清理。
             String feedbackContext = context + "\n\n之前的执行结果被审查拒绝，原因：\n" + issues;
             AgentMessage retryResult = worker.executeWithContext(taskMsg, feedbackContext, out);
             if (retryResult.type() == AgentMessage.Type.ERROR) {
@@ -578,9 +597,12 @@ public class AgentOrchestrator implements AutoCloseable {
 
             acceptedResult = retryResult.content();
             AgentMessage retryReview = reviewer.review(step.description(), acceptedResult, out);
+
+            // 每次审查都是独立判断，避免首次拒绝结论污染重试结果。
             reviewer.clearHistory();
 
             if (retryReview.type() == AgentMessage.Type.ERROR) {
+                // 重试结果已经产生但审查服务异常：停止继续消耗重试次数，保留最新结果。
                 log.warn("Reviewer failed for step {} retry {}: {}", step.id(), retries, retryReview.content());
                 approved = true;
                 issues = "";
@@ -591,6 +613,7 @@ public class AgentOrchestrator implements AutoCloseable {
             issues = parseReviewIssues(retryReview.content());
         }
 
+        // 即使达到重试上限仍保留最后一次可用产物；approved 只决定最终提示文案。
         updateStep(steps, step.id(), step.withResult(acceptedResult));
         if (approved) {
             out.println("✅ 步骤 [" + step.id() + "] 重试后审查通过\n");
@@ -615,6 +638,7 @@ public class AgentOrchestrator implements AutoCloseable {
                 context.append("已完成的依赖步骤 [").append(step.id()).append("]: ")
                         .append(step.description()).append("\n");
                 if (step.result() != null && !step.result().isBlank()) {
+                    // 依赖结果只作为提示上下文，限制预览长度以免 DAG 层数增加时上下文持续膨胀。
                     String preview = step.result().length() > 500
                             ? step.result().substring(0, 500) + "..."
                             : step.result();
@@ -724,7 +748,9 @@ public class AgentOrchestrator implements AutoCloseable {
      */
     @Override
     public void close() {
+        // compareAndSet 让显式 close 与 try-with-resources 的重复关闭保持幂等。
         if (closed.compareAndSet(false, true)) {
+            // 这里只释放编排器拥有的角色状态；共享依赖仍由 CLI/TUI 的更外层生命周期管理。
             planner.close();
             workerPool.close();
             reviewer.close();

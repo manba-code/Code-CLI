@@ -51,6 +51,8 @@ final class WorkerPool implements AutoCloseable {
         this.minWorkers = minWorkers;
         this.maxWorkers = maxWorkers;
         this.workerFactory = workerFactory;
+
+        // 预热最小容量，避免第一个并行批次把 Worker 创建成本放到任务执行关键路径上。
         for (int i = 0; i < minWorkers; i++) {
             availableWorkers.addLast(createWorker());
         }
@@ -67,10 +69,14 @@ final class WorkerPool implements AutoCloseable {
         try {
             while (true) {
                 ensureOpen();
+
+                // 从空闲队列移除即代表独占租出；归还前该 Worker 不会再次出现在队列中。
                 SubAgent available = availableWorkers.pollFirst();
                 if (available != null) {
                     return new Lease(available);
                 }
+
+                // 池未达到上限时直接扩容；达到上限后只能等待其他 Lease 归还。
                 if (allWorkers.size() < maxWorkers) {
                     return new Lease(createWorker());
                 }
@@ -91,6 +97,7 @@ final class WorkerPool implements AutoCloseable {
         List<SubAgent> removed = new ArrayList<>();
         lock.lock();
         try {
+            // 即使当前没有空闲 Worker，也保留缩容意图，让仍在执行的 Worker 在归还时完成缩容。
             trimRequested = true;
             while (!closed && allWorkers.size() > minWorkers && !availableWorkers.isEmpty()) {
                 SubAgent worker = availableWorkers.removeLast();
@@ -103,6 +110,8 @@ final class WorkerPool implements AutoCloseable {
         } finally {
             lock.unlock();
         }
+
+        // close() 会清空 Agent 私有上下文，放在锁外执行以缩短池锁持有时间。
         removed.forEach(this::closeSafely);
     }
 
@@ -155,14 +164,20 @@ final class WorkerPool implements AutoCloseable {
             if (closed) {
                 return;
             }
+
+            // 先发布关闭状态并唤醒等待者；等待者会在 ensureOpen() 处得到明确失败。
             closed = true;
             idleWorkers = new ArrayList<>(availableWorkers);
             availableWorkers.clear();
+
+            // 已租出的 Worker 仍保留在 allWorkers，等对应 Lease 归还后由 release() 关闭。
             allWorkers.removeAll(idleWorkers);
             workerReturned.signalAll();
         } finally {
             lock.unlock();
         }
+
+        // 不在池锁内执行 SubAgent.close()，避免清理逻辑阻塞租借/归还状态更新。
         idleWorkers.forEach(this::closeSafely);
     }
 
@@ -188,6 +203,7 @@ final class WorkerPool implements AutoCloseable {
      * 从成员集合移除并关闭。</p>
      */
     private void release(SubAgent worker) {
+        // 先清除上一个步骤的消息、工具结果等任务上下文；重置失败的实例不能安全复用。
         boolean reusable = resetSafely(worker);
         boolean shouldClose;
         lock.lock();
@@ -195,6 +211,8 @@ final class WorkerPool implements AutoCloseable {
             if (!allWorkers.contains(worker)) {
                 return;
             }
+
+            // 关闭池、重置失败或待缩容三种情况都不再让 Worker 回到空闲队列。
             shouldClose = closed || !reusable || (trimRequested && allWorkers.size() > minWorkers);
             if (shouldClose) {
                 allWorkers.remove(worker);
@@ -204,10 +222,14 @@ final class WorkerPool implements AutoCloseable {
             if (trimRequested && allWorkers.size() <= minWorkers) {
                 trimRequested = false;
             }
+
+            // 无论本次是复用还是关闭，都可能让等待 acquire() 的线程重新判断池状态。
             workerReturned.signalAll();
         } finally {
             lock.unlock();
         }
+
+        // 与缩容路径一致，真正关闭实例放到锁外执行。
         if (shouldClose) {
             closeSafely(worker);
         }
@@ -255,6 +277,7 @@ final class WorkerPool implements AutoCloseable {
 
         @Override
         public void close() {
+            // try-with-resources 和异常兜底可能重复调用 close；CAS 保证只归还一次。
             if (released.compareAndSet(false, true)) {
                 release(worker);
             }

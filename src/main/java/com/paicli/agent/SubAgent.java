@@ -66,6 +66,8 @@ public class SubAgent implements AutoCloseable {
         this.toolRegistry.setCurrentModel(llmClient.getProviderName(), llmClient.getModelName());
         this.conversationHistory = new ArrayList<>();
         this.historyCompactor = new ConversationHistoryCompactor(llmClient);
+
+        // system message 固定保存在索引 0；clearHistory() 依赖这个约定实现“清任务、留角色”。
         this.conversationHistory.add(LlmClient.Message.system(getSystemPrompt()));
     }
 
@@ -274,6 +276,7 @@ public class SubAgent implements AutoCloseable {
     public AgentMessage executeWithContext(AgentMessage task, String context, PrintStream out) {
         String enrichedContent = task.content();
         if (context != null && !context.isEmpty()) {
+            // 依赖结果只进入当前 Agent 的 user message，不写入共享 ToolRegistry 或其他 Agent 历史。
             enrichedContent = context + "\n\n当前任务：" + task.content();
         }
         AgentMessage enrichedTask = new AgentMessage(task.fromAgent(), task.fromRole(),
@@ -303,6 +306,8 @@ public class SubAgent implements AutoCloseable {
      */
     public void clearHistory() {
         ensureOpen();
+
+        // 索引 0 的 system message 保存角色、工具能力和项目上下文，其余消息都属于上一任务。
         LlmClient.Message systemMsg = conversationHistory.get(0);
         conversationHistory.clear();
         conversationHistory.add(systemMsg);
@@ -321,6 +326,7 @@ public class SubAgent implements AutoCloseable {
      */
     @Override
     public void close() {
+        // close 只终止当前 SubAgent；共享 LLM/ToolRegistry 没有在这里释放或置空。
         if (closed.compareAndSet(false, true)) {
             conversationHistory.clear();
             externalContextSupplier = () -> "";
