@@ -40,6 +40,7 @@ public final class SpecRunCoordinator {
     private final HumanCriterionJudge humanCriterionJudge;
     private final SpecRunStore runStore;
     private final Clock clock;
+    private final RunOptions runOptions;
 
     public SpecRunCoordinator(
             Path projectRoot,
@@ -89,12 +90,35 @@ public final class SpecRunCoordinator {
                 draftSession,
                 confirmedRequestExpander,
                 reactExecutor,
+                verifier,
+                humanCriterionJudge,
+                RunOptions.defaults());
+    }
+
+    /**
+     * 为隔离评测提供显式运行选项。生产调用方使用默认构造器，仍保持最多一次自动修复。
+     */
+    public SpecRunCoordinator(
+            Path projectRoot,
+            SpecDraftSession draftSession,
+            UnaryOperator<String> confirmedRequestExpander,
+            ReActExecutor reactExecutor,
+            SpecVerifier verifier,
+            HumanCriterionJudge humanCriterionJudge,
+            RunOptions runOptions
+    ) {
+        this(
+                projectRoot,
+                draftSession,
+                confirmedRequestExpander,
+                reactExecutor,
                 new ChangeSpecCodec(),
                 new WorkspaceChangeTracker(projectRoot),
                 verifier,
                 humanCriterionJudge,
                 new SpecRunStore(projectRoot),
-                Clock.systemUTC());
+                Clock.systemUTC(),
+                runOptions);
     }
 
     SpecRunCoordinator(
@@ -109,6 +133,33 @@ public final class SpecRunCoordinator {
             SpecRunStore runStore,
             Clock clock
     ) {
+        this(
+                projectRoot,
+                draftSession,
+                confirmedRequestExpander,
+                reactExecutor,
+                codec,
+                workspaceTracker,
+                verifier,
+                humanCriterionJudge,
+                runStore,
+                clock,
+                RunOptions.defaults());
+    }
+
+    SpecRunCoordinator(
+            Path projectRoot,
+            SpecDraftSession draftSession,
+            UnaryOperator<String> confirmedRequestExpander,
+            ReActExecutor reactExecutor,
+            ChangeSpecCodec codec,
+            WorkspaceChangeTracker workspaceTracker,
+            SpecVerifier verifier,
+            HumanCriterionJudge humanCriterionJudge,
+            SpecRunStore runStore,
+            Clock clock,
+            RunOptions runOptions
+    ) {
         this.projectRoot = Objects.requireNonNull(projectRoot, "projectRoot").toAbsolutePath().normalize();
         this.draftSession = Objects.requireNonNull(draftSession, "draftSession");
         this.confirmedRequestExpander = Objects.requireNonNull(
@@ -121,6 +172,7 @@ public final class SpecRunCoordinator {
         this.humanCriterionJudge = Objects.requireNonNull(humanCriterionJudge, "humanCriterionJudge");
         this.runStore = Objects.requireNonNull(runStore, "runStore");
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.runOptions = Objects.requireNonNull(runOptions, "runOptions");
     }
 
     public SpecRunResult run(String request) throws IOException {
@@ -255,11 +307,13 @@ public final class SpecRunCoordinator {
             return persist(result);
         }
         long verificationMs = elapsedMillis(verificationStartedAt);
-        attempts.add(new SpecRunResult.VerificationAttempt(
+        SpecRunResult.VerificationAttempt initialAttempt = new SpecRunResult.VerificationAttempt(
                 1,
                 SpecRunResult.VerificationPhase.INITIAL,
                 verification.workspaceChanges(),
-                verification.verifierResults()));
+                verification.verifierResults());
+        attempts.add(initialAttempt);
+        notifyVerificationAttempt(initialAttempt);
 
         List<SpecRunResult.CriterionResult> firstDeterministic = evaluateDeterministicCriteria(
                 document.spec(),
@@ -270,7 +324,8 @@ public final class SpecRunCoordinator {
         ReActExecutionResult finalExecution = execution;
         SpecVerifier.VerificationRun finalVerification = verification;
 
-        if (shouldRepair(firstDeterministic, verification.verifierResults())) {
+        if (runOptions.repairPolicy() == RepairPolicy.ENABLED
+                && shouldRepair(firstDeterministic, verification.verifierResults())) {
             repairCount = 1;
             String repairInput = buildRepairInput(
                     document.spec(),
@@ -355,11 +410,13 @@ public final class SpecRunCoordinator {
             }
             verificationMs += elapsedMillis(secondVerificationStartedAt);
             finalAttempt = 2;
-            attempts.add(new SpecRunResult.VerificationAttempt(
+            SpecRunResult.VerificationAttempt postRepairAttempt = new SpecRunResult.VerificationAttempt(
                     finalAttempt,
                     SpecRunResult.VerificationPhase.POST_REPAIR,
                     finalVerification.workspaceChanges(),
-                    finalVerification.verifierResults()));
+                    finalVerification.verifierResults());
+            attempts.add(postRepairAttempt);
+            notifyVerificationAttempt(postRepairAttempt);
         }
 
         CriterionEvaluation evaluation = evaluateCriteria(
@@ -387,6 +444,14 @@ public final class SpecRunCoordinator {
                 SpecRunResult.Artifacts.notApplicable(),
                 "");
         return persist(result);
+    }
+
+    private void notifyVerificationAttempt(SpecRunResult.VerificationAttempt attempt) {
+        try {
+            runOptions.verificationAttemptObserver().onCompleted(attempt);
+        } catch (RuntimeException ignored) {
+            // 观察器只用于旁路采集，不能改变生产验收结果。评测器负责检查快照是否成功生成。
+        }
     }
 
     private CriterionEvaluation evaluateCriteria(
@@ -830,6 +895,32 @@ public final class SpecRunCoordinator {
         HumanJudgment judge(
                 ChangeSpec.AcceptanceCriterion criterion,
                 WorkspaceChangeTracker.WorkspaceChanges changes);
+    }
+
+    public enum RepairPolicy {
+        ENABLED,
+        DISABLED
+    }
+
+    @FunctionalInterface
+    public interface VerificationAttemptObserver {
+        void onCompleted(SpecRunResult.VerificationAttempt attempt);
+    }
+
+    public record RunOptions(
+            RepairPolicy repairPolicy,
+            VerificationAttemptObserver verificationAttemptObserver
+    ) {
+        public RunOptions {
+            repairPolicy = repairPolicy == null ? RepairPolicy.ENABLED : repairPolicy;
+            verificationAttemptObserver = verificationAttemptObserver == null
+                    ? attempt -> { }
+                    : verificationAttemptObserver;
+        }
+
+        public static RunOptions defaults() {
+            return new RunOptions(RepairPolicy.ENABLED, attempt -> { });
+        }
     }
 
     public record HumanJudgment(SpecRunResult.HumanDecision decision, String reason) {

@@ -605,9 +605,9 @@
 
 ## ChangeSpec V1 — Spec-to-Evidence 闭环（进行中）
 
-**当前已完成前六条垂直切片**：领域模型/Codec/校验/Digest、`/spec` Draft 生成与确认、锁定持久化并注入现有 ReAct、Workspace baseline/changed-files/final-diff/Scope/command/JUnit 验证、Criterion Result/Human Criterion/Verdict/紧凑运行结果持久化，以及 deterministic `FAIL` 后最多一次 Evidence 驱动修复。修复复用同一个 ReAct 会话，保存两轮 VerificationAttempt，并在修复后基于原 baseline 重跑全部 Verifier；Agent 回答不能替代 Evidence 或 Verdict。
+**当前已完成前六条产品切片和第七条评测基础设施**：产品链路已覆盖领域模型/Codec/校验/Digest、Draft/确认、锁定/ReAct、Workspace/Verifier、Criterion/Verdict/持久化和最多一次 Evidence 驱动修复；评测侧已提供 6 个分层 fixture、A/B/C 配对运行、首次候选快照、隐藏 Oracle、指标归约、报告和独立 `change-spec-eval` Profile。生产默认修复行为不变，B 组只在评测运行中显式关闭修复。
 
-**下一切片**：A/B/C 评测与指标报告，用相同初始 workspace、模型、任务和隐藏 Oracle 比较普通 ReAct、ChangeSpec 无修复与 ChangeSpec 一次修复。
+**下一步**：显式运行会产生 Token 费用的真实 LLM 快速试验并审阅指标报告。自动 Pilot 的人工介入时间为 `N/A`，所以在补充真实用户计时之前不能宣称满足完整提效门槛。
 
 详细设计与完成定义见 `docs/change-spec-v1-rfc.md`。
 

@@ -18,6 +18,9 @@ mvn test -Pquick
 # 真实 LLM Agent A/B 质量评测（会产生网络请求和 Token 费用，默认不运行）
 mvn test -Pagent-eval
 
+# ChangeSpec A/B/C 快速评测（默认 6 个任务 × 3 组 × 2 次；会产生 Token 费用）
+mvn test -Pchange-spec-eval
+
 # 代码搜索 deterministic golden set
 mvn test -Dtest=CodeSearchGoldenSetTest -DskipTests=false
 
@@ -28,6 +31,12 @@ mvn test -DskipTests=false
 `agent-eval` 会在隔离工作区中用隐藏测试比较 ReAct、Plan-and-Execute 和 Multi-Agent，
 生成成功率、调用次数、Token、耗时与 Reviewer 误放行/误拒报告。历史实验结果见
 [`docs/agent-ab-evaluation-pilot-report-2026-08-10.md`](docs/agent-ab-evaluation-pilot-report-2026-08-10.md)。
+
+`change-spec-eval` 独立比较 A=普通 ReAct、B=ChangeSpec 但关闭修复、C=ChangeSpec + 一次修复。
+同一任务/轮次的 B/C 共用锁定 Spec digest，六个分层 fixture 使用公开 Verifier 与隐藏 Oracle，
+报告任务成功、首次成功、误放行、Scope、TTA、Token 和成本。自动 Pilot 的人工介入时间记为
+`N/A`，不会把自动确认冒充真人耗时。协议与参数见
+[`docs/change-spec-abc-evaluation.md`](docs/change-spec-abc-evaluation.md)。
 
 ## 演进历程
 

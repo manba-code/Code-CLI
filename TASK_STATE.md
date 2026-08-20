@@ -1,7 +1,7 @@
 # ChangeSpec 任务状态
 
 > 更新时间：2026-08-20
-> 当前状态：前六条垂直切片已完成；`/spec` 已能从 Draft、锁定和 ReAct 执行走到首次验证、最多一次 Evidence 驱动修复、全量复验、Criterion Result、Human Criterion、最终 Verdict，并把一至两轮紧凑 Evidence 与最终 diff 持久化到 `.paicli/runs/<run-id>/`。尚未实现 A/B/C 评测。
+> 当前状态：前六条垂直切片已完成；第七条切片的 A/B/C 评测框架、六个分层任务、隐藏 Oracle、指标归约和报告入口已经实现，但尚未运行会产生 Token 费用的真实 LLM 快速试验，因此还没有效率结论。
 > 事实来源：当前工作区代码、`git status`、`git diff`、Maven/Surefire 测试结果，以及 `docs/change-spec-v1-rfc.md`。不能由这些材料证明的内容单独标为“尚未确认”。
 
 ## 1. 当前目标
@@ -16,6 +16,16 @@ PaiCLI 的 ChangeSpec 是可选的 Spec-Driven Code Change 契约层：把自然
 4. 独立 workspace baseline、changed-files/final-diff、`path_scope`、command 和新鲜 JUnit XML 验证；
 5. Criterion Result、Human Criterion、固定优先级 Verdict、紧凑运行结果和单次运行指标持久化。
 6. deterministic `FAIL` 后最多一次 Evidence 驱动修复、两轮 VerificationAttempt 和全量复验。
+
+第七条切片当前已具备可运行基础设施：
+
+- 独立 `change-spec-eval` Maven Profile，不改变原 ReAct/Plan/Team 的 `agent-eval`；
+- A=普通 ReAct、B=ChangeSpec 完整验收但关闭修复、C=ChangeSpec 完整验收并允许一次修复；
+- 每个“任务 × 重复轮次”的 B/C 共用同一份锁定 ChangeSpec document/digest；
+- 2 个小型、2 个中型、2 个高风险隔离 Java fixture；
+- 首次候选快照、公开 Verifier、隐藏 Oracle、Scope 白名单和最终报告；
+- `task_success_rate`、`first_pass_success_rate`、`acceptance_pass_rate`、`false_completion_rate`、Scope、TTA、Token 和成本口径；
+- 自动 Pilot 明确把 `human_intervention_time` 记为 `N/A`，不冒充为 0。
 
 当前链路：
 
@@ -55,21 +65,24 @@ PaiCLI 的 ChangeSpec 是可选的 Spec-Driven Code Change 契约层：把自然
 - `reactExecutionMs`、`verificationMs` 和 ReAct LLM usage 累计初始与修复两轮；保留 Draft/ReAct/total 的既有指标口径。
 - CLI 在修复前显示 `1/1 Evidence 驱动修复`，最终结果按 attempt 分组，并显示 `自动修复: 1/1`。
 
-## 3. 本切片修改文件
+## 3. 第七条切片评测基础设施
 
 ### 生产代码
 
-- `src/main/java/com/paicli/spec/SpecRunResult.java`
-- `src/main/java/com/paicli/spec/SpecRunStore.java`
 - `src/main/java/com/paicli/spec/SpecRunCoordinator.java`
-- `src/main/java/com/paicli/spec/SpecEvidenceFormatter.java`
-- `src/main/java/com/paicli/cli/ChangeSpecCliFormatter.java`
-- `src/main/java/com/paicli/cli/Main.java`
+
+生产默认行为不变。Coordinator 只增加显式 `RunOptions`：评测 B 组关闭修复，评测器通过旁路 observer 在首次验证后保存候选快照；observer 异常不会改变生产 Verdict。
 
 ### 测试
 
-- `src/test/java/com/paicli/cli/ChangeSpecCliFormatterTest.java`
 - `src/test/java/com/paicli/spec/SpecRunCoordinatorTest.java`
+- `src/test/java/com/paicli/spec/eval/ChangeSpecEvaluationCase.java`
+- `src/test/java/com/paicli/spec/eval/ChangeSpecEvaluationCatalog.java`
+- `src/test/java/com/paicli/spec/eval/ChangeSpecEvaluationRunner.java`
+- `src/test/java/com/paicli/spec/eval/ChangeSpecEvaluationReport.java`
+- `src/test/java/com/paicli/spec/eval/ChangeSpecQualityEvaluationTest.java`
+- `src/test/java/com/paicli/spec/eval/ChangeSpecEvaluationInfrastructureTest.java`
+- 同目录的 mode/tier/result/paired-draft/LLM 计数与 renderer 支持类
 
 ### 文档
 
@@ -77,22 +90,24 @@ PaiCLI 的 ChangeSpec 是可选的 Spec-Driven Code Change 契约层：把自然
 - `AGENTS.md`
 - `ROADMAP.md`
 - `docs/change-spec-v1-rfc.md`
+- `docs/change-spec-abc-evaluation.md`
 - `TASK_STATE.md`
 
-第五条切片基线提交为 `6981d8b feat(spec): 完成 Criterion Result、Verdict 与运行结果持久化`；第六条切片修改当前位于工作树中，尚未提交。
+第七条切片的代码基线为 `15ed027 feat(spec): 完成一次 Evidence 驱动修复切片`；该提交已在 `main` / `origin/main`，开始本切片前工作树干净。
 
 ## 4. 验证结果
 
-### 本切片通过
+### 当前本切片通过
 
-- ChangeSpec/CLI/HITL/Agent 针对性组合：202 tests，0 failure，0 error，0 skipped，`BUILD SUCCESS`。
-- 新增覆盖修复成功、全量复验后通过、复验仍失败、修复抛异常、修复取消、修复篡改 Spec、`FAIL + HITL_DENIED` 不触发、两轮 Evidence ID/JSON、Prompt 脱敏和聚合指标。
-- `mvn -DskipTests package`：`BUILD SUCCESS`，生成 shaded jar；只有既有 module-info、manifest 和资源重叠警告。
-- `git diff --check`：未发现空白错误；Git 仅提示部分文件后续可能由 LF 转为 CRLF。
+- `mvn test '-Dtest=Spec*Test,ChangeSpec*Test' -DskipTests=false`：59 tests，0 failure，0 error，2 个显式评测测试按预期 skipped，`BUILD SUCCESS`。
+- `mvn test -Dtest=ChangeSpecEvaluationInfrastructureTest '-Dpaicli.changeSpecEval.validateFixtures=true' -DskipTests=false`：4 tests，0 failure，0 error，0 skipped；六个参考实现全部通过公开测试、隐藏 Oracle 和 Scope 检查。
+- 新增覆盖 B 组不修复、首次 VerificationAttempt observer、六任务分层/命令白名单、隐藏 Oracle 与 Scope 独立判定、报告中的 `human_intervention_time=N/A` 和 B/C digest 配对审计。
+- 测试运行期间 Maven 完成主代码 224 个源文件、测试代码 151 个源文件编译。
+- `mvn test -Pchange-spec-eval '-Dpaicli.changeSpecEval.enabled=false'`：Profile 能正确只选中 live test，并在禁用真实调用时安全 skipped。
 
 ### Quick 已知基线
 
-- `mvn test -Pquick`：811 tests，10 failures，0 errors，1 skipped，`BUILD FAILURE`。
+- `mvn test -Pquick`：817 tests，10 failures，0 errors，3 skipped，`BUILD FAILURE`。
 - 失败类和方法与第四条切片的 10 项基线完全一致：`ImageReferenceParserTest` 3 项，`MemoryManagerTest` 1 项，`PromptAssemblerTest` 1 项，`CodeIndexTest` 2 项，`CodeRetrieverTest` 1 项，`InlineRendererTest` 1 项，`CodeSearchGoldenSetTest` 1 项；本切片新增测试全部通过，没有新增 Quick 失败。
 - 额外显式运行 `ToolRegistryTest` 时，19 项中有 5 项外部命令/glob/grep/超时测试失败；当前切片没有修改 `tool/`，该现象未在本切片内归因，且 quick profile 本来就排除 `ToolRegistryTest`。
 
@@ -100,7 +115,7 @@ PaiCLI 的 ChangeSpec 是可选的 Spec-Driven Code Change 契约层：把自然
 
 ### 已验证的缺口
 
-- 尚无 A/B/C 任务集、指标报告和效率结论；
+- 已有 A/B/C 任务集和报告生成器，但尚无真实模型运行产生的指标报告与效率结论；
 - 完整 `human_intervention_time` 尚未单独汇总 Spec 确认、HITL 等待和 Human Criterion 时间；
 - V1 仍只支持 revision 1，不支持运行中修改锁定需求或恢复/重跑既有 Spec；
 - Quick 历史基线不是绿色状态，10 项既有失败归因仍未完成；
@@ -108,19 +123,23 @@ PaiCLI 的 ChangeSpec 是可选的 Spec-Driven Code Change 契约层：把自然
 
 ### 明确不在当前切片
 
-- A/B/C 评测；
 - LLM Reviewer；
 - Plan/Team 接入；
 - 通用 Verifier SPI、工作流引擎或自动 run 清理策略。
 
 ## 6. 下一阶段任务
 
-下一阶段是 RFC 的第七条切片：A/B/C 评测与指标报告。
+下一阶段是运行 RFC 第七条切片的真实 LLM 快速试验并审阅指标报告。该命令会产生网络请求和 Token 费用，必须显式运行：
+
+```bash
+mvn test -Pchange-spec-eval
+```
 
 最小完成边界：
 
-1. 建立至少 6 个分层任务，统一初始 workspace、模型、时间限制、隐藏 Oracle 和最终验证方式；
-2. A 组使用普通 ReAct，B 组使用 ChangeSpec 但关闭 Evidence Gate 修复，C 组使用当前 ChangeSpec + 一次修复；
-3. 每组至少重复 2 次，记录成功率、虚假完成率、首次通过率、`time_to_accepted_change`、人工介入、Token 和成本；
-4. 公开 Verifier 与隐藏 Oracle 分离，不能把隐藏测试暴露给 Agent；
-5. 输出首轮指标报告，只按 RFC 门槛陈述数据，不在小样本上宣称普遍提效。
+1. 先保持默认 6 个任务 × 3 组 × 2 次，不在首轮临时更换模型、任务或口径；
+2. 运行前记录 provider/model 和可选的输入/输出 Token 单价；
+3. 审计 12 对 B/C digest 是否一致、隐藏测试是否只在候选完成后注入；
+4. 输出 `target/change-spec-eval/<run-id>/report.md`；
+5. 自动 Pilot 的人工时间保持 `N/A`，即使其他门槛通过也不宣称满足完整提效门槛；
+6. 若自动 Pilot 出现正向信号，再另行设计有真实用户参与的确认/HITL/Human Criterion 计时试验。

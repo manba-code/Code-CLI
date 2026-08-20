@@ -2,7 +2,7 @@
 
 > 状态：Accepted  
 > 目标版本：V1  
-> 实现进度：前六条垂直切片已完成（领域模型/Codec/校验/Digest；`/spec` Draft 生成与确认；锁定持久化并注入现有 ReAct；Workspace baseline、Scope 与 command/JUnit 验证；Criterion Result、Human Criterion、Verdict 与紧凑持久化；一次 Evidence 驱动修复）
+> 实现进度：前六条产品切片已完成；第七条的 A/B/C 评测框架、六个分层任务、配对 Spec、首次候选快照、隐藏 Oracle、指标归约和报告入口已实现，真实 LLM 快速试验尚未运行
 > 核心目标：缩短从需求提出到代码被可信验收的时间，而不是增加一套需求管理流程。
 
 ## 1. 决策摘要
@@ -482,6 +482,16 @@ spec/
 
 生产中的 ChangeSpec 与评测最终 Oracle 必须分离：Agent 可以看到 ChangeSpec 和公开 Verifier，但不能看到隐藏测试内容。隐藏 Oracle 只用于判断系统是否误放行。
 
+实现采用以下固定实验口径：
+
+- 每个“任务 × 重复轮次”只生成一份配对 ChangeSpec，B/C 锁定后的 digest 必须一致；
+- B 保留公开 Verifier、Criterion 和 Verdict，只关闭自动修复；C 只比 B 多一次 Evidence 驱动修复机会；
+- `first_pass_success_rate` 使用首次公开验证后、修复前保存的候选快照运行隐藏 Oracle，不能用最终结果反推；
+- A 的完成信号是 ReAct 正常结束，B/C 的完成信号是 `Verdict=PASSED`；完成信号存在但隐藏 Oracle/Scope 失败时记为虚假完成；
+- 自动 Pilot 不存在真人确认、HITL 或 Human Criterion 时间，`human_intervention_time` 报告为 `N/A` 而不是 0；因此自动 Pilot 不能单独证明满足完整效率价值门槛。
+
+任务、指标公式、运行参数和报告边界见 [ChangeSpec V1 A/B/C 评测协议](change-spec-abc-evaluation.md)。
+
 ## 13. 实现顺序
 
 按垂直切片推进：
@@ -492,7 +502,7 @@ spec/
 4. ✅ Workspace baseline、Scope 和 command/JUnit 验证；
 5. ✅ Criterion Result、Verdict 和紧凑持久化；
 6. ✅ 一次证据驱动修复；
-7. A/B/C 评测与指标报告。
+7. 🟡 A/B/C 评测与指标报告：框架与任务集已完成，等待显式运行真实 LLM 快速试验并产出首份报告。
 
 每一步都为同一条端到端链路服务，不先建设 Reviewer、通用 Verifier 平台或多执行模式。
 

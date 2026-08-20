@@ -278,5 +278,35 @@
                 </plugins>
             </build>
         </profile>
+
+        <!--
+          ChangeSpec V1 A/B/C 真实 LLM 快速评测：6 个分层任务，默认每组重复 2 次。
+          仅显式启用时运行，会产生网络请求、Token 消耗和 target/change-spec-eval 产物。
+        -->
+        <profile>
+            <id>change-spec-eval</id>
+            <properties>
+                <skipTests>false</skipTests>
+                <paicli.changeSpecEval.enabled>true</paicli.changeSpecEval.enabled>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <version>3.2.5</version>
+                        <configuration>
+                            <argLine>-Dfile.encoding=UTF-8</argLine>
+                            <systemPropertyVariables>
+                                <paicli.changeSpecEval.enabled>${paicli.changeSpecEval.enabled}</paicli.changeSpecEval.enabled>
+                            </systemPropertyVariables>
+                            <includes>
+                                <include>**/spec/eval/ChangeSpecQualityEvaluationTest.java</include>
+                            </includes>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
     </profiles>
 </project>

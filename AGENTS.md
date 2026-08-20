@@ -13,7 +13,7 @@
 - 项目名：`PaiCLI`
 - 定位：面向商业使用的 Java Agent CLI 产品，对标 Claude Code
 - 已交付 23 期（ReAct → Plan+DAG → Memory → RAG → Multi-Agent → HITL → 并行工具 → 多模型 → 联网 → MCP 核心 → MCP 高级 → 长上下文 → Chrome DevTools → CDP 会话复用 → Skill → TUI → LSP 诊断 → Side-Git 快照 → Prompt 分层 → Runtime API → 图片输入 → 微信 iLink 通道文本 MVP）
-- ChangeSpec V1 已完成前六条切片：领域模型/Codec/校验/Digest、`/spec <需求>` Draft 生成与确认、锁定持久化并注入现有 ReAct、Workspace baseline/changed-files/final-diff/Scope/command/JUnit 验证、Criterion Result/Human Criterion/Verdict/紧凑运行结果持久化，以及 deterministic `FAIL` 后最多一次 Evidence 驱动修复。修复复用同一个 ReAct 会话，只有首轮存在 `FAIL` 且没有 Verifier `ERROR` 时触发；修复后基于原 baseline 重跑全部 Verifier。`result.json` 保存 `repairCount` 和一至两轮 VerificationAttempt，Evidence ID 带 attempt；下一切片是 A/B/C 评测与指标报告。
+- ChangeSpec V1 已完成前六条产品切片；第七条切片的 A/B/C 评测框架、六个分层任务、配对 Spec、首次候选快照、隐藏 Oracle、指标归约和报告入口已经实现，真实 LLM 快速试验尚未运行。B/C 共用同一份锁定 Spec/digest，B 仅通过 `RunOptions` 关闭修复，C 保持 deterministic `FAIL` 后最多一次 Evidence 驱动修复；生产默认行为不变。`mvn test -Pchange-spec-eval` 默认执行 6 个任务 × 3 组 × 2 次并产生 Token 费用；自动 Pilot 的 `human_intervention_time` 必须报告为 `N/A`。
 - `PAI.md` 是 PaiCLI 的项目级记忆文件：启动时自动注入 system prompt，适合团队共享的长期稳定规则；个人/会变化的经验继续用 `/save` 长期记忆。
 - 下一步：OAuth / sampling / recovery 作为后续 MCP 增强
 - Banner 版本：`v16.1.0`，Maven 产物：`paicli-1.0-SNAPSHOT.jar`（两者不一致是正常状态）
@@ -36,6 +36,7 @@ java -jar target/paicli-1.0-SNAPSHOT.jar wechat start   # 前台启动微信通�
 mvn test -Pquick          # 常规回归
 mvn test -Pphase16-smoke  # TUI 相关
 mvn test -Pagent-eval     # 真实 LLM 三组 A/B 质量评测；显式运行才产生 Token 费用
+mvn test -Pchange-spec-eval # ChangeSpec A/B/C：默认 6×3×2；显式运行才产生 Token 费用
 mvn test -Dtest=XxxTest -DskipTests=false   # 针对性
 mvn test -DskipTests=false                  # 全量回归
 /init                    # 生成精简项目级记忆 PAI.md；已有文件不覆盖，/init --force 可重写
@@ -218,6 +219,7 @@ src/main/java/com/paicli/
 | DAG/Plan | `mvn test -Dtest=ExecutionPlanTest` |
 | Multi-Agent | `mvn test -Dtest=WorkerPoolTest,SubAgentTest,AgentRoleTest,AgentMessageTest,AgentOrchestratorTest` |
 | Agent A/B 质量 | `mvn test -Pagent-eval`（真实 API、非确定性、有费用） |
+| ChangeSpec A/B/C | `mvn test -Pchange-spec-eval`（真实 API、默认 36 次产品运行、有费用） |
 | TUI/终端 | `mvn test -Pphase16-smoke` |
 | RAG | `mvn test -Dtest=CodeChunkerTest,CodeAnalyzerTest,VectorStoreTest,CodeIndexTest` |
 | 常规回归 | `mvn test -Pquick` |

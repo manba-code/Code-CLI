@@ -381,6 +381,42 @@ class SpecRunCoordinatorTest {
     }
 
     @Test
+    void evaluationOptionsCanDisableRepairAndObserveInitialAttempt() throws Exception {
+        ChangeSpecDocument document = codec.decode(commandDocument());
+        AtomicInteger reactRuns = new AtomicInteger();
+        AtomicInteger commandRuns = new AtomicInteger();
+        AtomicInteger observedAttempts = new AtomicInteger();
+        SpecDraftSession session = new SpecDraftSession(
+                request -> draft(document),
+                draft -> SpecDraftSession.ReviewDecision.confirm());
+        SpecRunCoordinator coordinator = new SpecRunCoordinator(
+                projectRoot,
+                session,
+                request -> request,
+                (phase, input, lockedSpec) -> {
+                    reactRuns.incrementAndGet();
+                    return SpecRunCoordinator.ReActExecutionResult.completed("done");
+                },
+                new SpecVerifier(projectRoot, command -> {
+                    commandRuns.incrementAndGet();
+                    return CommandExecutionResult.completed(command, 1, "public test failed");
+                }),
+                (criterion, changes) -> SpecRunCoordinator.HumanJudgment.pass(),
+                new SpecRunCoordinator.RunOptions(
+                        SpecRunCoordinator.RepairPolicy.DISABLED,
+                        attempt -> observedAttempts.incrementAndGet()));
+
+        SpecRunResult result = coordinator.run("修复问题");
+
+        assertEquals(SpecRunResult.Verdict.FAILED, result.verdict());
+        assertEquals(1, reactRuns.get());
+        assertEquals(1, commandRuns.get());
+        assertEquals(1, observedAttempts.get());
+        assertEquals(1, result.verificationAttempts().size());
+        assertEquals(0, result.metrics().repairCount());
+    }
+
+    @Test
     void stopsAfterOneRepairWhenFinalVerificationStillFails() throws Exception {
         ChangeSpecDocument document = codec.decode(commandDocument());
         AtomicInteger reactRuns = new AtomicInteger();
