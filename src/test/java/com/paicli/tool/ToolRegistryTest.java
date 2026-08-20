@@ -183,6 +183,17 @@ class ToolRegistryTest {
     }
 
     @Test
+    void commandVerifierReceivesStructuredPolicyDenial() {
+        ToolRegistry registry = new ToolRegistry(1);
+
+        CommandExecutionResult denied = registry.executeCommandForVerification(
+                "find / -name pom.xml");
+
+        assertEquals(CommandExecutionResult.Status.POLICY_DENIED, denied.status());
+        assertTrue(denied.reason().contains("不允许扫描"));
+    }
+
+    @Test
     void shouldRouteWebSearchThroughStepSearchMcpForStep37Flash() throws Exception {
         ToolRegistry registry = new ToolRegistry();
         registry.setCurrentModel("step", "step-3.7-flash");

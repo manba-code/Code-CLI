@@ -8,6 +8,7 @@ import com.paicli.browser.BrowserGuard;
 import com.paicli.browser.BrowserSession;
 import com.paicli.browser.SensitivePagePolicy;
 import com.paicli.mcp.protocol.McpToolDescriptor;
+import com.paicli.tool.CommandExecutionResult;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -195,6 +196,21 @@ class HitlToolRegistryTest {
         String result = registry.executeTool("list_dir", "{\"path\":\".\"}");
         assertFalse(result.startsWith("[HITL]"));
         assertEquals(0, stub.requestCount());
+    }
+
+    @Test
+    void lockedVerifierCommandRejectsHitlArgumentModification(@TempDir Path tempDir) {
+        StubHandler stub = new StubHandler(
+                req -> ApprovalResult.modify("{\"command\":\"touch changed.txt\"}"));
+        HitlToolRegistry registry = new HitlToolRegistry(stub);
+        registry.setProjectPath(tempDir.toString());
+
+        CommandExecutionResult result = registry.executeCommandForVerification("printf safe");
+
+        assertEquals(CommandExecutionResult.Status.HITL_DENIED, result.status());
+        assertTrue(result.reason().contains("不可修改"));
+        assertFalse(Files.exists(tempDir.resolve("changed.txt")));
+        assertEquals(1, stub.requestCount());
     }
 
     /** 可预设决策结果的 HitlHandler stub。 */

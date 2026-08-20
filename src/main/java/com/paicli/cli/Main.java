@@ -50,6 +50,7 @@ import com.paicli.spec.ChangeSpecValidationException;
 import com.paicli.spec.SpecDraftGenerator;
 import com.paicli.spec.SpecDraftSession;
 import com.paicli.spec.SpecRunCoordinator;
+import com.paicli.spec.SpecVerifier;
 import com.paicli.tool.ToolRegistry;
 import com.paicli.util.AnsiStyle;
 import com.paicli.wechat.IlinkClient;
@@ -1161,14 +1162,17 @@ public class Main {
                     out.println("   Spec: " + lockedSpec.specId() + " r" + lockedSpec.revision());
                     out.println("   Digest: " + lockedSpec.specDigest());
                     out.println("   正在交给现有 ReAct 执行；Spec 确认不会扩大工具权限。\n");
-                    return runWithCancelSupport(
+                    return runSpecReActWithCancelSupport(
                             terminal,
                             out,
                             () -> snapshotService.runTurn(
                                     "spec",
                                     executionInput,
                                     () -> reactAgent.run(executionInput)));
-                });
+                },
+                new SpecVerifier(
+                        projectRoot,
+                        reactAgent.getToolRegistry()::executeCommandForVerification));
 
         out.println("⏳ 正在生成 ChangeSpec Draft...\n");
         try {
@@ -1177,11 +1181,28 @@ public class Main {
                 out.println("↩️ 已取消 ChangeSpec Draft，未保存，也未修改代码。\n");
                 return;
             }
-            out.println("🧾 ReAct 执行阶段已结束（尚未运行 ChangeSpec Verifier）");
             if (result.agentResponse() != null && !result.agentResponse().isBlank()) {
                 out.println(result.agentResponse());
             }
-            out.println("⚠️ 以上内容不是验收 Verdict；当前切片不会生成 PASSED / FAILED。\n");
+            if (result.status() == SpecRunCoordinator.Status.REACT_CANCELED) {
+                printSpecWorkspaceChanges(out, result.workspaceChanges());
+                out.println("⏹️ ReAct 已取消，未运行 ChangeSpec Verifier。\n");
+                return;
+            }
+            if (result.status() == SpecRunCoordinator.Status.REACT_FAILED) {
+                printSpecWorkspaceChanges(out, result.workspaceChanges());
+                out.println("❌ ReAct 执行失败，未运行 ChangeSpec Verifier。\n");
+                return;
+            }
+
+            out.println("\n🧪 ChangeSpec Verifier 结果");
+            for (SpecVerifier.VerifierResult verifier : result.verifierResults()) {
+                out.println("   " + verifier.status() + " " + verifier.verifierId()
+                        + " (" + verifier.type().name().toLowerCase(java.util.Locale.ROOT) + ")");
+                out.println("      " + verifier.detail());
+            }
+            printSpecWorkspaceChanges(out, result.workspaceChanges());
+            out.println("⚠️ 以上仅是 Verifier Result；当前切片尚未生成 Criterion Result 或最终 Verdict。\n");
         } catch (ChangeSpecValidationException e) {
             out.println("❌ ChangeSpec Draft 连续两次未通过结构校验：");
             for (String error : e.errors()) {
@@ -1189,8 +1210,24 @@ public class Main {
             }
             out.println("   未保存，也未修改代码。\n");
         } catch (IOException e) {
-            out.println("❌ ChangeSpec 未能锁定并启动 ReAct: " + e.getMessage());
-            out.println("   未成功锁定时不会修改代码；已有同名锁定 Spec 不会被覆盖。\n");
+            out.println("❌ ChangeSpec 运行失败: " + e.getMessage());
+            out.println("   未成功锁定时不会启动 ReAct；已经锁定的 Spec 会保留且不会被覆盖。\n");
+        }
+    }
+
+    private static void printSpecWorkspaceChanges(
+            PrintStream out,
+            com.paicli.spec.WorkspaceChangeTracker.WorkspaceChanges changes
+    ) {
+        if (changes == null) {
+            return;
+        }
+        out.println("   本轮 changed files: " + changes.changedFiles().size());
+        for (String path : changes.changedFiles()) {
+            out.println("      - " + path);
+        }
+        if (changes.diffTruncated()) {
+            out.println("   ⚠️ final diff 已按大小限制截断");
         }
     }
 
@@ -1480,6 +1517,65 @@ public class Main {
                 return mapReviewDecision(decision);
             }
         };
+    }
+
+    private static SpecRunCoordinator.ReActExecutionResult runSpecReActWithCancelSupport(
+            Terminal terminal,
+            PrintStream out,
+            Callable<String> task
+    ) {
+        CancellationToken token = CancellationContext.startRun();
+        ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
+            Thread thread = new Thread(r, "paicli-spec-agent-runner");
+            thread.setDaemon(true);
+            return thread;
+        });
+        Future<String> future = executor.submit(task);
+        Attributes original = null;
+        try {
+            if (terminal != null) {
+                try {
+                    original = terminal.enterRawMode();
+                } catch (Exception ignored) {
+                    // 非交互终端降级为不监听 ESC。
+                }
+            }
+            while (!future.isDone()) {
+                if (original != null && readEscCancel(terminal)) {
+                    token.cancel();
+                    future.cancel(true);
+                    executor.shutdownNow();
+                    return SpecRunCoordinator.ReActExecutionResult.canceled("⏹️ 已请求取消当前任务。");
+                }
+                try {
+                    return SpecRunCoordinator.ReActExecutionResult.completed(
+                            future.get(150, TimeUnit.MILLISECONDS));
+                } catch (java.util.concurrent.TimeoutException ignored) {
+                    // 继续监听 ESC。
+                }
+            }
+            return SpecRunCoordinator.ReActExecutionResult.completed(future.get());
+        } catch (CancellationException e) {
+            return SpecRunCoordinator.ReActExecutionResult.canceled("⏹️ 已取消当前任务。");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            token.cancel();
+            future.cancel(true);
+            return SpecRunCoordinator.ReActExecutionResult.canceled("⏹️ 已取消当前任务。");
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            String message = cause == null || cause.getMessage() == null ? "未知错误" : cause.getMessage();
+            return SpecRunCoordinator.ReActExecutionResult.failed("❌ 执行失败: " + message);
+        } finally {
+            if (terminal != null && original != null) {
+                try {
+                    terminal.setAttributes(original);
+                } catch (Exception ignored) {
+                }
+            }
+            CancellationContext.clear(token);
+            executor.shutdownNow();
+        }
     }
 
     private static SpecDraftSession.ReviewHandler createSpecDraftReviewHandler(

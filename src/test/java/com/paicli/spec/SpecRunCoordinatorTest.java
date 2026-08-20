@@ -38,13 +38,16 @@ class SpecRunCoordinatorTest {
                 (input, lockedSpec) -> {
                     executionInputs.add(input);
                     locks.add(lockedSpec);
-                    return "agent response";
+                    return SpecRunCoordinator.ReActExecutionResult.completed("agent response");
                 });
 
         SpecRunCoordinator.Result result = coordinator.run("修复问题 @src");
 
         assertEquals(SpecRunCoordinator.Status.FINISHED, result.status());
         assertEquals("agent response", result.agentResponse());
+        assertEquals(1, result.verifierResults().size());
+        assertEquals(SpecVerifier.Status.PASS, result.verifierResults().get(0).status());
+        assertTrue(result.workspaceChanges().changedFiles().isEmpty());
         assertEquals(1, executionInputs.size());
         assertTrue(executionInputs.get(0).contains("修复问题 <directory>src</directory>"));
         assertTrue(executionInputs.get(0).contains("id: CHANGE-001"));
@@ -77,7 +80,7 @@ class SpecRunCoordinatorTest {
                 request -> request,
                 (input, lockedSpec) -> {
                     executionInputs.add(input);
-                    return "done";
+                    return SpecRunCoordinator.ReActExecutionResult.completed("done");
                 });
 
         coordinator.run("修复问题");
@@ -100,7 +103,7 @@ class SpecRunCoordinatorTest {
                 request -> request,
                 (input, lockedSpec) -> {
                     executed.set(true);
-                    return "unexpected";
+                    return SpecRunCoordinator.ReActExecutionResult.completed("unexpected");
                 });
 
         SpecRunCoordinator.Result result = coordinator.run("修复问题");
@@ -154,7 +157,7 @@ class SpecRunCoordinatorTest {
     }
 
     @Test
-    void executionFailureKeepsLockedSpec() throws Exception {
+    void executionFailureKeepsLockedSpecAndCollectsWorkspace() throws Exception {
         ChangeSpecDocument document = codec.decode(validDocument());
         SpecDraftSession session = new SpecDraftSession(
                 request -> document,
@@ -167,14 +170,41 @@ class SpecRunCoordinatorTest {
                     throw new IllegalStateException("react failed");
                 });
 
-        IllegalStateException error = assertThrows(
-                IllegalStateException.class,
-                () -> coordinator.run("修复问题"));
+        SpecRunCoordinator.Result result = coordinator.run("修复问题");
 
-        assertEquals("react failed", error.getMessage());
+        assertEquals(SpecRunCoordinator.Status.REACT_FAILED, result.status());
+        assertTrue(result.agentResponse().contains("react failed"));
+        assertNotNull(result.workspaceChanges());
+        assertTrue(result.verifierResults().isEmpty());
         Path lockedPath = projectRoot.resolve(".paicli/specs/CHANGE-001-r1.md");
         assertTrue(Files.isRegularFile(lockedPath));
         assertNotNull(codec.decode(Files.readString(lockedPath)));
+    }
+
+    @Test
+    void reactCancellationSkipsAllVerifiers() throws Exception {
+        ChangeSpecDocument document = codec.decode(commandDocument());
+        AtomicInteger commandRuns = new AtomicInteger();
+        SpecDraftSession session = new SpecDraftSession(
+                request -> document,
+                draft -> SpecDraftSession.ReviewDecision.confirm());
+        SpecRunCoordinator coordinator = new SpecRunCoordinator(
+                projectRoot,
+                session,
+                request -> request,
+                (input, lockedSpec) -> SpecRunCoordinator.ReActExecutionResult.canceled("canceled"),
+                new SpecVerifier(projectRoot, command -> {
+                    commandRuns.incrementAndGet();
+                    return com.paicli.tool.CommandExecutionResult.completed(command, 0, "ok");
+                }));
+
+        SpecRunCoordinator.Result result = coordinator.run("修复问题");
+
+        assertEquals(SpecRunCoordinator.Status.REACT_CANCELED, result.status());
+        assertTrue(result.verifierResults().isEmpty());
+        assertNotNull(result.workspaceChanges());
+        assertEquals(0, commandRuns.get());
+        assertTrue(Files.isRegularFile(result.lockedSpec().path()));
     }
 
     private SpecRunCoordinator coordinator(ChangeSpecDocument document, AtomicBoolean executed) {
@@ -187,7 +217,7 @@ class SpecRunCoordinatorTest {
                 request -> request,
                 (input, lockedSpec) -> {
                     executed.set(true);
-                    return "unexpected";
+                    return SpecRunCoordinator.ReActExecutionResult.completed("unexpected");
                 });
     }
 
@@ -212,12 +242,36 @@ class SpecRunCoordinatorTest {
                     oracle:
                       type: human
                       verifiers: []
-                verifiers: []
+                  - id: AC-SCOPE
+                    kind: scope
+                    statement: 修改不得超出声明的 Scope
+                    oracle:
+                      type: deterministic
+                      verifiers: [VT-SCOPE]
+                verifiers:
+                  - id: VT-SCOPE
+                    type: path_scope
                 ---
 
                 # 背景
 
                 需要修复当前问题。
                 """;
+    }
+
+    private static String commandDocument() {
+        return validDocument()
+                .replace(
+                        "type: human\n      verifiers: []",
+                        "type: deterministic\n      verifiers: [VT-COMMAND]")
+                .replace(
+                        "  - id: VT-SCOPE\n    type: path_scope",
+                        "  - id: VT-SCOPE\n"
+                                + "    type: path_scope\n"
+                                + "  - id: VT-COMMAND\n"
+                                + "    type: command\n"
+                                + "    command: echo verify\n"
+                                + "    expect:\n"
+                                + "      exit_code: 0");
     }
 }

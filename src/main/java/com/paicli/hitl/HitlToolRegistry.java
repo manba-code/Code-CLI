@@ -1,7 +1,9 @@
 package com.paicli.hitl;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.paicli.browser.BrowserCheckResult;
 import com.paicli.policy.AuditLog;
+import com.paicli.tool.CommandExecutionResult;
 import com.paicli.tool.ToolOutput;
 import com.paicli.tool.ToolRegistry;
 
@@ -20,6 +22,7 @@ import java.util.concurrent.TimeUnit;
  */
 public class HitlToolRegistry extends ToolRegistry {
 
+    private static final ObjectMapper MAPPER = new ObjectMapper();
     private final HitlHandler hitlHandler;
 
     public HitlToolRegistry(HitlHandler hitlHandler) {
@@ -51,6 +54,47 @@ public class HitlToolRegistry extends ToolRegistry {
         }
 
         return executeAfterExplicitApproval(name, argumentsJson, null);
+    }
+
+    @Override
+    public CommandExecutionResult executeCommandForVerification(String command) {
+        if (!hitlHandler.isEnabled() || hitlHandler.isApprovedAllByTool("execute_command")) {
+            return super.executeCommandForVerification(command);
+        }
+
+        String argumentsJson = MAPPER.createObjectNode()
+                .put("command", command == null ? "" : command)
+                .toString();
+        long start = System.nanoTime();
+        ApprovalRequest request = ApprovalRequest.of(
+                "execute_command",
+                argumentsJson,
+                "运行锁定 ChangeSpec 的确定性 command Verifier",
+                "ChangeSpec Verifier（锁定命令，不允许修改）");
+        ApprovalResult approval = hitlHandler.requestApproval(request);
+        if (approval.isRejected() || approval.isSkipped()) {
+            String reason = approval.isSkipped()
+                    ? "用户跳过"
+                    : approval.reason() == null || approval.reason().isBlank()
+                    ? "用户拒绝了此操作"
+                    : approval.reason();
+            getAuditLog().record(AuditLog.AuditEntry.denyByHitl(
+                    "execute_command", argumentsJson, reason, elapsedMillis(start)));
+            return CommandExecutionResult.denied(
+                    command,
+                    CommandExecutionResult.Status.HITL_DENIED,
+                    reason);
+        }
+        if (approval.decision() == ApprovalResult.Decision.MODIFIED) {
+            String reason = "锁定的 Verifier 命令不可修改；请批准原命令或拒绝";
+            getAuditLog().record(AuditLog.AuditEntry.denyByHitl(
+                    "execute_command", argumentsJson, reason, elapsedMillis(start)));
+            return CommandExecutionResult.denied(
+                    command,
+                    CommandExecutionResult.Status.HITL_DENIED,
+                    reason);
+        }
+        return super.executeCommandForVerification(command);
     }
 
     private ToolOutput executeAfterExplicitApproval(String name, String argumentsJson, String sensitiveNotice) {

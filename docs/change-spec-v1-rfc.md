@@ -2,7 +2,7 @@
 
 > 状态：Accepted  
 > 目标版本：V1  
-> 实现进度：前三条垂直切片已完成（领域模型/Codec/校验/Digest；`/spec` Draft 生成与确认；锁定持久化并注入现有 ReAct）
+> 实现进度：前四条垂直切片已完成（领域模型/Codec/校验/Digest；`/spec` Draft 生成与确认；锁定持久化并注入现有 ReAct；Workspace baseline、Scope 与 command/JUnit 验证）
 > 核心目标：缩短从需求提出到代码被可信验收的时间，而不是增加一套需求管理流程。
 
 ## 1. 决策摘要
@@ -276,8 +276,11 @@ verifiers:
 - V1 的 `kind` 支持 `behavior`、`scope`、`compatibility`、`quality`、`safety`、`performance`；
 - V1 的 `oracle.type` 只支持 `deterministic` 和 `human`；
 - deterministic Criterion 必须引用至少一个存在的 Verifier；
+- 每份 Spec 必须有且仅有一个 `path_scope` Verifier，以及一个仅引用它的 deterministic `kind: scope` Criterion；
+- 每个 Verifier 必须至少被一个 deterministic Criterion 引用；
 - V1 的 Verifier 只支持 `path_scope` 和 `command`；
 - 配置 `minimum_tests` 时必须同时配置 `junit_report_glob`，避免猜测构建工具输出格式。
+- `junit_report_glob` 必须是项目根内使用 `/` 的相对 glob，禁止绝对路径、反斜杠和 `..`。
 
 ### 7.2 Scope 语义
 
@@ -286,6 +289,8 @@ verifiers:
 - glob 使用项目相对路径和 `/` 分隔符；
 - 运行开始前已存在的脏文件作为 baseline，不算本次 Agent 新增变化；
 - `.paicli/specs` 和 `.paicli/runs` 属于运行产物，不参与代码 Scope 判断。
+- `.git`、`target`、`build`、`dist`、`node_modules`、`coverage`、`.gradle` 和 `.idea` 作为 V1 固定的仓库元数据/构建产物目录，不参与代码 Scope 判断；其他 ignored 文件不自动排除。
+- baseline 使用文件内容摘要而不是 Git HEAD；既有脏文件若在本轮继续变化，仍计入 changed files，rename 按删除旧路径和新增新路径处理。
 
 ## 8. Evidence 与验证
 
@@ -319,6 +324,8 @@ Verifier 返回：
 - `ERROR`：未获得有效结果，例如命令不存在、超时或进程异常。
 
 命令退出码非预期属于 `FAIL`。命令成功但 `minimum_tests` 未满足也属于 `FAIL`。命令无法启动或超时属于 `ERROR`。
+
+JUnit Verifier 只采信本次命令新生成或内容发生变化的 XML，防止历史报告误放行；`minimum_tests` 按 `tests - skipped` 的实际执行数计算。JUnit failures/errors 非零属于 `FAIL`，XML 存在但无法安全解析属于 `ERROR`。多个 command Verifier 按 Spec 声明顺序串行执行；HITL/策略拒绝或用户取消命令会停止后续 command，并把未运行项记为 `ERROR`。最终 `path_scope` 在命令阶段结束后检查最终 workspace。
 
 ### 8.3 Criterion Result
 
@@ -467,7 +474,7 @@ spec/
 1. ✅ ChangeSpec 数据模型、Codec、校验和 digest；
 2. ✅ `/spec` 解析、Draft 生成和确认；
 3. ✅ 锁定 Spec 注入现有 ReAct；
-4. Workspace baseline、Scope 和 command/JUnit 验证；
+4. ✅ Workspace baseline、Scope 和 command/JUnit 验证；
 5. Criterion Result、Verdict 和紧凑持久化；
 6. 一次证据驱动修复；
 7. A/B/C 评测与指标报告。

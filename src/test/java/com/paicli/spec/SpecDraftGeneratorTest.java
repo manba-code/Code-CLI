@@ -91,7 +91,15 @@ class SpecDraftGeneratorTest {
                     oracle:
                       type: human
                       verifiers: []
-                verifiers: []
+                  - id: AC-SCOPE
+                    kind: scope
+                    statement: 修改不得超出声明的 Scope
+                    oracle:
+                      type: deterministic
+                      verifiers: [VT-SCOPE]
+                verifiers:
+                  - id: VT-SCOPE
+                    type: path_scope
                 ---
 
                 # 背景

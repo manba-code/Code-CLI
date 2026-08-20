@@ -668,7 +668,7 @@ I
 - `/plan <任务>` - 直接用 Plan-and-Execute 模式执行这条任务
 - `/team` - 下一条任务使用 Multi-Agent 协作模式
 - `/team <任务>` - 直接用 Multi-Agent 协作模式执行这条任务
-- `/spec <代码变更需求>` - 使用当前模型和 Project Context 生成经结构校验的 ChangeSpec Draft；Enter 确认后不可覆盖地保存到 `.paicli/specs/<specId>-r1.md`，并通过现有快照、ESC 取消、HITL 与路径/命令策略交给 ReAct 执行；I 补充后重生成，ESC 取消。当前尚未运行 Verifier，也不生成 Evidence 或 Verdict
+- `/spec <代码变更需求>` - 使用当前模型和 Project Context 生成经结构校验的 ChangeSpec Draft；Enter 确认后不可覆盖地保存到 `.paicli/specs/<specId>-r1.md`，记录 ReAct 前 workspace baseline，执行后采集本轮 changed files/final diff，并依次运行 command/JUnit 与最终 `path_scope` Verifier；Verifier 命令仍单独经过 HITL 与 CommandGuard。当前展示 `PASS / FAIL / ERROR` Verifier Result，尚不生成 Criterion Result、持久化 Evidence 或最终 Verdict
 - `/cancel` - 运行中请求取消当前任务；空闲时会提示当前没有正在运行的任务
 - `/hitl on` - 启用危险操作人工审批（HITL）
 - `/hitl off` - 关闭 HITL 审批

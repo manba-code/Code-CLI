@@ -147,6 +147,41 @@ public class ToolRegistry {
         return projectPath;
     }
 
+    /**
+     * 执行锁定 ChangeSpec 中的 command Verifier，并返回结构化结果。
+     * 普通 ToolRegistry 仍执行 CommandGuard 和审计；HitlToolRegistry 会在覆写入口中先请求独立授权。
+     */
+    public CommandExecutionResult executeCommandForVerification(String command) {
+        String normalized = command == null ? "" : command.trim();
+        String argumentsJson = mapper.createObjectNode().put("command", normalized).toString();
+        long start = System.nanoTime();
+        if (normalized.isEmpty()) {
+            String reason = "命令不能为空";
+            auditLog.record(AuditLog.AuditEntry.error(
+                    "execute_command", argumentsJson, reason, elapsedMillis(start), null));
+            return CommandExecutionResult.startError(normalized, reason);
+        }
+        String denyReason = CommandGuard.check(normalized);
+        if (denyReason != null) {
+            auditLog.record(AuditLog.AuditEntry.denyByPolicy(
+                    "execute_command", argumentsJson, denyReason, elapsedMillis(start), null));
+            return CommandExecutionResult.denied(
+                    normalized,
+                    CommandExecutionResult.Status.POLICY_DENIED,
+                    denyReason);
+        }
+
+        CommandExecutionResult result = runCommand(normalized);
+        if (result.status() == CommandExecutionResult.Status.START_ERROR) {
+            auditLog.record(AuditLog.AuditEntry.error(
+                    "execute_command", argumentsJson, result.reason(), elapsedMillis(start), null));
+        } else {
+            auditLog.record(AuditLog.AuditEntry.allow(
+                    "execute_command", argumentsJson, elapsedMillis(start), null));
+        }
+        return result;
+    }
+
     public void setContextProfile(ContextProfile contextProfile) {
         if (contextProfile != null) {
             this.contextProfile = contextProfile;
@@ -1295,6 +1330,10 @@ public class ToolRegistry {
             throw new PolicyException(denyReason);
         }
 
+        return formatCommandResult(runCommand(normalized));
+    }
+
+    private CommandExecutionResult runCommand(String normalized) {
         ExecutorService outputReaderExecutor = Executors.newSingleThreadExecutor(r -> {
             Thread thread = new Thread(r, "paicli-command-output");
             thread.setDaemon(true);
@@ -1316,26 +1355,40 @@ public class ToolRegistry {
                 process.destroyForcibly();
                 process.waitFor(2, TimeUnit.SECONDS);
                 outputFuture.cancel(true);
-                return "命令执行超时（" + commandTimeoutSeconds + "秒），已强制终止";
+                return CommandExecutionResult.timedOut(normalized, "");
             }
 
             String output = getCommandOutput(outputFuture);
             int exitCode = process.exitValue();
-            return String.format("命令执行完成 (exit code: %d)\n%s", exitCode, output);
+            return CommandExecutionResult.completed(normalized, exitCode, output);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             if (process != null) {
                 process.destroyForcibly();
             }
-            return "用户取消了此次工具调用";
+            return CommandExecutionResult.canceled(normalized, "用户取消了此次工具调用");
         } catch (Exception e) {
             if (process != null) {
                 process.destroyForcibly();
             }
-            return "执行命令失败: " + e.getMessage();
+            return CommandExecutionResult.startError(normalized, e.getMessage());
         } finally {
             outputReaderExecutor.shutdownNow();
         }
+    }
+
+    private String formatCommandResult(CommandExecutionResult result) {
+        return switch (result.status()) {
+            case COMPLETED -> String.format(
+                    "命令执行完成 (exit code: %d)\n%s",
+                    result.exitCode(),
+                    result.output());
+            case TIMED_OUT -> "命令执行超时（" + commandTimeoutSeconds + "秒），已强制终止";
+            case CANCELED -> "用户取消了此次工具调用";
+            case START_ERROR -> "执行命令失败: " + result.reason();
+            case POLICY_DENIED -> "🛡️ 策略拒绝: " + result.reason();
+            case HITL_DENIED -> "[HITL] 操作已被拒绝：" + result.reason();
+        };
     }
 
     private String readProcessOutput(Process process) throws Exception {

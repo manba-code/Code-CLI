@@ -28,7 +28,15 @@ acceptance:
     oracle:
       type: human
       verifiers: []
-verifiers: []
+  - id: AC-SCOPE
+    kind: scope
+    statement: 修改不得超出声明的 Scope
+    oracle:
+      type: deterministic
+      verifiers: [VT-SCOPE]
+verifiers:
+  - id: VT-SCOPE
+    type: path_scope
 ---
 
 # 背景
@@ -49,4 +57,6 @@ verifiers: []
 9. V1 Verifier 仅支持：
    - `path_scope`：只需要 `id` 和 `type`；
    - `command`：需要 `command` 和 `expect.exit_code`；只有要求测试数量时才增加 `junit_report_glob` 与 `minimum_tests`。
-10. Markdown 不得重新定义另一套验收条件，只解释背景、示例或设计原因。
+10. 每份 Draft 必须有且仅有一个 `path_scope` Verifier，以及一个 `kind: scope` 的 deterministic Criterion；该 Criterion 只能引用这个 `path_scope` Verifier。每个 Verifier 都必须至少被一个 deterministic Criterion 引用。
+11. `junit_report_glob` 必须是项目根内使用 `/` 的相对 glob，不得使用绝对路径、反斜杠或 `..`。
+12. Markdown 不得重新定义另一套验收条件，只解释背景、示例或设计原因。

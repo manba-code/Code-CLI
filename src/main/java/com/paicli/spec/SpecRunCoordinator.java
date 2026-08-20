@@ -7,12 +7,13 @@ import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.List;
 import java.util.Objects;
 import java.util.function.UnaryOperator;
 
 /**
- * 将已确认的 Draft 锁定为不可覆盖文件，并作为不可变契约交给现有 ReAct 执行。
- * 本切片不执行 Verifier，也不生成 Evidence 或 Verdict。
+ * 将已确认的 Draft 锁定为不可覆盖文件，交给现有 ReAct 执行，并运行 V1 确定性 Verifier。
+ * 本切片只产出 workspace 变化和 VerifierResult，不生成 Criterion Result、Evidence 持久化或 Verdict。
  */
 public final class SpecRunCoordinator {
     private static final String SPECS_DIR = ".paicli/specs";
@@ -22,6 +23,8 @@ public final class SpecRunCoordinator {
     private final UnaryOperator<String> confirmedRequestExpander;
     private final ReActExecutor reactExecutor;
     private final ChangeSpecCodec codec;
+    private final WorkspaceChangeTracker workspaceTracker;
+    private final SpecVerifier verifier;
 
     public SpecRunCoordinator(
             Path projectRoot,
@@ -34,7 +37,28 @@ public final class SpecRunCoordinator {
                 draftSession,
                 confirmedRequestExpander,
                 reactExecutor,
-                new ChangeSpecCodec());
+                new SpecVerifier(
+                        projectRoot,
+                        command -> com.paicli.tool.CommandExecutionResult.startError(
+                                command,
+                                "未配置 command Verifier 执行器")));
+    }
+
+    public SpecRunCoordinator(
+            Path projectRoot,
+            SpecDraftSession draftSession,
+            UnaryOperator<String> confirmedRequestExpander,
+            ReActExecutor reactExecutor,
+            SpecVerifier verifier
+    ) {
+        this(
+                projectRoot,
+                draftSession,
+                confirmedRequestExpander,
+                reactExecutor,
+                new ChangeSpecCodec(),
+                new WorkspaceChangeTracker(projectRoot),
+                verifier);
     }
 
     SpecRunCoordinator(
@@ -42,7 +66,9 @@ public final class SpecRunCoordinator {
             SpecDraftSession draftSession,
             UnaryOperator<String> confirmedRequestExpander,
             ReActExecutor reactExecutor,
-            ChangeSpecCodec codec
+            ChangeSpecCodec codec,
+            WorkspaceChangeTracker workspaceTracker,
+            SpecVerifier verifier
     ) {
         this.projectRoot = Objects.requireNonNull(projectRoot, "projectRoot").toAbsolutePath().normalize();
         this.draftSession = Objects.requireNonNull(draftSession, "draftSession");
@@ -51,23 +77,67 @@ public final class SpecRunCoordinator {
                 "confirmedRequestExpander");
         this.reactExecutor = Objects.requireNonNull(reactExecutor, "reactExecutor");
         this.codec = Objects.requireNonNull(codec, "codec");
+        this.workspaceTracker = Objects.requireNonNull(workspaceTracker, "workspaceTracker");
+        this.verifier = Objects.requireNonNull(verifier, "verifier");
     }
 
     public Result run(String request) throws IOException {
         SpecDraftSession.Result review = draftSession.run(request);
         if (review.status() == SpecDraftSession.Status.CANCELED) {
-            return new Result(Status.CANCELED, null, null);
+            return new Result(Status.CANCELED, null, null, null, List.of());
         }
 
         ChangeSpecDocument document = Objects.requireNonNull(review.document(), "confirmed document");
         String confirmedRequest = Objects.requireNonNull(review.confirmedRequest(), "confirmed request");
         LockedSpec lockedSpec = lock(document);
+        WorkspaceChangeTracker.Baseline baseline = workspaceTracker.captureBaseline();
         String expandedRequest = Objects.requireNonNull(
                 confirmedRequestExpander.apply(confirmedRequest),
                 "expanded confirmed request");
         String executionInput = buildExecutionInput(expandedRequest, document);
-        String response = reactExecutor.run(executionInput, lockedSpec);
-        return new Result(Status.FINISHED, lockedSpec, response);
+        ReActExecutionResult execution;
+        try {
+            execution = Objects.requireNonNull(
+                    reactExecutor.run(executionInput, lockedSpec),
+                    "react execution result");
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null || e.getMessage().isBlank()
+                    ? e.getClass().getSimpleName()
+                    : e.getMessage();
+            return new Result(
+                    Status.REACT_FAILED,
+                    lockedSpec,
+                    "❌ 执行失败: " + message,
+                    workspaceTracker.collectChanges(baseline),
+                    List.of());
+        }
+        if (execution.status() == ReActStatus.CANCELED) {
+            return new Result(
+                    Status.REACT_CANCELED,
+                    lockedSpec,
+                    execution.response(),
+                    workspaceTracker.collectChanges(baseline),
+                    List.of());
+        }
+        if (execution.status() == ReActStatus.FAILED) {
+            return new Result(
+                    Status.REACT_FAILED,
+                    lockedSpec,
+                    execution.response(),
+                    workspaceTracker.collectChanges(baseline),
+                    List.of());
+        }
+
+        SpecVerifier.VerificationRun verification = verifier.verify(
+                document.spec(),
+                workspaceTracker,
+                baseline);
+        return new Result(
+                Status.FINISHED,
+                lockedSpec,
+                execution.response(),
+                verification.workspaceChanges(),
+                verification.verifierResults());
     }
 
     private LockedSpec lock(ChangeSpecDocument document) throws IOException {
@@ -122,7 +192,7 @@ public final class SpecRunCoordinator {
                 </locked_change_spec>
 
                 使用现有 ReAct 能力完成代码修改，并遵守当前 HITL、PathGuard 和 CommandGuard。
-                你可以把测试作为实现工作的一部分运行，但当前阶段没有 Evidence Gate；你的最终回答不是验收 Verdict，不得把自述称为验收通过，也不得生成 PASSED Verdict。
+                你可以把测试作为实现工作的一部分运行。ReAct 正常结束后系统会运行锁定 Spec 中的确定性 Verifier；你的最终回答不是验收 Verdict，不得把自述称为验收通过，也不得生成 PASSED Verdict。
                 """.formatted(
                 confirmedRequest,
                 document.spec().id(),
@@ -153,17 +223,52 @@ public final class SpecRunCoordinator {
 
     @FunctionalInterface
     public interface ReActExecutor {
-        String run(String executionInput, LockedSpec lockedSpec);
+        ReActExecutionResult run(String executionInput, LockedSpec lockedSpec);
     }
 
     public record LockedSpec(Path path, String specId, int revision, String specDigest) {
     }
 
-    public record Result(Status status, LockedSpec lockedSpec, String agentResponse) {
+    public record ReActExecutionResult(ReActStatus status, String response) {
+        public ReActExecutionResult {
+            status = Objects.requireNonNull(status, "status");
+        }
+
+        public static ReActExecutionResult completed(String response) {
+            return new ReActExecutionResult(ReActStatus.COMPLETED, response);
+        }
+
+        public static ReActExecutionResult canceled(String response) {
+            return new ReActExecutionResult(ReActStatus.CANCELED, response);
+        }
+
+        public static ReActExecutionResult failed(String response) {
+            return new ReActExecutionResult(ReActStatus.FAILED, response);
+        }
+    }
+
+    public record Result(
+            Status status,
+            LockedSpec lockedSpec,
+            String agentResponse,
+            WorkspaceChangeTracker.WorkspaceChanges workspaceChanges,
+            List<SpecVerifier.VerifierResult> verifierResults
+    ) {
+        public Result {
+            verifierResults = verifierResults == null ? List.of() : List.copyOf(verifierResults);
+        }
+    }
+
+    public enum ReActStatus {
+        COMPLETED,
+        CANCELED,
+        FAILED
     }
 
     public enum Status {
         CANCELED,
+        REACT_CANCELED,
+        REACT_FAILED,
         FINISHED
     }
 }

@@ -120,6 +120,8 @@ public final class ChangeSpecCodec {
         validateUniqueIds(spec, errors);
         validateVerifiers(spec.verifiers(), errors);
         validateVerifierReferences(spec, errors);
+        validateScopeContract(spec, errors);
+        validateAllVerifiersReferenced(spec, errors);
         if (!errors.isEmpty()) {
             throw new ChangeSpecValidationException(errors);
         }
@@ -191,6 +193,48 @@ public final class ChangeSpecCodec {
                     errors.add("acceptance[" + criterion.id()
                             + "] 引用了不存在的 Verifier: " + verifierId);
                 }
+            }
+        }
+    }
+
+    private void validateScopeContract(ChangeSpec spec, List<String> errors) {
+        List<ChangeSpec.VerifierDefinition> scopeVerifiers = spec.verifiers().stream()
+                .filter(Objects::nonNull)
+                .filter(verifier -> verifier.type() == ChangeSpec.VerifierType.PATH_SCOPE)
+                .toList();
+        if (scopeVerifiers.size() != 1) {
+            errors.add("每份 ChangeSpec 必须定义且只能定义一个 path_scope Verifier");
+            return;
+        }
+        String scopeVerifierId = scopeVerifiers.get(0).id();
+        List<ChangeSpec.AcceptanceCriterion> scopeCriteria = spec.acceptance().stream()
+                .filter(Objects::nonNull)
+                .filter(criterion -> criterion.kind() == ChangeSpec.CriterionKind.SCOPE)
+                .toList();
+        if (scopeCriteria.size() != 1) {
+            errors.add("每份 ChangeSpec 必须定义且只能定义一个 kind: scope Criterion");
+            return;
+        }
+        ChangeSpec.AcceptanceCriterion criterion = scopeCriteria.get(0);
+        if (criterion.oracle() == null
+                || criterion.oracle().type() != ChangeSpec.OracleType.DETERMINISTIC
+                || criterion.oracle().verifiers().size() != 1
+                || !criterion.oracle().verifiers().contains(scopeVerifierId)) {
+            errors.add("kind: scope Criterion 必须以 deterministic Oracle 仅引用 path_scope Verifier "
+                    + scopeVerifierId);
+        }
+    }
+
+    private void validateAllVerifiersReferenced(ChangeSpec spec, List<String> errors) {
+        Set<String> referenced = new HashSet<>();
+        for (ChangeSpec.AcceptanceCriterion criterion : spec.acceptance()) {
+            if (criterion != null && criterion.oracle() != null) {
+                referenced.addAll(criterion.oracle().verifiers());
+            }
+        }
+        for (ChangeSpec.VerifierDefinition verifier : spec.verifiers()) {
+            if (verifier != null && !isBlank(verifier.id()) && !referenced.contains(verifier.id())) {
+                errors.add("Verifier 未被 deterministic Criterion 引用: " + verifier.id());
             }
         }
     }
@@ -272,6 +316,9 @@ public final class ChangeSpecCodec {
                 continue;
             }
             if (verifier.type() != ChangeSpec.VerifierType.COMMAND) {
+                if (!isBlank(verifier.command()) || verifier.expect() != null) {
+                    errors.add("verifiers[" + label + "] 的 path_scope 不能配置 command 或 expect");
+                }
                 continue;
             }
             if (isBlank(verifier.command())) {
@@ -291,6 +338,10 @@ public final class ChangeSpecCodec {
             if (expect.minimumTests() != null && isBlank(expect.junitReportGlob())) {
                 errors.add("verifiers[" + label
                         + "].expect.junit_report_glob 在 minimum_tests 存在时不能为空");
+            }
+            if (!isBlank(expect.junitReportGlob()) && !isProjectRelativeGlob(expect.junitReportGlob())) {
+                errors.add("verifiers[" + label
+                        + "].expect.junit_report_glob 必须是项目内使用 / 的相对路径");
             }
         }
     }

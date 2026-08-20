@@ -151,7 +151,8 @@ class ChangeSpecCodecTest {
         assertEquals(
                 List.of(
                         "acceptance[AC-1].statement 不能为空",
-                        "acceptance[AC-1] 的 deterministic oracle 必须引用至少一个 Verifier"),
+                        "acceptance[AC-1] 的 deterministic oracle 必须引用至少一个 Verifier",
+                        "Verifier 未被 deterministic Criterion 引用: VT-TEST"),
                 error.errors());
     }
 
@@ -245,6 +246,43 @@ class ChangeSpecCodecTest {
                 () -> codec.encode(tampered));
 
         assertEquals("specDigest 与机器契约不一致", error.errors().get(0));
+    }
+
+    @Test
+    void requiresExactlyOneReferencedScopeVerifier() {
+        String input = validDocument().replace(
+                "  - id: VT-SCOPE\n    type: path_scope\n",
+                "");
+
+        ChangeSpecValidationException error = assertThrows(
+                ChangeSpecValidationException.class,
+                () -> codec.decode(input));
+
+        assertTrue(error.errors().stream().anyMatch(message -> message.contains("只能定义一个 path_scope")));
+        assertTrue(error.errors().stream().anyMatch(message -> message.contains("不存在的 Verifier: VT-SCOPE")));
+    }
+
+    @Test
+    void rejectsUnreferencedVerifierAndEscapingJUnitGlob() {
+        String input = validDocument()
+                .replace(
+                        "  - id: VT-TEST\n",
+                        "  - id: VT-UNUSED\n"
+                                + "    type: command\n"
+                                + "    command: echo unused\n"
+                                + "    expect:\n"
+                                + "      exit_code: 0\n"
+                                + "  - id: VT-TEST\n")
+                .replace(
+                        "junit_report_glob: target/surefire-reports/TEST-*.xml",
+                        "junit_report_glob: ../outside/TEST-*.xml");
+
+        ChangeSpecValidationException error = assertThrows(
+                ChangeSpecValidationException.class,
+                () -> codec.decode(input));
+
+        assertTrue(error.errors().contains("Verifier 未被 deterministic Criterion 引用: VT-UNUSED"));
+        assertTrue(error.errors().stream().anyMatch(message -> message.contains("junit_report_glob 必须是项目内")));
     }
 
     private static String validDocument() {
