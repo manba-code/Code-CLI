@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="560" viewBox="0 0 1200 560">
+  <rect width="1200" height="560" fill="white"/>
+  <text x="600" y="42" text-anchor="middle" font-size="22" font-weight="bold" fill="#111" font-family="Noto Sans SC, Microsoft YaHei, Arial">PaiCLI ChangeSpec V1 - 开发者用例</text>
+
+  <circle cx="60" cy="222" r="18" fill="none" stroke="#333" stroke-width="2"/>
+  <line x1="60" y1="240" x2="60" y2="280" stroke="#333" stroke-width="2"/>
+  <line x1="35" y1="258" x2="85" y2="258" stroke="#333" stroke-width="2"/>
+  <line x1="60" y1="280" x2="38" y2="310" stroke="#333" stroke-width="2"/>
+  <line x1="60" y1="280" x2="82" y2="310" stroke="#333" stroke-width="2"/>
+  <text x="60" y="332" text-anchor="middle" font-size="14" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">开发者</text>
+
+  <ellipse cx="210" cy="240" rx="92" ry="32" fill="#7b5ea7" stroke="#7b5ea7" stroke-width="1.5"/>
+  <text x="210" y="245" text-anchor="middle" font-size="13" fill="white" font-family="Noto Sans SC, Microsoft YaHei, Arial">代码变更交付</text>
+  <line x1="78" y1="240" x2="116" y2="240" stroke="#aaaaaa" stroke-width="1.2"/>
+
+  <ellipse cx="470" cy="100" rx="110" ry="28" fill="#f8f8f8" stroke="#bbbbbb" stroke-width="1.5"/>
+  <text x="470" y="105" text-anchor="middle" font-size="13" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">普通 ReAct 快速修改</text>
+
+  <ellipse cx="470" cy="180" rx="110" ry="28" fill="white" stroke="#4a7fd4" stroke-width="1.5"/>
+  <text x="470" y="185" text-anchor="middle" font-size="13" fill="#1a4a8a" font-family="Noto Sans SC, Microsoft YaHei, Arial">提交 /spec 需求</text>
+
+  <ellipse cx="470" cy="260" rx="110" ry="28" fill="white" stroke="#4a7fd4" stroke-width="1.5"/>
+  <text x="470" y="265" text-anchor="middle" font-size="13" fill="#1a4a8a" font-family="Noto Sans SC, Microsoft YaHei, Arial">确认 ChangeSpec</text>
+
+  <ellipse cx="470" cy="340" rx="110" ry="28" fill="white" stroke="#4a7fd4" stroke-width="1.5"/>
+  <text x="470" y="345" text-anchor="middle" font-size="13" fill="#1a4a8a" font-family="Noto Sans SC, Microsoft YaHei, Arial">执行并确定性验证</text>
+
+  <ellipse cx="470" cy="420" rx="110" ry="28" fill="white" stroke="#4a7fd4" stroke-width="1.5"/>
+  <text x="470" y="425" text-anchor="middle" font-size="13" fill="#1a4a8a" font-family="Noto Sans SC, Microsoft YaHei, Arial">查看证据与 Verdict</text>
+
+  <line x1="302" y1="240" x2="360" y2="100" stroke="#cccccc" stroke-width="1"/>
+  <line x1="302" y1="240" x2="360" y2="180" stroke="#cccccc" stroke-width="1"/>
+  <line x1="302" y1="240" x2="360" y2="260" stroke="#cccccc" stroke-width="1"/>
+  <line x1="302" y1="240" x2="360" y2="340" stroke="#cccccc" stroke-width="1"/>
+  <line x1="302" y1="240" x2="360" y2="420" stroke="#cccccc" stroke-width="1"/>
+
+  <ellipse cx="730" cy="260" rx="110" ry="28" fill="white" stroke="#4a7fd4" stroke-width="1.5"/>
+  <text x="730" y="257" text-anchor="middle" font-size="13" fill="#1a4a8a" font-family="Noto Sans SC, Microsoft YaHei, Arial">确认 / 补充后重生成</text>
+  <text x="730" y="273" text-anchor="middle" font-size="13" fill="#1a4a8a" font-family="Noto Sans SC, Microsoft YaHei, Arial">取消</text>
+  <line x1="580" y1="260" x2="620" y2="260" stroke="#cccccc" stroke-width="1"/>
+
+  <ellipse cx="730" cy="340" rx="110" ry="28" fill="white" stroke="#4a7fd4" stroke-width="1.5"/>
+  <text x="730" y="337" text-anchor="middle" font-size="13" fill="#1a4a8a" font-family="Noto Sans SC, Microsoft YaHei, Arial">失败证据驱动</text>
+  <text x="730" y="353" text-anchor="middle" font-size="13" fill="#1a4a8a" font-family="Noto Sans SC, Microsoft YaHei, Arial">一次自动修复</text>
+  <line x1="580" y1="340" x2="620" y2="340" stroke="#cccccc" stroke-width="1"/>
+
+  <ellipse cx="970" cy="300" rx="110" ry="28" fill="#fff8e6" stroke="#e07b00" stroke-width="1.5"/>
+  <text x="970" y="305" text-anchor="middle" font-size="13" fill="#7a4a00" font-family="Noto Sans SC, Microsoft YaHei, Arial">无法自动判断时人工确认</text>
+  <line x1="840" y1="340" x2="860" y2="300" stroke="#cccccc" stroke-width="1"/>
+
+  <rect x="850" y="70" width="280" height="150" rx="8" fill="white" stroke="#cccccc" stroke-width="1.2"/>
+  <text x="990" y="98" text-anchor="middle" font-size="14" font-weight="bold" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">图例</text>
+  <ellipse cx="940" cy="132" rx="65" ry="20" fill="#f8f8f8" stroke="#bbbbbb" stroke-width="1.5"/>
+  <text x="940" y="137" text-anchor="middle" font-size="12" fill="#222" font-family="Noto Sans SC, Microsoft YaHei, Arial">已有用例</text>
+  <ellipse cx="1060" cy="132" rx="65" ry="20" fill="white" stroke="#4a7fd4" stroke-width="1.5"/>
+  <text x="1060" y="137" text-anchor="middle" font-size="12" fill="#1a4a8a" font-family="Noto Sans SC, Microsoft YaHei, Arial">新增用例</text>
+  <ellipse cx="940" cy="180" rx="65" ry="20" fill="#fff8e6" stroke="#e07b00" stroke-width="1.5"/>
+  <text x="940" y="185" text-anchor="middle" font-size="12" fill="#7a4a00" font-family="Noto Sans SC, Microsoft YaHei, Arial">改造用例</text>
+  <ellipse cx="1060" cy="180" rx="65" ry="20" fill="#7b5ea7" stroke="#7b5ea7" stroke-width="1.5"/>
+  <text x="1060" y="185" text-anchor="middle" font-size="12" fill="white" font-family="Noto Sans SC, Microsoft YaHei, Arial">业务域</text>
+</svg>

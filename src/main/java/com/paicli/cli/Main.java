@@ -29,6 +29,7 @@ import com.paicli.mcp.McpServerManager;
 import com.paicli.mcp.McpServerStatus;
 import com.paicli.mcp.mention.AtMentionExpander;
 import com.paicli.plan.ExecutionPlan;
+import com.paicli.prompt.ProjectMemoryLoader;
 import com.paicli.rag.CodeIndex;
 import com.paicli.hitl.ApprovalPolicy;
 import com.paicli.policy.AuditLog;
@@ -45,6 +46,9 @@ import com.paicli.snapshot.RestoreResult;
 import com.paicli.snapshot.SnapshotService;
 import com.paicli.snapshot.TurnSnapshot;
 import com.paicli.skill.SkillRegistry;
+import com.paicli.spec.ChangeSpecValidationException;
+import com.paicli.spec.SpecDraftGenerator;
+import com.paicli.spec.SpecDraftSession;
 import com.paicli.tool.ToolRegistry;
 import com.paicli.util.AnsiStyle;
 import com.paicli.wechat.IlinkClient;
@@ -478,6 +482,26 @@ public class Main {
                             }
                         } catch (IOException e) {
                             ui.println("❌ 生成 PAI.md 失败: " + e.getMessage() + "\n");
+                        }
+                        continue;
+                    }
+                    case SPEC_DRAFT -> {
+                        if (command.payload() == null || command.payload().isBlank()) {
+                            ui.println("❌ 请提供代码变更需求，例如 /spec 修复登录超时后的无限重试\n");
+                            continue;
+                        }
+                        renderer.updateStatus(statusInfo(reactAgent, mcpServerManager, skillRegistry, "spec-draft"));
+                        try {
+                            handleSpecDraftCommand(
+                                    command.payload(),
+                                    llmClient,
+                                    reactAgent,
+                                    localPathMentionExpander,
+                                    terminal,
+                                    lineReader,
+                                    ui);
+                        } finally {
+                            renderer.updateStatus(statusInfo(reactAgent, mcpServerManager, skillRegistry, "idle"));
                         }
                         continue;
                     }
@@ -1106,6 +1130,48 @@ public class Main {
         return new AgentOrchestrator(llmClient, reactAgent.getToolRegistry(), reactAgent.getMemoryManager(), out);
     }
 
+    private static void handleSpecDraftCommand(
+            String request,
+            LlmClient llmClient,
+            Agent reactAgent,
+            LocalPathMentionExpander localPathMentionExpander,
+            Terminal terminal,
+            LineReader lineReader,
+            PrintStream out
+    ) {
+        Path projectRoot = Path.of(reactAgent.getToolRegistry().getProjectPath());
+        String projectContext = ProjectMemoryLoader.createDefault(projectRoot).loadForPrompt();
+        SpecDraftGenerator generator = new SpecDraftGenerator(llmClient);
+        SpecDraftSession session = new SpecDraftSession(
+                effectiveRequest -> {
+                    String expanded = localPathMentionExpander.expand(effectiveRequest);
+                    String referencedContext = expanded.equals(effectiveRequest) ? "" : expanded;
+                    return generator.generate(effectiveRequest, projectContext, referencedContext);
+                },
+                createSpecDraftReviewHandler(terminal, lineReader, out));
+
+        out.println("⏳ 正在生成 ChangeSpec Draft...\n");
+        try {
+            SpecDraftSession.Result result = session.run(request);
+            if (result.status() == SpecDraftSession.Status.CANCELED) {
+                out.println("↩️ 已取消 ChangeSpec Draft，未保存，也未修改代码。\n");
+                return;
+            }
+            out.println("✅ ChangeSpec Draft 已确认");
+            out.println("   Digest: " + result.document().specDigest());
+            out.println("   当前切片尚未保存或执行该 Spec；锁定并接入 ReAct 属于下一阶段。\n");
+        } catch (ChangeSpecValidationException e) {
+            out.println("❌ ChangeSpec Draft 连续两次未通过结构校验：");
+            for (String error : e.errors()) {
+                out.println("   - " + error);
+            }
+            out.println("   未保存，也未修改代码。\n");
+        } catch (IOException e) {
+            out.println("❌ ChangeSpec Draft 生成失败: " + e.getMessage());
+            out.println("   未保存，也未修改代码。\n");
+        }
+    }
+
     private static String runWithCancelSupport(Terminal terminal, PrintStream out, Callable<String> task) {
         CancellationToken token = CancellationContext.startRun();
         ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
@@ -1394,6 +1460,91 @@ public class Main {
         };
     }
 
+    private static SpecDraftSession.ReviewHandler createSpecDraftReviewHandler(
+            Terminal terminal,
+            LineReader lineReader,
+            PrintStream out
+    ) {
+        return document -> {
+            out.println(ChangeSpecCliFormatter.formatDraft(document));
+            out.println();
+            out.println("   - 回车：确认当前 Draft");
+            out.println("   - I：输入补充要求并重新生成");
+            out.println("   - ESC：取消，不保存也不执行\n");
+
+            while (true) {
+                KeyReadResult keyReadResult = readSingleKeyFromTerminal(terminal);
+                if (keyReadResult.ignoredControlSequence()) {
+                    continue;
+                }
+
+                Integer key = keyReadResult.key();
+                if (key != null) {
+                    if (key == '\n' || key == '\r') {
+                        out.println();
+                        return SpecDraftSession.ReviewDecision.confirm();
+                    }
+                    if (key == 27) {
+                        out.println();
+                        return SpecDraftSession.ReviewDecision.cancel();
+                    }
+                    if (key == 'i' || key == 'I') {
+                        out.println();
+                        SpecDraftSession.ReviewDecision supplement = readSpecSupplement(lineReader, out);
+                        if (supplement != null) {
+                            return supplement;
+                        }
+                        continue;
+                    }
+                    out.println();
+                    out.println("未识别按键，请按 Enter / I / ESC。\n");
+                    continue;
+                }
+
+                String decisionInput;
+                try {
+                    decisionInput = lineReader.readLine("操作/补充> ");
+                } catch (UserInterruptException | EndOfFileException e) {
+                    return SpecDraftSession.ReviewDecision.cancel();
+                }
+                if (decisionInput.trim().equalsIgnoreCase("i")) {
+                    SpecDraftSession.ReviewDecision supplement = readSpecSupplement(lineReader, out);
+                    if (supplement != null) {
+                        return supplement;
+                    }
+                    continue;
+                }
+                return mapSpecReviewDecision(SpecReviewInputParser.parse(decisionInput));
+            }
+        };
+    }
+
+    private static SpecDraftSession.ReviewDecision readSpecSupplement(LineReader lineReader, PrintStream out) {
+        try {
+            String supplement = lineReader.readLine("补充> ").trim();
+            if (supplement.isEmpty()) {
+                out.println("补充要求不能为空，请继续按 Enter / I / ESC。\n");
+                return null;
+            }
+            SpecReviewInputParser.Decision decision = SpecReviewInputParser.parse(supplement);
+            return decision.type() == SpecReviewInputParser.DecisionType.CANCEL
+                    ? SpecDraftSession.ReviewDecision.cancel()
+                    : SpecDraftSession.ReviewDecision.supplement(supplement);
+        } catch (UserInterruptException | EndOfFileException e) {
+            return SpecDraftSession.ReviewDecision.cancel();
+        }
+    }
+
+    private static SpecDraftSession.ReviewDecision mapSpecReviewDecision(
+            SpecReviewInputParser.Decision decision
+    ) {
+        return switch (decision.type()) {
+            case CONFIRM -> SpecDraftSession.ReviewDecision.confirm();
+            case SUPPLEMENT -> SpecDraftSession.ReviewDecision.supplement(decision.supplement());
+            case CANCEL -> SpecDraftSession.ReviewDecision.cancel();
+        };
+    }
+
     private static KeyReadResult readSingleKeyFromTerminal(Terminal terminal) {
         try {
             terminal.flush();
@@ -1539,6 +1690,7 @@ public class Main {
                 new SlashCommandHint("/config provider freellmapi ", "/config provider freellmapi <选项>", "配置本地 FreeLLMAPI provider"),
                 new SlashCommandHint("/config provider xfyun ", "/config provider xfyun <选项>", "配置讯飞星辰 MaaS provider"),
                 new SlashCommandHint("/config provider agnes ", "/config provider agnes <选项>", "配置 Agnes provider"),
+                new SlashCommandHint("/spec ", "/spec <代码变更需求>", "生成并确认 ChangeSpec Draft"),
                 new SlashCommandHint("/plan", "/plan", "下一条任务使用 Plan-and-Execute 模式"),
                 new SlashCommandHint("/plan ", "/plan <任务内容>", "直接用计划模式执行这条任务"),
                 new SlashCommandHint("/team", "/team", "下一条任务使用 Multi-Agent 协作模式"),

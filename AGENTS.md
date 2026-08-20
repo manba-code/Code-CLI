@@ -13,6 +13,7 @@
 - 项目名：`PaiCLI`
 - 定位：面向商业使用的 Java Agent CLI 产品，对标 Claude Code
 - 已交付 23 期（ReAct → Plan+DAG → Memory → RAG → Multi-Agent → HITL → 并行工具 → 多模型 → 联网 → MCP 核心 → MCP 高级 → 长上下文 → Chrome DevTools → CDP 会话复用 → Skill → TUI → LSP 诊断 → Side-Git 快照 → Prompt 分层 → Runtime API → 图片输入 → 微信 iLink 通道文本 MVP）
+- ChangeSpec V1 已完成前两条切片：领域模型/Codec/校验/Digest，以及 `/spec <需求>` Draft 生成与确认。当前 `/spec` 不保存 Spec、不执行代码；下一切片是锁定 Spec 并注入现有 ReAct。
 - `PAI.md` 是 PaiCLI 的项目级记忆文件：启动时自动注入 system prompt，适合团队共享的长期稳定规则；个人/会变化的经验继续用 `/save` 长期记忆。
 - 下一步：OAuth / sampling / recovery 作为后续 MCP 增强
 - Banner 版本：`v16.1.0`，Maven 产物：`paicli-1.0-SNAPSHOT.jar`（两者不一致是正常状态）
@@ -39,6 +40,7 @@ mvn test -Dtest=XxxTest -DskipTests=false   # 针对性
 mvn test -DskipTests=false                  # 全量回归
 /init                    # 生成精简项目级记忆 PAI.md；已有文件不覆盖，/init --force 可重写
 /export                  # 导出当前 ReAct 会话为 Markdown，包含完整 system prompt
+/spec <需求>             # 生成并确认 ChangeSpec Draft；当前不保存、不执行
 ```
 
 ## 架构概览
@@ -50,6 +52,8 @@ mvn test -DskipTests=false                  # 全量回归
 | ReAct | `Agent.java` | 默认模式 |
 | Plan-and-Execute | `PlanExecuteAgent.java` | `/plan` |
 | Multi-Agent | `AgentOrchestrator.java` | `/team` |
+
+ChangeSpec 是现有执行路径之上的可选契约层。当前 `/spec <需求>` 使用无工具的 `SpecDraftGenerator` 读取用户需求、Project Context 和显式本地引用，结构校验失败最多重生成一次；Enter 确认、I 补充、ESC 取消，确认后暂不进入 ReAct。
 
 核心内置工具 11 个：`read_file` / `write_file` / `list_dir` / `glob_files` / `grep_code` / `execute_command` / `create_project` / `search_code` / `web_search` / `web_fetch` / `revert_turn`
 

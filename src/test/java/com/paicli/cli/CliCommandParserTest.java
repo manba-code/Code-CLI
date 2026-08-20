@@ -8,6 +8,22 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 class CliCommandParserTest {
 
     @Test
+    void parsesSpecCommandWithoutPayload() {
+        CliCommandParser.ParsedCommand command = CliCommandParser.parse("/spec");
+
+        assertEquals(CliCommandParser.CommandType.SPEC_DRAFT, command.type());
+        assertNull(command.payload());
+    }
+
+    @Test
+    void parsesSpecCommandWithPayload() {
+        CliCommandParser.ParsedCommand command = CliCommandParser.parse("/spec 修复登录超时后的无限重试");
+
+        assertEquals(CliCommandParser.CommandType.SPEC_DRAFT, command.type());
+        assertEquals("修复登录超时后的无限重试", command.payload());
+    }
+
+    @Test
     void parsesPlanSlashCommandWithoutPayload() {
         CliCommandParser.ParsedCommand command = CliCommandParser.parse("/plan");
 

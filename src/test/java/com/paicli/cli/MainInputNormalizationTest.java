@@ -188,6 +188,7 @@ class MainInputNormalizationTest {
         assertTrue(commands.contains("/search <查询>"));
         assertTrue(commands.contains("/graph <类名>"));
         assertTrue(commands.contains("/compact"));
+        assertTrue(commands.contains("/spec <代码变更需求>"));
     }
 
     @Test
