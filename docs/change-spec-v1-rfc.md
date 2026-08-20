@@ -2,7 +2,7 @@
 
 > 状态：Accepted  
 > 目标版本：V1  
-> 实现进度：前四条垂直切片已完成（领域模型/Codec/校验/Digest；`/spec` Draft 生成与确认；锁定持久化并注入现有 ReAct；Workspace baseline、Scope 与 command/JUnit 验证）
+> 实现进度：前五条垂直切片已完成（领域模型/Codec/校验/Digest；`/spec` Draft 生成与确认；锁定持久化并注入现有 ReAct；Workspace baseline、Scope 与 command/JUnit 验证；Criterion Result、Human Criterion、Verdict 与紧凑持久化）
 > 核心目标：缩短从需求提出到代码被可信验收的时间，而不是增加一套需求管理流程。
 
 ## 1. 决策摘要
@@ -178,9 +178,11 @@ Draft Generator 应优先生成可确定性验证的 Criterion，只有产品取
 
 确定性检查全部通过后，CLI 逐条展示待人工判断的 Criterion 和相关 diff：
 
-- 通过：该 Criterion 记为 `PASS`；
-- 拒绝：该 Criterion 记为 `FAIL`；
-- 跳过或中断：最终 Verdict 为 `NEEDS_HUMAN`。
+- `P` 通过：该 Criterion 记为 `PASS`；
+- `F` 拒绝：该 Criterion 记为 `FAIL`，停止后续 Human 判断；
+- `S`、ESC、跳过或中断：该 Criterion 记为 `NOT_RUN`，停止后续 Human 判断，最终 Verdict 为 `NEEDS_HUMAN`。
+
+V1 的 Criterion 没有到具体 diff hunk 的映射，因此 CLI 在第一条 Human Criterion 前统一展示最终 changed files 和 final diff，不扩展 ChangeSpec schema。
 
 该交互耗时计入 `human_intervention_time`。
 
@@ -315,6 +317,8 @@ V1 只采集：
 - 全量 read/grep 工具历史；
 - 与 Acceptance 无关的终端日志。
 
+当前运行结果分别记录 `specGenerationMs`、`specConfirmationMs`、`reactExecutionMs`、`verificationMs`、`humanCriterionMs`、`totalMs`，以及 Draft/ReAct 各自和合计的 LLM calls/input/output/cached tokens。`humanCriterionMs` 只表示 Human Criterion 交互；在 HITL 等待时间建立独立采集接口之前，不把它冒充完整的 `human_intervention_time`。
+
 ### 8.2 Verifier Result
 
 Verifier 返回：
@@ -341,6 +345,8 @@ reason
 
 Agent 的最终自然语言回答不能生成 PASS。
 
+deterministic Criterion 引用多个 Verifier 时按固定优先级聚合：任一 `FAIL` 则 Criterion 为 `FAIL`；否则任一 `ERROR`、缺失或未运行则为 `INCONCLUSIVE`；仅当全部 Verifier 为 `PASS` 时才为 `PASS`。同一 Verifier 每次运行只执行一次，可以作为多条 Criterion 的共享 Evidence。`NOT_RUN` 保留给整条 Criterion 未进入判断的生命周期场景。
+
 ### 8.4 Verdict 归约
 
 按以下固定优先级归约：
@@ -352,6 +358,8 @@ Agent 的最终自然语言回答不能生成 PASS。
 5. 所有 Criterion 为 `PASS` → `PASSED`
 
 `FAILED` 表示已有有效证据证明代码不符合要求；`INCOMPLETE` 表示没有得到足够证据，不能把环境或流程故障算成代码失败。
+
+确认前取消或 Draft 校验失败不创建 run，也不生成 Verdict。Spec 锁定后的 ReAct 取消、失败、准备异常或验证流程异常会把 Criterion 记为 `NOT_RUN`，保存当时 workspace Evidence，并生成 `INCOMPLETE`。锁定文件在运行中被修改、删除或无法回读时生成 `SPEC_INVALID`。
 
 ## 9. 一次证据驱动修复
 
@@ -429,7 +437,9 @@ spec/
 .paicli/runs/<run-id>/change.diff
 ```
 
-`result.json` 保存 Spec 标识、Verifier Result、Criterion Result、Verdict、changed files 和指标。命令输出只保留与失败定位有关的截断摘要，不持久化完整工具日志。
+`result.json` 使用 `paicli/spec-run-result/v1` schema，保存 Spec/run 标识、Verifier Result、Criterion Result、Verdict、changed files、Human 选择和指标。Verifier Evidence ID 为 `verifier:<verifierId>`，Human Evidence ID 为 `human:<criterionId>`。PASS 命令不保存 stdout；FAIL/ERROR 只保存脱敏后的头尾定位摘要，最多 8 KiB，并记录截断标志。`change.diff` 头部重复记录 runId/specId/revision/specDigest，正文继续使用 workspace tracker 的 256 KiB 上限。产物不可覆盖，`result.json` 最后原子写入并作为完整运行产物标志；V1 不自动清理历史 run。
+
+持久化失败不会改写已经由 Evidence 计算出的验收 Verdict，但 CLI 必须明确显示失败状态和预期 run 目录，不能把该次运行静默当作完整成功。
 
 ## 11. 失败处理
 
@@ -475,7 +485,7 @@ spec/
 2. ✅ `/spec` 解析、Draft 生成和确认；
 3. ✅ 锁定 Spec 注入现有 ReAct；
 4. ✅ Workspace baseline、Scope 和 command/JUnit 验证；
-5. Criterion Result、Verdict 和紧凑持久化；
+5. ✅ Criterion Result、Verdict 和紧凑持久化；
 6. 一次证据驱动修复；
 7. A/B/C 评测与指标报告。
 

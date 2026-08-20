@@ -22,10 +22,11 @@ class SpecDraftGeneratorTest {
                 new ChangeSpecCodec(),
                 "CHANGE-TEST-001");
 
-        ChangeSpecDocument document = generator.generate(
+        SpecDraftSession.DraftGeneration generation = generator.generateWithMetrics(
                 "修复登录超时重试",
                 "项目使用 Maven，测试命令为 mvn test",
                 "<file path=\"src/Auth.java\">class Auth {}</file>");
+        ChangeSpecDocument document = generation.document();
 
         assertEquals("CHANGE-TEST-001", document.spec().id());
         assertEquals(1, client.requests.size());
@@ -34,6 +35,9 @@ class SpecDraftGeneratorTest {
         assertTrue(userPrompt.contains("修复登录超时重试"));
         assertTrue(userPrompt.contains("项目使用 Maven"));
         assertTrue(userPrompt.contains("src/Auth.java"));
+        assertEquals(1, generation.llmUsage().calls());
+        assertEquals(10, generation.llmUsage().inputTokens());
+        assertEquals(10, generation.llmUsage().outputTokens());
     }
 
     @Test

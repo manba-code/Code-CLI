@@ -17,17 +17,39 @@ public final class SpecDraftSession {
 
     public Result run(String request) throws IOException {
         String effectiveRequest = requireRequest(request);
+        long generationMs = 0L;
+        long confirmationMs = 0L;
+        SpecRunResult.LlmUsage llmUsage = SpecRunResult.LlmUsage.empty();
         while (true) {
-            ChangeSpecDocument document = draftProvider.generate(effectiveRequest);
+            DraftGeneration generation = Objects.requireNonNull(
+                    draftProvider.generate(effectiveRequest),
+                    "draft generation");
+            ChangeSpecDocument document = Objects.requireNonNull(generation.document(), "draft document");
+            generationMs += generation.durationMs();
+            llmUsage = llmUsage.plus(generation.llmUsage());
+            long reviewStartedAt = System.nanoTime();
             ReviewDecision decision = Objects.requireNonNull(
                     reviewHandler.review(document),
                     "review decision");
+            confirmationMs += elapsedMillis(reviewStartedAt);
             switch (decision.action()) {
                 case CONFIRM -> {
-                    return new Result(Status.CONFIRMED, document, effectiveRequest);
+                    return new Result(
+                            Status.CONFIRMED,
+                            document,
+                            effectiveRequest,
+                            generationMs,
+                            confirmationMs,
+                            llmUsage);
                 }
                 case CANCEL -> {
-                    return new Result(Status.CANCELED, null, null);
+                    return new Result(
+                            Status.CANCELED,
+                            null,
+                            null,
+                            generationMs,
+                            confirmationMs,
+                            llmUsage);
                 }
                 case SUPPLEMENT -> {
                     if (decision.supplement() != null && !decision.supplement().isBlank()) {
@@ -40,6 +62,10 @@ public final class SpecDraftSession {
         }
     }
 
+    private static long elapsedMillis(long startedAt) {
+        return Math.max(0L, (System.nanoTime() - startedAt) / 1_000_000L);
+    }
+
     private static String requireRequest(String request) {
         if (request == null || request.isBlank()) {
             throw new IllegalArgumentException("request 不能为空");
@@ -49,7 +75,7 @@ public final class SpecDraftSession {
 
     @FunctionalInterface
     public interface DraftProvider {
-        ChangeSpecDocument generate(String request) throws IOException;
+        DraftGeneration generate(String request) throws IOException;
     }
 
     @FunctionalInterface
@@ -75,7 +101,33 @@ public final class SpecDraftSession {
         }
     }
 
-    public record Result(Status status, ChangeSpecDocument document, String confirmedRequest) {
+    public record DraftGeneration(
+            ChangeSpecDocument document,
+            SpecRunResult.LlmUsage llmUsage,
+            long durationMs
+    ) {
+        public DraftGeneration {
+            Objects.requireNonNull(document, "document");
+            llmUsage = llmUsage == null ? SpecRunResult.LlmUsage.empty() : llmUsage;
+            durationMs = Math.max(0L, durationMs);
+        }
+
+        public static DraftGeneration unmeasured(ChangeSpecDocument document) {
+            return new DraftGeneration(document, SpecRunResult.LlmUsage.empty(), 0L);
+        }
+    }
+
+    public record Result(
+            Status status,
+            ChangeSpecDocument document,
+            String confirmedRequest,
+            long generationMs,
+            long confirmationMs,
+            SpecRunResult.LlmUsage llmUsage
+    ) {
+        public Result {
+            llmUsage = llmUsage == null ? SpecRunResult.LlmUsage.empty() : llmUsage;
+        }
     }
 
     public enum Action {

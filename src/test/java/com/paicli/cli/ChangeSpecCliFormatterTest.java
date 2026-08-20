@@ -2,7 +2,12 @@ package com.paicli.cli;
 
 import com.paicli.spec.ChangeSpecCodec;
 import com.paicli.spec.ChangeSpecDocument;
+import com.paicli.spec.SpecRunResult;
+import com.paicli.spec.WorkspaceChangeTracker;
 import org.junit.jupiter.api.Test;
+
+import java.nio.file.Path;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -56,5 +61,43 @@ class ChangeSpecCliFormatterTest {
         assertTrue(summary.contains("exclude：pom.xml"));
         assertTrue(summary.contains("AC-1 [behavior/human]"));
         assertFalse(summary.contains("这里不应出现在单屏摘要中"));
+    }
+
+    @Test
+    void formatsCriterionVerdictWorkspaceAndPersistenceFailure() {
+        SpecRunResult result = new SpecRunResult(
+                SpecRunResult.Status.FINISHED,
+                new SpecRunResult.RunIdentity(
+                        "RUN-1", "CHANGE-1", 1, "digest", Path.of(".paicli/specs/CHANGE-1-r1.md")),
+                "done",
+                new WorkspaceChangeTracker.WorkspaceChanges(List.of("src/App.java"), "diff", true),
+                List.of(),
+                List.of(
+                        new SpecRunResult.CriterionResult(
+                                "AC-1",
+                                SpecRunResult.CriterionStatus.PASS,
+                                List.of("verifier:VT-1"),
+                                SpecRunResult.Judge.VERIFIER,
+                                "检查通过"),
+                        new SpecRunResult.CriterionResult(
+                                "AC-2",
+                                SpecRunResult.CriterionStatus.NOT_RUN,
+                                List.of("human:AC-2"),
+                                SpecRunResult.Judge.HUMAN,
+                                "用户跳过")),
+                List.of(),
+                SpecRunResult.Verdict.NEEDS_HUMAN,
+                SpecRunResult.Metrics.empty(),
+                SpecRunResult.Artifacts.failed(Path.of(".paicli/runs/RUN-1"), "运行结果持久化失败"),
+                "");
+
+        String summary = ChangeSpecCliFormatter.formatResult(result);
+
+        assertTrue(summary.contains("PASS AC-1 (verifier)"));
+        assertTrue(summary.contains("NOT_RUN AC-2 (human)"));
+        assertTrue(summary.contains("src/App.java"));
+        assertTrue(summary.contains("final diff 已按大小限制截断"));
+        assertTrue(summary.contains("最终 Verdict: NEEDS_HUMAN"));
+        assertTrue(summary.contains("运行结果持久化失败"));
     }
 }

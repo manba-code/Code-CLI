@@ -125,6 +125,14 @@ public class Agent {
      * 运行 Agent 循环
      */
     public String run(String userInput) {
+        return runDetailed(userInput).response();
+    }
+
+    /**
+     * 运行 Agent 循环并返回本轮独立的状态、耗时和 LLM 用量。
+     * 普通调用方继续使用 {@link #run(String)}；ChangeSpec 通过本接口持久化可审计指标。
+     */
+    public RunResult runDetailed(String userInput) {
         log.info("ReAct run started: inputLength={}", userInput == null ? 0 : userInput.length());
         pruneHistoricalImagePayloads();
         // 存入短期记忆
@@ -154,7 +162,7 @@ public class Agent {
             if (CancellationContext.isCancelled()) {
                 log.info("ReAct run cancelled before iteration");
                 pushStatus(budget, startNanos, "idle");
-                return "⏹️ 已取消当前任务。";
+                return finishRun("⏹️ 已取消当前任务。", RunOutcome.CANCELED, budget, startNanos);
             }
             // 调 LLM 前评估 conversationHistory 是否接近 window 上限；超阈值就把早期消息压缩成摘要。
             // 这是与第 3 期 Memory 短期记忆压缩并行的另一道压缩——后者只压 shortTermMemory，
@@ -168,7 +176,7 @@ public class Agent {
                         exitReason, budget.iteration(),
                         budget.totalInputTokens() + budget.totalOutputTokens(), budget.tokenBudget());
                 pushStatus(budget, startNanos, "idle");
-                return "❌ " + description;
+                return finishRun("❌ " + description, RunOutcome.FAILED, budget, startNanos);
             }
 
             int iteration = budget.beginIteration();
@@ -186,14 +194,13 @@ public class Agent {
                         streamRenderer
                 );
                 LlmTraceLogger.logReasoning(log, "react iteration=" + iteration, llmClient, response.reasoningContent());
+                budget.recordTokens(response.inputTokens(), response.outputTokens(), response.cachedInputTokens());
                 if (CancellationContext.isCancelled()) {
                     log.info("ReAct run cancelled after LLM response");
                     streamRenderer.finish();
                     pushStatus(budget, startNanos, "idle");
-                    return "⏹️ 已取消当前任务。";
+                    return finishRun("⏹️ 已取消当前任务。", RunOutcome.CANCELED, budget, startNanos);
                 }
-
-                budget.recordTokens(response.inputTokens(), response.outputTokens(), response.cachedInputTokens());
 
                 // 如果有工具调用
                 if (response.hasToolCalls()) {
@@ -232,8 +239,6 @@ public class Agent {
                 // 存入记忆
                 memoryManager.addAssistantMessage(response.content());
 
-                // 记录 token 使用
-                memoryManager.recordTokenUsage(budget.totalInputTokens(), budget.totalOutputTokens(), budget.totalCachedInputTokens());
                 pushStatus(budget, startNanos, "idle");
                 log.info("ReAct run finished: inputTokens={}, outputTokens={}, reasoningChars={}, answerChars={}",
                         budget.totalInputTokens(),
@@ -246,17 +251,47 @@ public class Agent {
 
                 if (streamRenderer.hasStreamedOutput()) {
                     streamRenderer.finish();
-                    return returnFinalResponseWhenStreamed ? (response.content() == null ? "" : response.content().trim()) : "";
+                    String streamedResponse = returnFinalResponseWhenStreamed
+                            ? (response.content() == null ? "" : response.content().trim())
+                            : "";
+                    return finishRun(streamedResponse, RunOutcome.COMPLETED, budget, startNanos);
                 }
                 streamRenderer.clearThinkingPanel();
-                return formatUserFacingResponse(reasoningTranscript.toString(), response.content());
+                return finishRun(
+                        formatUserFacingResponse(reasoningTranscript.toString(), response.content()),
+                        RunOutcome.COMPLETED,
+                        budget,
+                        startNanos);
 
             } catch (IOException e) {
                 log.error("LLM call failed in ReAct loop", e);
                 streamRenderer.finish();
-                return "❌ 调用 LLM 失败: " + e.getMessage();
+                return finishRun(
+                        "❌ 调用 LLM 失败: " + e.getMessage(),
+                        RunOutcome.FAILED,
+                        budget,
+                        startNanos);
             }
         }
+    }
+
+    private RunResult finishRun(String response, RunOutcome outcome, AgentBudget budget, long startNanos) {
+        if (budget.totalInputTokens() > 0
+                || budget.totalOutputTokens() > 0
+                || budget.totalCachedInputTokens() > 0) {
+            memoryManager.recordTokenUsage(
+                    budget.totalInputTokens(),
+                    budget.totalOutputTokens(),
+                    budget.totalCachedInputTokens());
+        }
+        return new RunResult(
+                outcome,
+                response == null ? "" : response,
+                budget.iteration(),
+                budget.totalInputTokens(),
+                budget.totalOutputTokens(),
+                budget.totalCachedInputTokens(),
+                Math.max(0L, (System.nanoTime() - startNanos) / 1_000_000L));
     }
 
     /**
@@ -288,6 +323,23 @@ public class Agent {
     }
 
     public record CompactionResult(boolean compacted, long beforeTokens, long afterTokens, String error) {
+    }
+
+    public record RunResult(
+            RunOutcome outcome,
+            String response,
+            int llmCalls,
+            long inputTokens,
+            long outputTokens,
+            long cachedInputTokens,
+            long elapsedMs
+    ) {
+    }
+
+    public enum RunOutcome {
+        COMPLETED,
+        CANCELED,
+        FAILED
     }
 
     /** 当前状态栏快照：ctx 表示下一轮请求仍会携带的上下文估算，不含累计 in/out 用量。 */

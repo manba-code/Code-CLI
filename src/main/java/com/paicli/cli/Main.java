@@ -50,6 +50,7 @@ import com.paicli.spec.ChangeSpecValidationException;
 import com.paicli.spec.SpecDraftGenerator;
 import com.paicli.spec.SpecDraftSession;
 import com.paicli.spec.SpecRunCoordinator;
+import com.paicli.spec.SpecRunResult;
 import com.paicli.spec.SpecVerifier;
 import com.paicli.tool.ToolRegistry;
 import com.paicli.util.AnsiStyle;
@@ -1148,7 +1149,7 @@ public class Main {
                 effectiveRequest -> {
                     String expanded = localPathMentionExpander.expand(effectiveRequest);
                     String referencedContext = expanded.equals(effectiveRequest) ? "" : expanded;
-                    return generator.generate(effectiveRequest, projectContext, referencedContext);
+                    return generator.generateWithMetrics(effectiveRequest, projectContext, referencedContext);
                 },
                 createSpecDraftReviewHandler(terminal, lineReader, out));
         SnapshotService snapshotService = reactAgent.getToolRegistry().getSnapshotService();
@@ -1168,41 +1169,26 @@ public class Main {
                             () -> snapshotService.runTurn(
                                     "spec",
                                     executionInput,
-                                    () -> reactAgent.run(executionInput)));
+                                    () -> toSpecReActResult(reactAgent.runDetailed(executionInput))));
                 },
                 new SpecVerifier(
                         projectRoot,
-                        reactAgent.getToolRegistry()::executeCommandForVerification));
+                        reactAgent.getToolRegistry()::executeCommandForVerification),
+                createHumanCriterionJudge(terminal, lineReader, out));
 
         out.println("⏳ 正在生成 ChangeSpec Draft...\n");
         try {
-            SpecRunCoordinator.Result result = coordinator.run(request);
-            if (result.status() == SpecRunCoordinator.Status.CANCELED) {
+            SpecRunResult result = coordinator.run(request);
+            if (result.status() == SpecRunResult.Status.CANCELED) {
                 out.println("↩️ 已取消 ChangeSpec Draft，未保存，也未修改代码。\n");
                 return;
             }
             if (result.agentResponse() != null && !result.agentResponse().isBlank()) {
                 out.println(result.agentResponse());
             }
-            if (result.status() == SpecRunCoordinator.Status.REACT_CANCELED) {
-                printSpecWorkspaceChanges(out, result.workspaceChanges());
-                out.println("⏹️ ReAct 已取消，未运行 ChangeSpec Verifier。\n");
-                return;
-            }
-            if (result.status() == SpecRunCoordinator.Status.REACT_FAILED) {
-                printSpecWorkspaceChanges(out, result.workspaceChanges());
-                out.println("❌ ReAct 执行失败，未运行 ChangeSpec Verifier。\n");
-                return;
-            }
-
-            out.println("\n🧪 ChangeSpec Verifier 结果");
-            for (SpecVerifier.VerifierResult verifier : result.verifierResults()) {
-                out.println("   " + verifier.status() + " " + verifier.verifierId()
-                        + " (" + verifier.type().name().toLowerCase(java.util.Locale.ROOT) + ")");
-                out.println("      " + verifier.detail());
-            }
-            printSpecWorkspaceChanges(out, result.workspaceChanges());
-            out.println("⚠️ 以上仅是 Verifier Result；当前切片尚未生成 Criterion Result 或最终 Verdict。\n");
+            out.println();
+            out.println(ChangeSpecCliFormatter.formatResult(result));
+            out.println();
         } catch (ChangeSpecValidationException e) {
             out.println("❌ ChangeSpec Draft 连续两次未通过结构校验：");
             for (String error : e.errors()) {
@@ -1522,7 +1508,7 @@ public class Main {
     private static SpecRunCoordinator.ReActExecutionResult runSpecReActWithCancelSupport(
             Terminal terminal,
             PrintStream out,
-            Callable<String> task
+            Callable<SpecRunCoordinator.ReActExecutionResult> task
     ) {
         CancellationToken token = CancellationContext.startRun();
         ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
@@ -1530,7 +1516,7 @@ public class Main {
             thread.setDaemon(true);
             return thread;
         });
-        Future<String> future = executor.submit(task);
+        Future<SpecRunCoordinator.ReActExecutionResult> future = executor.submit(task);
         Attributes original = null;
         try {
             if (terminal != null) {
@@ -1548,13 +1534,12 @@ public class Main {
                     return SpecRunCoordinator.ReActExecutionResult.canceled("⏹️ 已请求取消当前任务。");
                 }
                 try {
-                    return SpecRunCoordinator.ReActExecutionResult.completed(
-                            future.get(150, TimeUnit.MILLISECONDS));
+                    return future.get(150, TimeUnit.MILLISECONDS);
                 } catch (java.util.concurrent.TimeoutException ignored) {
                     // 继续监听 ESC。
                 }
             }
-            return SpecRunCoordinator.ReActExecutionResult.completed(future.get());
+            return future.get();
         } catch (CancellationException e) {
             return SpecRunCoordinator.ReActExecutionResult.canceled("⏹️ 已取消当前任务。");
         } catch (InterruptedException e) {
@@ -1576,6 +1561,85 @@ public class Main {
             CancellationContext.clear(token);
             executor.shutdownNow();
         }
+    }
+
+    private static SpecRunCoordinator.ReActExecutionResult toSpecReActResult(Agent.RunResult result) {
+        SpecRunResult.LlmUsage usage = new SpecRunResult.LlmUsage(
+                result.llmCalls(),
+                result.inputTokens(),
+                result.outputTokens(),
+                result.cachedInputTokens());
+        return switch (result.outcome()) {
+            case COMPLETED -> SpecRunCoordinator.ReActExecutionResult.completed(
+                    result.response(), usage, result.elapsedMs());
+            case CANCELED -> SpecRunCoordinator.ReActExecutionResult.canceled(
+                    result.response(), usage, result.elapsedMs());
+            case FAILED -> SpecRunCoordinator.ReActExecutionResult.failed(
+                    result.response(), usage, result.elapsedMs());
+        };
+    }
+
+    private static SpecRunCoordinator.HumanCriterionJudge createHumanCriterionJudge(
+            Terminal terminal,
+            LineReader lineReader,
+            PrintStream out
+    ) {
+        java.util.concurrent.atomic.AtomicBoolean workspaceShown = new java.util.concurrent.atomic.AtomicBoolean();
+        return (criterion, changes) -> {
+            if (workspaceShown.compareAndSet(false, true)) {
+                out.println("\n👤 Human Criterion 判断");
+                printSpecWorkspaceChanges(out, changes);
+                if (changes != null && !changes.diff().isBlank()) {
+                    out.println("\n--- final diff ---");
+                    out.println(changes.diff().stripTrailing());
+                    out.println("--- end diff ---\n");
+                }
+            }
+            out.println("   " + criterion.id() + " [" + criterion.kind().name().toLowerCase(java.util.Locale.ROOT)
+                    + "] " + criterion.statement());
+            out.println("   P：通过 / F：拒绝 / S 或 ESC：跳过");
+            while (true) {
+                KeyReadResult keyReadResult = readSingleKeyFromTerminal(terminal);
+                if (keyReadResult.ignoredControlSequence()) {
+                    continue;
+                }
+                Integer key = keyReadResult.key();
+                if (key != null) {
+                    if (key == 'p' || key == 'P') {
+                        out.println();
+                        return SpecRunCoordinator.HumanJudgment.pass();
+                    }
+                    if (key == 'f' || key == 'F') {
+                        out.println();
+                        return SpecRunCoordinator.HumanJudgment.fail();
+                    }
+                    if (key == 's' || key == 'S' || key == 27) {
+                        out.println();
+                        return SpecRunCoordinator.HumanJudgment.skipped("用户跳过人工判断");
+                    }
+                    out.println("未识别按键，请按 P / F / S / ESC。");
+                    continue;
+                }
+
+                try {
+                    String input = lineReader.readLine("Human Criterion [P/F/S]> ").trim();
+                    if (input.equalsIgnoreCase("p") || input.equalsIgnoreCase("pass")) {
+                        return SpecRunCoordinator.HumanJudgment.pass();
+                    }
+                    if (input.equalsIgnoreCase("f") || input.equalsIgnoreCase("fail")) {
+                        return SpecRunCoordinator.HumanJudgment.fail();
+                    }
+                    if (input.equalsIgnoreCase("s")
+                            || input.equalsIgnoreCase("skip")
+                            || input.equalsIgnoreCase("/cancel")) {
+                        return SpecRunCoordinator.HumanJudgment.skipped("用户跳过人工判断");
+                    }
+                    out.println("未识别输入，请输入 P / F / S。");
+                } catch (UserInterruptException | EndOfFileException e) {
+                    return SpecRunCoordinator.HumanJudgment.skipped("人工判断被中断");
+                }
+            }
+        };
     }
 
     private static SpecDraftSession.ReviewHandler createSpecDraftReviewHandler(

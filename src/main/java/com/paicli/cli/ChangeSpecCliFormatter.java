@@ -2,6 +2,8 @@ package com.paicli.cli;
 
 import com.paicli.spec.ChangeSpec;
 import com.paicli.spec.ChangeSpecDocument;
+import com.paicli.spec.SpecRunResult;
+import com.paicli.spec.SpecVerifier;
 
 import java.util.List;
 import java.util.Locale;
@@ -51,6 +53,65 @@ final class ChangeSpecCliFormatter {
                 }
                 out.append('\n');
             }
+        }
+        return out.toString().stripTrailing();
+    }
+
+    static String formatResult(SpecRunResult result) {
+        StringBuilder out = new StringBuilder();
+        if (!result.verifierResults().isEmpty()) {
+            out.append("🧪 ChangeSpec Verifier 结果\n");
+            for (SpecVerifier.VerifierResult verifier : result.verifierResults()) {
+                out.append("  ")
+                        .append(verifier.status())
+                        .append(' ')
+                        .append(verifier.verifierId())
+                        .append(" (")
+                        .append(lower(verifier.type()))
+                        .append(")\n")
+                        .append("    ")
+                        .append(verifier.detail())
+                        .append('\n');
+            }
+        }
+
+        out.append("📋 Acceptance Criterion 结果\n");
+        for (SpecRunResult.CriterionResult criterion : result.criterionResults()) {
+            out.append("  ")
+                    .append(criterion.status())
+                    .append(' ')
+                    .append(criterion.criterionId())
+                    .append(" (")
+                    .append(lower(criterion.judge()))
+                    .append(")\n")
+                    .append("    ")
+                    .append(criterion.reason())
+                    .append('\n');
+        }
+
+        if (result.workspaceChanges() != null) {
+            out.append("本轮 changed files: ")
+                    .append(result.workspaceChanges().changedFiles().size())
+                    .append('\n');
+            for (String path : result.workspaceChanges().changedFiles()) {
+                out.append("  - ").append(path).append('\n');
+            }
+            if (result.workspaceChanges().diffTruncated()) {
+                out.append("⚠️ final diff 已按大小限制截断\n");
+            }
+        }
+        if (result.verdict() != null) {
+            out.append("🏁 最终 Verdict: ").append(result.verdict()).append('\n');
+        }
+        if (result.artifacts().status() == SpecRunResult.PersistenceStatus.SAVED) {
+            out.append("运行结果: ").append(result.artifacts().resultJson()).append('\n');
+            out.append("变更证据: ").append(result.artifacts().changeDiff()).append('\n');
+        } else if (result.artifacts().status() == SpecRunResult.PersistenceStatus.FAILED) {
+            out.append("❌ ").append(result.artifacts().detail()).append('\n');
+        }
+        if (!result.detail().isBlank()
+                && result.artifacts().status() != SpecRunResult.PersistenceStatus.FAILED) {
+            out.append("详情: ").append(result.detail()).append('\n');
         }
         return out.toString().stripTrailing();
     }

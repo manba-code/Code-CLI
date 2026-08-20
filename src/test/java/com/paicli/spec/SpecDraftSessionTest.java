@@ -19,7 +19,7 @@ class SpecDraftSessionTest {
         SpecDraftSession session = new SpecDraftSession(
                 request -> {
                     generations.incrementAndGet();
-                    return document;
+                    return SpecDraftSession.DraftGeneration.unmeasured(document);
                 },
                 draft -> SpecDraftSession.ReviewDecision.confirm());
 
@@ -38,7 +38,7 @@ class SpecDraftSessionTest {
         SpecDraftSession session = new SpecDraftSession(
                 request -> {
                     generatedRequests.add(request);
-                    return document;
+                    return SpecDraftSession.DraftGeneration.unmeasured(document);
                 },
                 draft -> reviews.getAndIncrement() == 0
                         ? SpecDraftSession.ReviewDecision.supplement("不得修改公共接口")
@@ -56,7 +56,7 @@ class SpecDraftSessionTest {
     @Test
     void cancelReturnsNoDocument() throws Exception {
         SpecDraftSession session = new SpecDraftSession(
-                request -> document,
+                request -> SpecDraftSession.DraftGeneration.unmeasured(document),
                 draft -> SpecDraftSession.ReviewDecision.cancel());
 
         SpecDraftSession.Result result = session.run("修复问题");

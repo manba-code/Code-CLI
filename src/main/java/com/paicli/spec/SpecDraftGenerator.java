@@ -41,6 +41,15 @@ public final class SpecDraftGenerator {
             String projectContext,
             String referencedContext
     ) throws IOException {
+        return generateWithMetrics(request, projectContext, referencedContext).document();
+    }
+
+    public SpecDraftSession.DraftGeneration generateWithMetrics(
+            String request,
+            String projectContext,
+            String referencedContext
+    ) throws IOException {
+        long startedAt = System.nanoTime();
         String normalizedRequest = requireText(request, "request");
         List<LlmClient.Message> messages = new ArrayList<>();
         messages.add(LlmClient.Message.system(systemPrompt));
@@ -50,11 +59,22 @@ public final class SpecDraftGenerator {
                 referencedContext)));
 
         ChangeSpecValidationException lastValidationError = null;
+        SpecRunResult.LlmUsage usage = SpecRunResult.LlmUsage.empty();
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             LlmClient.ChatResponse response = llmClient.chat(List.copyOf(messages), List.of());
+            if (response != null) {
+                usage = usage.plus(new SpecRunResult.LlmUsage(
+                        1,
+                        response.inputTokens(),
+                        response.outputTokens(),
+                        response.cachedInputTokens()));
+            }
             String rawDraft = response == null ? "" : response.content();
             try {
-                return decodeDraft(rawDraft);
+                return new SpecDraftSession.DraftGeneration(
+                        decodeDraft(rawDraft),
+                        usage,
+                        elapsedMillis(startedAt));
             } catch (ChangeSpecValidationException e) {
                 lastValidationError = e;
                 if (attempt == MAX_ATTEMPTS) {
@@ -67,6 +87,10 @@ public final class SpecDraftGenerator {
             }
         }
         throw lastValidationError;
+    }
+
+    private static long elapsedMillis(long startedAt) {
+        return Math.max(0L, (System.nanoTime() - startedAt) / 1_000_000L);
     }
 
     private ChangeSpecDocument decodeDraft(String rawDraft) {
