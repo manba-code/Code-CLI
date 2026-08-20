@@ -217,6 +217,36 @@ class ChangeSpecCodecTest {
         assertNotEquals(original.specDigest(), contractChanged.specDigest());
     }
 
+    @Test
+    void encodesValidatedDocumentAndPreservesIdentity() throws Exception {
+        ChangeSpecDocument original = codec.decode(validDocument());
+
+        String encoded = codec.encode(original);
+        ChangeSpecDocument decoded = codec.decode(encoded);
+
+        assertTrue(encoded.contains("mode: bounded"), encoded);
+        assertTrue(encoded.contains("kind: behavior"), encoded);
+        assertTrue(encoded.contains("type: path_scope"), encoded);
+        assertEquals(original.spec(), decoded.spec());
+        assertEquals(original.markdownBody(), decoded.markdownBody());
+        assertEquals(original.specDigest(), decoded.specDigest());
+    }
+
+    @Test
+    void rejectsEncodingWhenDigestDoesNotMatchMachineContract() {
+        ChangeSpecDocument decoded = codec.decode(validDocument());
+        ChangeSpecDocument tampered = new ChangeSpecDocument(
+                decoded.spec(),
+                decoded.markdownBody(),
+                "0".repeat(64));
+
+        ChangeSpecValidationException error = assertThrows(
+                ChangeSpecValidationException.class,
+                () -> codec.encode(tampered));
+
+        assertEquals("specDigest 与机器契约不一致", error.errors().get(0));
+    }
+
     private static String validDocument() {
         return """
                 ---

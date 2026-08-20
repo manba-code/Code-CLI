@@ -1,21 +1,30 @@
 package com.paicli.spec;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonSerializer;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
+import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import com.fasterxml.jackson.dataformat.yaml.YAMLGenerator;
 
+import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -28,10 +37,18 @@ public final class ChangeSpecCodec {
     public ChangeSpecCodec() {
         YAMLFactory yamlFactory = new YAMLFactory();
         yamlFactory.enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
+        yamlFactory.enable(YAMLGenerator.Feature.MINIMIZE_QUOTES);
         this.yamlMapper = new ObjectMapper(yamlFactory)
                 .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
                 .enable(MapperFeature.ACCEPT_CASE_INSENSITIVE_ENUMS)
-                .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+                .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+                .setSerializationInclusion(JsonInclude.Include.NON_NULL);
+        SimpleModule wireEnums = new SimpleModule("change-spec-wire-enums");
+        addLowerCaseEnumSerializer(wireEnums, ChangeSpec.ScopeMode.class);
+        addLowerCaseEnumSerializer(wireEnums, ChangeSpec.CriterionKind.class);
+        addLowerCaseEnumSerializer(wireEnums, ChangeSpec.OracleType.class);
+        addLowerCaseEnumSerializer(wireEnums, ChangeSpec.VerifierType.class);
+        this.yamlMapper.registerModule(wireEnums);
         this.canonicalMapper = JsonMapper.builder()
                 .enable(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY)
                 .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
@@ -49,6 +66,44 @@ public final class ChangeSpecCodec {
                     List.of("ChangeSpec YAML 无法解析: " + e.getOriginalMessage()),
                     e);
         }
+    }
+
+    /**
+     * 将已校验的机器契约和 Markdown 正文编码为可锁定文档。
+     * 编码前会重新计算摘要，拒绝保存被调用方拼装或篡改的文档对象。
+     */
+    public String encode(ChangeSpecDocument document) throws JsonProcessingException {
+        Objects.requireNonNull(document, "document");
+        ChangeSpec spec = Objects.requireNonNull(document.spec(), "document.spec");
+        validate(spec);
+        String actualDigest = digest(spec);
+        if (!actualDigest.equals(document.specDigest())) {
+            throw new ChangeSpecValidationException(List.of("specDigest 与机器契约不一致"));
+        }
+        String machineContract = encodeMachineContract(spec);
+        String markdown = normalizeNewlines(document.markdownBody() == null ? "" : document.markdownBody());
+        if (markdown.isEmpty()) {
+            return machineContract + "\n";
+        }
+        return machineContract + "\n\n" + markdown;
+    }
+
+    String encodeMachineContract(ChangeSpecDocument document) throws JsonProcessingException {
+        Objects.requireNonNull(document, "document");
+        ChangeSpec spec = Objects.requireNonNull(document.spec(), "document.spec");
+        validate(spec);
+        if (!digest(spec).equals(document.specDigest())) {
+            throw new ChangeSpecValidationException(List.of("specDigest 与机器契约不一致"));
+        }
+        return encodeMachineContract(spec);
+    }
+
+    private String encodeMachineContract(ChangeSpec spec) throws JsonProcessingException {
+        String yaml = normalizeNewlines(yamlMapper.writeValueAsString(spec)).stripTrailing();
+        if (!yaml.startsWith("---\n")) {
+            yaml = "---\n" + yaml;
+        }
+        return yaml + "\n---";
     }
 
     private void validate(ChangeSpec spec) {
@@ -275,6 +330,19 @@ public final class ChangeSpecCodec {
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("JVM 不支持 SHA-256", e);
         }
+    }
+
+    private static <E extends Enum<E>> void addLowerCaseEnumSerializer(
+            SimpleModule module,
+            Class<E> enumType
+    ) {
+        module.addSerializer(enumType, new JsonSerializer<>() {
+            @Override
+            public void serialize(E value, JsonGenerator generator, SerializerProvider serializers)
+                    throws IOException {
+                generator.writeString(value.name().toLowerCase(Locale.ROOT));
+            }
+        });
     }
 
     private static String normalizeNewlines(String value) {

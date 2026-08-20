@@ -2,7 +2,7 @@
 
 > 状态：Accepted  
 > 目标版本：V1  
-> 实现进度：前两条垂直切片已完成（领域模型/Codec/校验/Digest；`/spec` Draft 生成与确认）  
+> 实现进度：前三条垂直切片已完成（领域模型/Codec/校验/Digest；`/spec` Draft 生成与确认；锁定持久化并注入现有 ReAct）
 > 核心目标：缩短从需求提出到代码被可信验收的时间，而不是增加一套需求管理流程。
 
 ## 1. 决策摘要
@@ -466,7 +466,7 @@ spec/
 
 1. ✅ ChangeSpec 数据模型、Codec、校验和 digest；
 2. ✅ `/spec` 解析、Draft 生成和确认；
-3. 锁定 Spec 注入现有 ReAct；
+3. ✅ 锁定 Spec 注入现有 ReAct；
 4. Workspace baseline、Scope 和 command/JUnit 验证；
 5. Criterion Result、Verdict 和紧凑持久化；
 6. 一次证据驱动修复；

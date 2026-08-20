@@ -49,6 +49,7 @@ import com.paicli.skill.SkillRegistry;
 import com.paicli.spec.ChangeSpecValidationException;
 import com.paicli.spec.SpecDraftGenerator;
 import com.paicli.spec.SpecDraftSession;
+import com.paicli.spec.SpecRunCoordinator;
 import com.paicli.tool.ToolRegistry;
 import com.paicli.util.AnsiStyle;
 import com.paicli.wechat.IlinkClient;
@@ -1149,17 +1150,38 @@ public class Main {
                     return generator.generate(effectiveRequest, projectContext, referencedContext);
                 },
                 createSpecDraftReviewHandler(terminal, lineReader, out));
+        SnapshotService snapshotService = reactAgent.getToolRegistry().getSnapshotService();
+        SpecRunCoordinator coordinator = new SpecRunCoordinator(
+                projectRoot,
+                session,
+                localPathMentionExpander::expand,
+                (executionInput, lockedSpec) -> {
+                    out.println("🔒 ChangeSpec 已锁定");
+                    out.println("   路径: " + lockedSpec.path());
+                    out.println("   Spec: " + lockedSpec.specId() + " r" + lockedSpec.revision());
+                    out.println("   Digest: " + lockedSpec.specDigest());
+                    out.println("   正在交给现有 ReAct 执行；Spec 确认不会扩大工具权限。\n");
+                    return runWithCancelSupport(
+                            terminal,
+                            out,
+                            () -> snapshotService.runTurn(
+                                    "spec",
+                                    executionInput,
+                                    () -> reactAgent.run(executionInput)));
+                });
 
         out.println("⏳ 正在生成 ChangeSpec Draft...\n");
         try {
-            SpecDraftSession.Result result = session.run(request);
-            if (result.status() == SpecDraftSession.Status.CANCELED) {
+            SpecRunCoordinator.Result result = coordinator.run(request);
+            if (result.status() == SpecRunCoordinator.Status.CANCELED) {
                 out.println("↩️ 已取消 ChangeSpec Draft，未保存，也未修改代码。\n");
                 return;
             }
-            out.println("✅ ChangeSpec Draft 已确认");
-            out.println("   Digest: " + result.document().specDigest());
-            out.println("   当前切片尚未保存或执行该 Spec；锁定并接入 ReAct 属于下一阶段。\n");
+            out.println("🧾 ReAct 执行阶段已结束（尚未运行 ChangeSpec Verifier）");
+            if (result.agentResponse() != null && !result.agentResponse().isBlank()) {
+                out.println(result.agentResponse());
+            }
+            out.println("⚠️ 以上内容不是验收 Verdict；当前切片不会生成 PASSED / FAILED。\n");
         } catch (ChangeSpecValidationException e) {
             out.println("❌ ChangeSpec Draft 连续两次未通过结构校验：");
             for (String error : e.errors()) {
@@ -1167,8 +1189,8 @@ public class Main {
             }
             out.println("   未保存，也未修改代码。\n");
         } catch (IOException e) {
-            out.println("❌ ChangeSpec Draft 生成失败: " + e.getMessage());
-            out.println("   未保存，也未修改代码。\n");
+            out.println("❌ ChangeSpec 未能锁定并启动 ReAct: " + e.getMessage());
+            out.println("   未成功锁定时不会修改代码；已有同名锁定 Spec 不会被覆盖。\n");
         }
     }
 

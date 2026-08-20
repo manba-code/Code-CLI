@@ -602,6 +602,16 @@
 **估算**：5–6 天
 
 ---
+
+## ChangeSpec V1 — Spec-to-Evidence 闭环（进行中）
+
+**当前已完成前三条垂直切片**：领域模型/Codec/校验/Digest、`/spec` Draft 生成与确认、锁定持久化并注入现有 ReAct。锁定执行复用 Side-Git、ESC 取消、HITL、PathGuard 和 CommandGuard；当前 Agent 回答尚不是 Verdict。
+
+**下一切片**：Workspace baseline、Scope 与 command/JUnit Verifier。之后再实现 Criterion Result/Verdict、一次证据驱动修复和 A/B/C 评测。
+
+详细设计与完成定义见 `docs/change-spec-v1-rfc.md`。
+
+---
 ## 技术栈演进图
 
 ```

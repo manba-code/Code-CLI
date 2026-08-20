@@ -27,6 +27,7 @@ class SpecDraftSessionTest {
 
         assertEquals(SpecDraftSession.Status.CONFIRMED, result.status());
         assertEquals(document, result.document());
+        assertEquals("修复问题", result.confirmedRequest());
         assertEquals(1, generations.get());
     }
 
@@ -49,6 +50,7 @@ class SpecDraftSessionTest {
         assertEquals(2, generatedRequests.size());
         assertTrue(generatedRequests.get(1).contains("修复问题"));
         assertTrue(generatedRequests.get(1).contains("不得修改公共接口"));
+        assertTrue(result.confirmedRequest().contains("不得修改公共接口"));
     }
 
     @Test
@@ -61,5 +63,6 @@ class SpecDraftSessionTest {
 
         assertEquals(SpecDraftSession.Status.CANCELED, result.status());
         assertNull(result.document());
+        assertNull(result.confirmedRequest());
     }
 }

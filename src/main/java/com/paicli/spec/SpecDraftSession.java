@@ -24,10 +24,10 @@ public final class SpecDraftSession {
                     "review decision");
             switch (decision.action()) {
                 case CONFIRM -> {
-                    return new Result(Status.CONFIRMED, document);
+                    return new Result(Status.CONFIRMED, document, effectiveRequest);
                 }
                 case CANCEL -> {
-                    return new Result(Status.CANCELED, null);
+                    return new Result(Status.CANCELED, null, null);
                 }
                 case SUPPLEMENT -> {
                     if (decision.supplement() != null && !decision.supplement().isBlank()) {
@@ -75,7 +75,7 @@ public final class SpecDraftSession {
         }
     }
 
-    public record Result(Status status, ChangeSpecDocument document) {
+    public record Result(Status status, ChangeSpecDocument document, String confirmedRequest) {
     }
 
     public enum Action {
