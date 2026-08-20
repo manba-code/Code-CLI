@@ -15,7 +15,7 @@ public record SpecRunResult(
         RunIdentity identity,
         String agentResponse,
         WorkspaceChangeTracker.WorkspaceChanges workspaceChanges,
-        List<SpecVerifier.VerifierResult> verifierResults,
+        List<VerificationAttempt> verificationAttempts,
         List<CriterionResult> criterionResults,
         List<HumanEvidence> humanEvidence,
         Verdict verdict,
@@ -25,7 +25,20 @@ public record SpecRunResult(
 ) {
     public SpecRunResult {
         status = Objects.requireNonNull(status, "status");
-        verifierResults = verifierResults == null ? List.of() : List.copyOf(verifierResults);
+        verificationAttempts = verificationAttempts == null ? List.of() : List.copyOf(verificationAttempts);
+        if (verificationAttempts.size() > 2) {
+            throw new IllegalArgumentException("V1 最多保存两轮 VerificationAttempt");
+        }
+        for (int index = 0; index < verificationAttempts.size(); index++) {
+            VerificationAttempt attempt = verificationAttempts.get(index);
+            if (attempt.attempt() != index + 1) {
+                throw new IllegalArgumentException("VerificationAttempt 必须从 1 连续编号");
+            }
+            VerificationPhase expected = index == 0 ? VerificationPhase.INITIAL : VerificationPhase.POST_REPAIR;
+            if (attempt.phase() != expected) {
+                throw new IllegalArgumentException("VerificationAttempt phase 与轮次不一致");
+            }
+        }
         criterionResults = criterionResults == null ? List.of() : List.copyOf(criterionResults);
         humanEvidence = humanEvidence == null ? List.of() : List.copyOf(humanEvidence);
         metrics = metrics == null ? Metrics.empty() : metrics;
@@ -54,13 +67,20 @@ public record SpecRunResult(
                 identity,
                 agentResponse,
                 workspaceChanges,
-                verifierResults,
+                verificationAttempts,
                 criterionResults,
                 humanEvidence,
                 verdict,
                 metrics,
                 newArtifacts,
                 newDetail);
+    }
+
+    /** 返回最后一轮有效验证结果；两轮 Evidence 的事实源是 {@link #verificationAttempts()}。 */
+    public List<SpecVerifier.VerifierResult> verifierResults() {
+        return verificationAttempts.isEmpty()
+                ? List.of()
+                : verificationAttempts.get(verificationAttempts.size() - 1).verifierResults();
     }
 
     public record RunIdentity(
@@ -110,6 +130,22 @@ public record SpecRunResult(
         }
     }
 
+    public record VerificationAttempt(
+            int attempt,
+            VerificationPhase phase,
+            WorkspaceChangeTracker.WorkspaceChanges workspaceChanges,
+            List<SpecVerifier.VerifierResult> verifierResults
+    ) {
+        public VerificationAttempt {
+            if (attempt < 1) {
+                throw new IllegalArgumentException("attempt 必须从 1 开始");
+            }
+            Objects.requireNonNull(phase, "phase");
+            Objects.requireNonNull(workspaceChanges, "workspaceChanges");
+            verifierResults = verifierResults == null ? List.of() : List.copyOf(verifierResults);
+        }
+    }
+
     public record LlmUsage(
             int calls,
             long inputTokens,
@@ -145,6 +181,7 @@ public record SpecRunResult(
             long reactExecutionMs,
             long verificationMs,
             long humanCriterionMs,
+            int repairCount,
             long totalMs,
             LlmUsage draftLlmUsage,
             LlmUsage reactLlmUsage
@@ -155,13 +192,14 @@ public record SpecRunResult(
             reactExecutionMs = Math.max(0L, reactExecutionMs);
             verificationMs = Math.max(0L, verificationMs);
             humanCriterionMs = Math.max(0L, humanCriterionMs);
+            repairCount = Math.max(0, repairCount);
             totalMs = Math.max(0L, totalMs);
             draftLlmUsage = draftLlmUsage == null ? LlmUsage.empty() : draftLlmUsage;
             reactLlmUsage = reactLlmUsage == null ? LlmUsage.empty() : reactLlmUsage;
         }
 
         public static Metrics empty() {
-            return new Metrics(0L, 0L, 0L, 0L, 0L, 0L, LlmUsage.empty(), LlmUsage.empty());
+            return new Metrics(0L, 0L, 0L, 0L, 0L, 0, 0L, LlmUsage.empty(), LlmUsage.empty());
         }
 
         public LlmUsage totalLlmUsage() {
@@ -200,8 +238,15 @@ public record SpecRunResult(
         SPEC_INVALID,
         REACT_CANCELED,
         REACT_FAILED,
+        REPAIR_CANCELED,
+        REPAIR_FAILED,
         VERIFICATION_FAILED,
         FINISHED
+    }
+
+    public enum VerificationPhase {
+        INITIAL,
+        POST_REPAIR
     }
 
     public enum CriterionStatus {

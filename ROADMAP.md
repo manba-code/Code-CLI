@@ -605,9 +605,9 @@
 
 ## ChangeSpec V1 — Spec-to-Evidence 闭环（进行中）
 
-**当前已完成前五条垂直切片**：领域模型/Codec/校验/Digest、`/spec` Draft 生成与确认、锁定持久化并注入现有 ReAct、Workspace baseline/changed-files/final-diff/Scope/command/JUnit 验证，以及 Criterion Result/Human Criterion/Verdict/紧凑运行结果持久化。锁定执行复用 Side-Git、ESC 取消、HITL、PathGuard 和 CommandGuard；Agent 回答不能替代 Evidence 或 Verdict。
+**当前已完成前六条垂直切片**：领域模型/Codec/校验/Digest、`/spec` Draft 生成与确认、锁定持久化并注入现有 ReAct、Workspace baseline/changed-files/final-diff/Scope/command/JUnit 验证、Criterion Result/Human Criterion/Verdict/紧凑运行结果持久化，以及 deterministic `FAIL` 后最多一次 Evidence 驱动修复。修复复用同一个 ReAct 会话，保存两轮 VerificationAttempt，并在修复后基于原 baseline 重跑全部 Verifier；Agent 回答不能替代 Evidence 或 Verdict。
 
-**下一切片**：确定性 `FAIL` 后的一次证据驱动修复。之后再实现 A/B/C 评测与指标报告。
+**下一切片**：A/B/C 评测与指标报告，用相同初始 workspace、模型、任务和隐藏 Oracle 比较普通 ReAct、ChangeSpec 无修复与 ChangeSpec 一次修复。
 
 详细设计与完成定义见 `docs/change-spec-v1-rfc.md`。
 

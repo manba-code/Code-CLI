@@ -25,6 +25,7 @@ import java.util.function.UnaryOperator;
  */
 public final class SpecRunCoordinator {
     private static final String SPECS_DIR = ".paicli/specs";
+    private static final int MAX_REPAIR_INPUT_CHARS = 16 * 1024;
     private static final DateTimeFormatter RUN_TIME = DateTimeFormatter
             .ofPattern("yyyyMMdd-HHmmss-SSS")
             .withZone(ZoneOffset.UTC);
@@ -131,6 +132,7 @@ public final class SpecRunCoordinator {
                     0L,
                     0L,
                     0L,
+                    0,
                     runStartedAt,
                     SpecRunResult.LlmUsage.empty()));
         }
@@ -162,7 +164,7 @@ public final class SpecRunCoordinator {
                     notRunCriteria(document.spec(), "运行准备失败，未启动 ReAct"),
                     List.of(),
                     SpecRunResult.Verdict.INCOMPLETE,
-                    metrics(review, 0L, 0L, 0L, runStartedAt, SpecRunResult.LlmUsage.empty()),
+                    metrics(review, 0L, 0L, 0L, 0, runStartedAt, SpecRunResult.LlmUsage.empty()),
                     SpecRunResult.Artifacts.notApplicable(),
                     "运行准备失败: " + messageOf(e));
             return persist(result);
@@ -172,7 +174,7 @@ public final class SpecRunCoordinator {
         ReActExecutionResult execution;
         try {
             execution = Objects.requireNonNull(
-                    reactExecutor.run(executionInput, lockedSpec),
+                    reactExecutor.run(ReActPhase.INITIAL, executionInput, lockedSpec),
                     "react execution result");
         } catch (RuntimeException e) {
             execution = ReActExecutionResult.failed(
@@ -181,6 +183,8 @@ public final class SpecRunCoordinator {
                     elapsedMillis(reactStartedAt));
         }
         long reactMs = Math.max(execution.elapsedMs(), elapsedMillis(reactStartedAt));
+        SpecRunResult.LlmUsage reactUsage = execution.llmUsage();
+        List<SpecRunResult.VerificationAttempt> attempts = new ArrayList<>();
 
         String lockedSpecError = validateLockedSpec(lockedSpec);
         if (lockedSpecError != null) {
@@ -194,7 +198,7 @@ public final class SpecRunCoordinator {
                     notRunCriteria(document.spec(), "锁定的 ChangeSpec 身份无效，未运行验收"),
                     List.of(),
                     SpecRunResult.Verdict.SPEC_INVALID,
-                    metrics(review, reactMs, 0L, 0L, runStartedAt, execution.llmUsage()),
+                    metrics(review, reactMs, 0L, 0L, 0, runStartedAt, reactUsage),
                     SpecRunResult.Artifacts.notApplicable(),
                     joinDetails(lockedSpecError, capture.error()));
             return persist(result);
@@ -219,7 +223,7 @@ public final class SpecRunCoordinator {
                     criteria,
                     List.of(),
                     SpecRunResult.Verdict.INCOMPLETE,
-                    metrics(review, reactMs, 0L, 0L, runStartedAt, execution.llmUsage()),
+                    metrics(review, reactMs, 0L, 0L, 0, runStartedAt, reactUsage),
                     SpecRunResult.Artifacts.notApplicable(),
                     capture.error());
             return persist(result);
@@ -245,23 +249,130 @@ public final class SpecRunCoordinator {
                     notRunCriteria(document.spec(), verificationError),
                     List.of(),
                     SpecRunResult.Verdict.INCOMPLETE,
-                    metrics(review, reactMs, verificationMs, 0L, runStartedAt, execution.llmUsage()),
+                    metrics(review, reactMs, verificationMs, 0L, 0, runStartedAt, reactUsage),
                     SpecRunResult.Artifacts.notApplicable(),
                     joinDetails(verificationError, capture.error()));
             return persist(result);
         }
         long verificationMs = elapsedMillis(verificationStartedAt);
+        attempts.add(new SpecRunResult.VerificationAttempt(
+                1,
+                SpecRunResult.VerificationPhase.INITIAL,
+                verification.workspaceChanges(),
+                verification.verifierResults()));
+
+        List<SpecRunResult.CriterionResult> firstDeterministic = evaluateDeterministicCriteria(
+                document.spec(),
+                verification.verifierResults(),
+                1);
+        int repairCount = 0;
+        int finalAttempt = 1;
+        ReActExecutionResult finalExecution = execution;
+        SpecVerifier.VerificationRun finalVerification = verification;
+
+        if (shouldRepair(firstDeterministic, verification.verifierResults())) {
+            repairCount = 1;
+            String repairInput = buildRepairInput(
+                    document.spec(),
+                    firstDeterministic,
+                    verification.verifierResults(),
+                    lockedSpec.specDigest());
+            long repairStartedAt = System.nanoTime();
+            ReActExecutionResult repairExecution;
+            try {
+                repairExecution = Objects.requireNonNull(
+                        reactExecutor.run(ReActPhase.REPAIR, repairInput, lockedSpec),
+                        "repair execution result");
+            } catch (RuntimeException e) {
+                repairExecution = ReActExecutionResult.failed(
+                        "❌ 修复执行失败: " + messageOf(e),
+                        SpecRunResult.LlmUsage.empty(),
+                        elapsedMillis(repairStartedAt));
+            }
+            reactMs += Math.max(repairExecution.elapsedMs(), elapsedMillis(repairStartedAt));
+            reactUsage = reactUsage.plus(repairExecution.llmUsage());
+            finalExecution = repairExecution;
+
+            if (repairExecution.status() != ReActStatus.COMPLETED) {
+                WorkspaceCapture capture = collectWorkspace(baseline);
+                boolean canceled = repairExecution.status() == ReActStatus.CANCELED;
+                String reason = canceled
+                        ? "Evidence 驱动修复已取消，最终验证未运行"
+                        : "Evidence 驱动修复失败，最终验证未运行";
+                SpecRunResult result = new SpecRunResult(
+                        canceled ? SpecRunResult.Status.REPAIR_CANCELED : SpecRunResult.Status.REPAIR_FAILED,
+                        identity,
+                        repairExecution.response(),
+                        capture.changes(),
+                        attempts,
+                        notRunCriteria(document.spec(), reason),
+                        List.of(),
+                        SpecRunResult.Verdict.INCOMPLETE,
+                        metrics(review, reactMs, verificationMs, 0L, repairCount, runStartedAt, reactUsage),
+                        SpecRunResult.Artifacts.notApplicable(),
+                        capture.error());
+                return persist(result);
+            }
+
+            lockedSpecError = validateLockedSpec(lockedSpec);
+            if (lockedSpecError != null) {
+                WorkspaceCapture capture = collectWorkspace(baseline);
+                SpecRunResult result = new SpecRunResult(
+                        SpecRunResult.Status.SPEC_INVALID,
+                        identity,
+                        repairExecution.response(),
+                        capture.changes(),
+                        attempts,
+                        notRunCriteria(document.spec(), "修复后锁定的 ChangeSpec 身份无效，未运行最终验收"),
+                        List.of(),
+                        SpecRunResult.Verdict.SPEC_INVALID,
+                        metrics(review, reactMs, verificationMs, 0L, repairCount, runStartedAt, reactUsage),
+                        SpecRunResult.Artifacts.notApplicable(),
+                        joinDetails(lockedSpecError, capture.error()));
+                return persist(result);
+            }
+
+            long secondVerificationStartedAt = System.nanoTime();
+            try {
+                finalVerification = verifier.verify(document.spec(), workspaceTracker, baseline);
+            } catch (RuntimeException e) {
+                verificationMs += elapsedMillis(secondVerificationStartedAt);
+                WorkspaceCapture capture = collectWorkspace(baseline);
+                String verificationError = "修复后 Verifier 流程异常: " + messageOf(e);
+                SpecRunResult result = new SpecRunResult(
+                        SpecRunResult.Status.VERIFICATION_FAILED,
+                        identity,
+                        repairExecution.response(),
+                        capture.changes(),
+                        attempts,
+                        notRunCriteria(document.spec(), verificationError),
+                        List.of(),
+                        SpecRunResult.Verdict.INCOMPLETE,
+                        metrics(review, reactMs, verificationMs, 0L, repairCount, runStartedAt, reactUsage),
+                        SpecRunResult.Artifacts.notApplicable(),
+                        joinDetails(verificationError, capture.error()));
+                return persist(result);
+            }
+            verificationMs += elapsedMillis(secondVerificationStartedAt);
+            finalAttempt = 2;
+            attempts.add(new SpecRunResult.VerificationAttempt(
+                    finalAttempt,
+                    SpecRunResult.VerificationPhase.POST_REPAIR,
+                    finalVerification.workspaceChanges(),
+                    finalVerification.verifierResults()));
+        }
 
         CriterionEvaluation evaluation = evaluateCriteria(
                 document.spec(),
-                verification.verifierResults(),
-                verification.workspaceChanges());
+                finalVerification.verifierResults(),
+                finalVerification.workspaceChanges(),
+                finalAttempt);
         SpecRunResult result = new SpecRunResult(
                 SpecRunResult.Status.FINISHED,
                 identity,
-                execution.response(),
-                verification.workspaceChanges(),
-                verification.verifierResults(),
+                finalExecution.response(),
+                finalVerification.workspaceChanges(),
+                attempts,
                 evaluation.criterionResults(),
                 evaluation.humanEvidence(),
                 reduceVerdict(evaluation.criterionResults()),
@@ -270,8 +381,9 @@ public final class SpecRunCoordinator {
                         reactMs,
                         verificationMs,
                         evaluation.humanDurationMs(),
+                        repairCount,
                         runStartedAt,
-                        execution.llmUsage()),
+                        reactUsage),
                 SpecRunResult.Artifacts.notApplicable(),
                 "");
         return persist(result);
@@ -280,18 +392,12 @@ public final class SpecRunCoordinator {
     private CriterionEvaluation evaluateCriteria(
             ChangeSpec spec,
             List<SpecVerifier.VerifierResult> verifierResults,
-            WorkspaceChangeTracker.WorkspaceChanges changes
+            WorkspaceChangeTracker.WorkspaceChanges changes,
+            int attempt
     ) {
-        Map<String, SpecVerifier.VerifierResult> verifierById = new LinkedHashMap<>();
-        for (SpecVerifier.VerifierResult verifierResult : verifierResults) {
-            verifierById.put(verifierResult.verifierId(), verifierResult);
-        }
-
         Map<String, SpecRunResult.CriterionResult> resultsById = new LinkedHashMap<>();
-        for (ChangeSpec.AcceptanceCriterion criterion : spec.acceptance()) {
-            if (criterion.oracle().type() == ChangeSpec.OracleType.DETERMINISTIC) {
-                resultsById.put(criterion.id(), evaluateDeterministic(criterion, verifierById));
-            }
+        for (SpecRunResult.CriterionResult result : evaluateDeterministicCriteria(spec, verifierResults, attempt)) {
+            resultsById.put(result.criterionId(), result);
         }
 
         boolean deterministicPassed = resultsById.values().stream()
@@ -363,7 +469,8 @@ public final class SpecRunCoordinator {
 
     private static SpecRunResult.CriterionResult evaluateDeterministic(
             ChangeSpec.AcceptanceCriterion criterion,
-            Map<String, SpecVerifier.VerifierResult> verifierById
+            Map<String, SpecVerifier.VerifierResult> verifierById,
+            int attempt
     ) {
         List<String> evidenceIds = new ArrayList<>();
         List<String> failures = new ArrayList<>();
@@ -374,7 +481,7 @@ public final class SpecRunCoordinator {
                 inconclusive.add(verifierId + " 缺少结果");
                 continue;
             }
-            evidenceIds.add("verifier:" + verifierId);
+            evidenceIds.add(SpecEvidenceFormatter.evidenceId(attempt, verifierId));
             if (verifier.status() == SpecVerifier.Status.FAIL) {
                 failures.add(verifierId + ": " + verifier.detail());
             } else if (verifier.status() == SpecVerifier.Status.ERROR) {
@@ -403,6 +510,98 @@ public final class SpecRunCoordinator {
                 evidenceIds,
                 SpecRunResult.Judge.VERIFIER,
                 "引用的 Verifier 全部通过");
+    }
+
+    private static List<SpecRunResult.CriterionResult> evaluateDeterministicCriteria(
+            ChangeSpec spec,
+            List<SpecVerifier.VerifierResult> verifierResults,
+            int attempt
+    ) {
+        Map<String, SpecVerifier.VerifierResult> verifierById = new LinkedHashMap<>();
+        for (SpecVerifier.VerifierResult verifierResult : verifierResults) {
+            verifierById.put(verifierResult.verifierId(), verifierResult);
+        }
+        return spec.acceptance().stream()
+                .filter(criterion -> criterion.oracle().type() == ChangeSpec.OracleType.DETERMINISTIC)
+                .map(criterion -> evaluateDeterministic(criterion, verifierById, attempt))
+                .toList();
+    }
+
+    private static boolean shouldRepair(
+            List<SpecRunResult.CriterionResult> deterministicResults,
+            List<SpecVerifier.VerifierResult> verifierResults
+    ) {
+        boolean hasFailure = deterministicResults.stream()
+                .anyMatch(result -> result.status() == SpecRunResult.CriterionStatus.FAIL);
+        boolean hasError = verifierResults.stream()
+                .anyMatch(result -> result.status() == SpecVerifier.Status.ERROR);
+        return hasFailure && !hasError;
+    }
+
+    private static String buildRepairInput(
+            ChangeSpec spec,
+            List<SpecRunResult.CriterionResult> deterministicResults,
+            List<SpecVerifier.VerifierResult> verifierResults,
+            String specDigest
+    ) {
+        Map<String, SpecRunResult.CriterionResult> resultById = new LinkedHashMap<>();
+        for (SpecRunResult.CriterionResult result : deterministicResults) {
+            resultById.put(result.criterionId(), result);
+        }
+        Map<String, SpecVerifier.VerifierResult> verifierById = new LinkedHashMap<>();
+        for (SpecVerifier.VerifierResult result : verifierResults) {
+            verifierById.put(result.verifierId(), result);
+        }
+
+        StringBuilder failedCriteria = new StringBuilder();
+        Map<String, SpecVerifier.VerifierResult> failedEvidence = new LinkedHashMap<>();
+        for (ChangeSpec.AcceptanceCriterion criterion : spec.acceptance()) {
+            SpecRunResult.CriterionResult result = resultById.get(criterion.id());
+            if (result == null || result.status() != SpecRunResult.CriterionStatus.FAIL) {
+                continue;
+            }
+            failedCriteria.append("- id: ").append(criterion.id()).append('\n')
+                    .append("  statement: ").append(criterion.statement()).append('\n')
+                    .append("  reason: ").append(result.reason()).append('\n');
+            for (String verifierId : criterion.oracle().verifiers()) {
+                SpecVerifier.VerifierResult verifier = verifierById.get(verifierId);
+                if (verifier != null && verifier.status() == SpecVerifier.Status.FAIL) {
+                    failedEvidence.putIfAbsent(verifierId, verifier);
+                }
+            }
+        }
+
+        StringBuilder evidence = new StringBuilder();
+        for (SpecVerifier.VerifierResult verifier : failedEvidence.values()) {
+            if (!evidence.isEmpty()) {
+                evidence.append("\n---\n");
+            }
+            evidence.append(SpecEvidenceFormatter.repairSummary(verifier));
+        }
+        String evidenceText = evidence.toString();
+        if (evidenceText.length() > MAX_REPAIR_INPUT_CHARS) {
+            evidenceText = evidenceText.substring(0, MAX_REPAIR_INPUT_CHARS)
+                    + "\n... repair evidence truncated ...";
+        }
+
+        return """
+                首次确定性验证未通过。请在同一个 ReAct 会话中进行唯一一次 Evidence 驱动修复。
+                只能修改实现或测试代码以满足原 ChangeSpec；锁定的 ChangeSpec 不可修改、删除或替换，也不得改变需求。
+
+                <locked_spec_digest>
+                %s
+                </locked_spec_digest>
+
+                <failed_criteria>
+                %s
+                </failed_criteria>
+
+                <failure_evidence>
+                %s
+                </failure_evidence>
+
+                修复结束后系统会重新运行全部锁定 Verifier。你的回答不是最终 Verdict，不得声称已经 PASSED。
+                """.formatted(specDigest, failedCriteria.toString().stripTrailing(), evidenceText);
     }
 
     private static SpecRunResult.Verdict reduceVerdict(List<SpecRunResult.CriterionResult> results) {
@@ -479,6 +678,7 @@ public final class SpecRunCoordinator {
             long reactMs,
             long verificationMs,
             long humanMs,
+            int repairCount,
             long runStartedAt,
             SpecRunResult.LlmUsage reactUsage
     ) {
@@ -488,6 +688,7 @@ public final class SpecRunCoordinator {
                 reactMs,
                 verificationMs,
                 humanMs,
+                repairCount,
                 elapsedMillis(runStartedAt),
                 review.llmUsage(),
                 reactUsage);
@@ -615,7 +816,13 @@ public final class SpecRunCoordinator {
 
     @FunctionalInterface
     public interface ReActExecutor {
-        ReActExecutionResult run(String executionInput, LockedSpec lockedSpec);
+        /** 同一个实例会先收到 INITIAL，符合修复条件时再收到一次 REPAIR；不得在两次调用间清空会话。 */
+        ReActExecutionResult run(ReActPhase phase, String executionInput, LockedSpec lockedSpec);
+    }
+
+    public enum ReActPhase {
+        INITIAL,
+        REPAIR
     }
 
     @FunctionalInterface

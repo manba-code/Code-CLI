@@ -39,7 +39,7 @@ class SpecRunCoordinatorTest {
                 projectRoot,
                 session,
                 request -> request.replace("@src", "<directory>src</directory>"),
-                (input, lockedSpec) -> {
+                (phase, input, lockedSpec) -> {
                     executionInputs.add(input);
                     locks.add(lockedSpec);
                     return SpecRunCoordinator.ReActExecutionResult.completed("agent response");
@@ -84,7 +84,7 @@ class SpecRunCoordinatorTest {
                 projectRoot,
                 session,
                 request -> request,
-                (input, lockedSpec) -> {
+                (phase, input, lockedSpec) -> {
                     executionInputs.add(input);
                     return SpecRunCoordinator.ReActExecutionResult.completed("done");
                 });
@@ -107,7 +107,7 @@ class SpecRunCoordinatorTest {
                 projectRoot,
                 session,
                 request -> request,
-                (input, lockedSpec) -> {
+                (phase, input, lockedSpec) -> {
                     executed.set(true);
                     return SpecRunCoordinator.ReActExecutionResult.completed("unexpected");
                 });
@@ -172,7 +172,7 @@ class SpecRunCoordinatorTest {
                 projectRoot,
                 session,
                 request -> request,
-                (input, lockedSpec) -> {
+                (phase, input, lockedSpec) -> {
                     throw new IllegalStateException("react failed");
                 });
 
@@ -200,7 +200,7 @@ class SpecRunCoordinatorTest {
                 projectRoot,
                 session,
                 request -> request,
-                (input, lockedSpec) -> SpecRunCoordinator.ReActExecutionResult.canceled("canceled"),
+                (phase, input, lockedSpec) -> SpecRunCoordinator.ReActExecutionResult.canceled("canceled"),
                 new SpecVerifier(projectRoot, command -> {
                     commandRuns.incrementAndGet();
                     return com.paicli.tool.CommandExecutionResult.completed(command, 0, "ok");
@@ -229,7 +229,7 @@ class SpecRunCoordinatorTest {
                 projectRoot,
                 session,
                 request -> request,
-                (input, lockedSpec) -> SpecRunCoordinator.ReActExecutionResult.completed(
+                (phase, input, lockedSpec) -> SpecRunCoordinator.ReActExecutionResult.completed(
                         "done",
                         new SpecRunResult.LlmUsage(3, 100, 40, 10),
                         11L),
@@ -265,7 +265,10 @@ class SpecRunCoordinatorTest {
                 document,
                 new SpecVerifier(projectRoot, command -> switch (command) {
                     case "first" -> CommandExecutionResult.completed(command, 1, "assertion failed");
-                    case "second" -> CommandExecutionResult.startError(command, "missing binary");
+                    case "second" -> CommandExecutionResult.denied(
+                            command,
+                            CommandExecutionResult.Status.HITL_DENIED,
+                            "user denied");
                     default -> CommandExecutionResult.completed(command, 0, "ok");
                 }),
                 (criterion, changes) -> {
@@ -281,7 +284,11 @@ class SpecRunCoordinatorTest {
                 .findFirst()
                 .orElseThrow();
         assertEquals(SpecRunResult.CriterionStatus.FAIL, combined.status());
-        assertEquals(List.of("verifier:VT-FIRST", "verifier:VT-SECOND"), combined.evidenceIds());
+        assertEquals(
+                List.of("verifier:attempt-1:VT-FIRST", "verifier:attempt-1:VT-SECOND"),
+                combined.evidenceIds());
+        assertEquals(0, result.metrics().repairCount());
+        assertEquals(1, result.verificationAttempts().size());
         assertEquals(0, humanCalls.get());
         assertEquals(SpecRunResult.CriterionStatus.NOT_RUN, result.criterionResults().stream()
                 .filter(criterion -> criterion.criterionId().equals("AC-HUMAN"))
@@ -301,6 +308,213 @@ class SpecRunCoordinatorTest {
         assertEquals(SpecRunResult.Verdict.INCOMPLETE, result.verdict());
         assertTrue(result.criterionResults().stream()
                 .anyMatch(criterion -> criterion.status() == SpecRunResult.CriterionStatus.INCONCLUSIVE));
+        assertEquals(0, result.metrics().repairCount());
+    }
+
+    @Test
+    void repairsOnceThenRerunsAllVerifiersAndPersistsBothAttempts() throws Exception {
+        ChangeSpecDocument document = codec.decode(commandDocument());
+        AtomicInteger reactRuns = new AtomicInteger();
+        AtomicInteger commandRuns = new AtomicInteger();
+        List<SpecRunCoordinator.ReActPhase> phases = new ArrayList<>();
+        List<String> inputs = new ArrayList<>();
+        SpecDraftSession session = new SpecDraftSession(
+                request -> draft(document),
+                draft -> SpecDraftSession.ReviewDecision.confirm());
+        SpecRunCoordinator coordinator = new SpecRunCoordinator(
+                projectRoot,
+                session,
+                request -> request,
+                (phase, input, lockedSpec) -> {
+                    phases.add(phase);
+                    inputs.add(input);
+                    int run = reactRuns.incrementAndGet();
+                    return SpecRunCoordinator.ReActExecutionResult.completed(
+                            "run-" + run,
+                            new SpecRunResult.LlmUsage(run, run * 10L, run * 4L, run),
+                            run);
+                },
+                new SpecVerifier(projectRoot, command -> {
+                    int run = commandRuns.incrementAndGet();
+                    return CommandExecutionResult.completed(
+                            command,
+                            run == 1 ? 1 : 0,
+                            run == 1 ? "API_KEY=supersecret\nassertion failed" : "ok");
+                }),
+                (criterion, changes) -> SpecRunCoordinator.HumanJudgment.pass());
+
+        SpecRunResult result = coordinator.run("修复问题");
+
+        assertEquals(SpecRunResult.Verdict.PASSED, result.verdict());
+        assertEquals(2, reactRuns.get());
+        assertEquals(2, commandRuns.get());
+        assertEquals(List.of(
+                SpecRunCoordinator.ReActPhase.INITIAL,
+                SpecRunCoordinator.ReActPhase.REPAIR), phases);
+        assertEquals(2, result.verificationAttempts().size());
+        assertEquals(SpecRunResult.VerificationPhase.INITIAL, result.verificationAttempts().get(0).phase());
+        assertEquals(SpecRunResult.VerificationPhase.POST_REPAIR, result.verificationAttempts().get(1).phase());
+        assertEquals(1, result.metrics().repairCount());
+        assertEquals(3, result.metrics().reactLlmUsage().calls());
+        assertEquals("run-2", result.agentResponse());
+        assertTrue(result.criterionResults().stream()
+                .filter(criterion -> criterion.judge() == SpecRunResult.Judge.VERIFIER)
+                .flatMap(criterion -> criterion.evidenceIds().stream())
+                .allMatch(id -> id.contains("attempt-2")));
+
+        String repairInput = inputs.get(1);
+        assertTrue(repairInput.contains(document.specDigest()));
+        assertTrue(repairInput.contains("AC-1"));
+        assertTrue(repairInput.contains("API_KEY=***"));
+        assertFalse(repairInput.contains("supersecret"));
+        assertTrue(repairInput.contains("锁定的 ChangeSpec 不可修改"));
+
+        JsonNode json = new ObjectMapper().readTree(result.artifacts().resultJson().toFile());
+        assertEquals(2, json.path("verificationAttempts").size());
+        assertEquals(
+                "verifier:attempt-1:VT-COMMAND",
+                json.path("verificationAttempts").get(0).path("verifierResults").get(1).path("evidenceId").asText());
+        assertEquals(
+                "verifier:attempt-2:VT-COMMAND",
+                json.path("verificationAttempts").get(1).path("verifierResults").get(1).path("evidenceId").asText());
+        assertFalse(json.has("verifierResults"));
+    }
+
+    @Test
+    void stopsAfterOneRepairWhenFinalVerificationStillFails() throws Exception {
+        ChangeSpecDocument document = codec.decode(commandDocument());
+        AtomicInteger reactRuns = new AtomicInteger();
+        AtomicInteger commandRuns = new AtomicInteger();
+        SpecDraftSession session = new SpecDraftSession(
+                request -> draft(document),
+                draft -> SpecDraftSession.ReviewDecision.confirm());
+        SpecRunCoordinator coordinator = new SpecRunCoordinator(
+                projectRoot,
+                session,
+                request -> request,
+                (phase, input, lockedSpec) -> {
+                    reactRuns.incrementAndGet();
+                    return SpecRunCoordinator.ReActExecutionResult.completed("done");
+                },
+                new SpecVerifier(projectRoot, command -> {
+                    commandRuns.incrementAndGet();
+                    return CommandExecutionResult.completed(command, 1, "still failing");
+                }),
+                (criterion, changes) -> SpecRunCoordinator.HumanJudgment.pass());
+
+        SpecRunResult result = coordinator.run("修复问题");
+
+        assertEquals(SpecRunResult.Verdict.FAILED, result.verdict());
+        assertEquals(2, reactRuns.get());
+        assertEquals(2, commandRuns.get());
+        assertEquals(2, result.verificationAttempts().size());
+        assertEquals(1, result.metrics().repairCount());
+    }
+
+    @Test
+    void repairFailureLeavesHistoricalEvidenceButFinalVerdictIsIncomplete() throws Exception {
+        ChangeSpecDocument document = codec.decode(commandDocument());
+        AtomicInteger reactRuns = new AtomicInteger();
+        AtomicInteger commandRuns = new AtomicInteger();
+        SpecDraftSession session = new SpecDraftSession(
+                request -> draft(document),
+                draft -> SpecDraftSession.ReviewDecision.confirm());
+        SpecRunCoordinator coordinator = new SpecRunCoordinator(
+                projectRoot,
+                session,
+                request -> request,
+                (phase, input, lockedSpec) -> {
+                    if (reactRuns.incrementAndGet() == 1) {
+                        return SpecRunCoordinator.ReActExecutionResult.completed("initial");
+                    }
+                    throw new IllegalStateException("repair exploded");
+                },
+                new SpecVerifier(projectRoot, command -> {
+                    commandRuns.incrementAndGet();
+                    return CommandExecutionResult.completed(command, 1, "assertion failed");
+                }),
+                (criterion, changes) -> SpecRunCoordinator.HumanJudgment.pass());
+
+        SpecRunResult result = coordinator.run("修复问题");
+
+        assertEquals(SpecRunResult.Status.REPAIR_FAILED, result.status());
+        assertEquals(SpecRunResult.Verdict.INCOMPLETE, result.verdict());
+        assertEquals(2, reactRuns.get());
+        assertEquals(1, commandRuns.get());
+        assertEquals(1, result.verificationAttempts().size());
+        assertEquals(1, result.metrics().repairCount());
+        assertTrue(result.agentResponse().contains("repair exploded"));
+        assertTrue(result.criterionResults().stream()
+                .allMatch(criterion -> criterion.status() == SpecRunResult.CriterionStatus.NOT_RUN));
+        assertEquals(SpecRunResult.PersistenceStatus.SAVED, result.artifacts().status());
+    }
+
+    @Test
+    void canceledRepairProducesIncompleteWithoutSecondVerification() throws Exception {
+        ChangeSpecDocument document = codec.decode(commandDocument());
+        AtomicInteger reactRuns = new AtomicInteger();
+        AtomicInteger commandRuns = new AtomicInteger();
+        SpecDraftSession session = new SpecDraftSession(
+                request -> draft(document),
+                draft -> SpecDraftSession.ReviewDecision.confirm());
+        SpecRunCoordinator coordinator = new SpecRunCoordinator(
+                projectRoot,
+                session,
+                request -> request,
+                (phase, input, lockedSpec) -> reactRuns.incrementAndGet() == 1
+                        ? SpecRunCoordinator.ReActExecutionResult.completed("initial")
+                        : SpecRunCoordinator.ReActExecutionResult.canceled("repair canceled"),
+                new SpecVerifier(projectRoot, command -> {
+                    commandRuns.incrementAndGet();
+                    return CommandExecutionResult.completed(command, 1, "assertion failed");
+                }),
+                (criterion, changes) -> SpecRunCoordinator.HumanJudgment.pass());
+
+        SpecRunResult result = coordinator.run("修复问题");
+
+        assertEquals(SpecRunResult.Status.REPAIR_CANCELED, result.status());
+        assertEquals(SpecRunResult.Verdict.INCOMPLETE, result.verdict());
+        assertEquals(2, reactRuns.get());
+        assertEquals(1, commandRuns.get());
+        assertEquals(1, result.verificationAttempts().size());
+    }
+
+    @Test
+    void tamperedLockedSpecDuringRepairProducesSpecInvalid() throws Exception {
+        ChangeSpecDocument document = codec.decode(commandDocument());
+        AtomicInteger reactRuns = new AtomicInteger();
+        AtomicInteger commandRuns = new AtomicInteger();
+        SpecDraftSession session = new SpecDraftSession(
+                request -> draft(document),
+                draft -> SpecDraftSession.ReviewDecision.confirm());
+        SpecRunCoordinator coordinator = new SpecRunCoordinator(
+                projectRoot,
+                session,
+                request -> request,
+                (phase, input, lockedSpec) -> {
+                    if (reactRuns.incrementAndGet() == 2) {
+                        try {
+                            Files.writeString(lockedSpec.path(), "tampered during repair");
+                        } catch (IOException e) {
+                            throw new IllegalStateException(e);
+                        }
+                    }
+                    return SpecRunCoordinator.ReActExecutionResult.completed("done");
+                },
+                new SpecVerifier(projectRoot, command -> {
+                    commandRuns.incrementAndGet();
+                    return CommandExecutionResult.completed(command, 1, "assertion failed");
+                }),
+                (criterion, changes) -> SpecRunCoordinator.HumanJudgment.pass());
+
+        SpecRunResult result = coordinator.run("修复问题");
+
+        assertEquals(SpecRunResult.Status.SPEC_INVALID, result.status());
+        assertEquals(SpecRunResult.Verdict.SPEC_INVALID, result.verdict());
+        assertEquals(2, reactRuns.get());
+        assertEquals(1, commandRuns.get());
+        assertEquals(1, result.verificationAttempts().size());
+        assertEquals(1, result.metrics().repairCount());
     }
 
     @Test
@@ -322,7 +536,7 @@ class SpecRunCoordinatorTest {
                 rejectedRoot,
                 rejectedSession,
                 request -> request,
-                (input, lockedSpec) -> SpecRunCoordinator.ReActExecutionResult.completed("done"),
+                (phase, input, lockedSpec) -> SpecRunCoordinator.ReActExecutionResult.completed("done"),
                 new SpecVerifier(rejectedRoot, command -> CommandExecutionResult.completed(command, 0, "ok")),
                 (criterion, changes) -> SpecRunCoordinator.HumanJudgment.fail())
                 .run("修复问题");
@@ -377,7 +591,7 @@ class SpecRunCoordinatorTest {
                 projectRoot,
                 session,
                 request -> request,
-                (input, lockedSpec) -> {
+                (phase, input, lockedSpec) -> {
                     try {
                         Files.writeString(lockedSpec.path(), "tampered");
                     } catch (IOException e) {
@@ -407,7 +621,7 @@ class SpecRunCoordinatorTest {
                 projectRoot,
                 session,
                 request -> request,
-                (input, lockedSpec) -> {
+                (phase, input, lockedSpec) -> {
                     executed.set(true);
                     return SpecRunCoordinator.ReActExecutionResult.completed("unexpected");
                 });
@@ -425,7 +639,7 @@ class SpecRunCoordinatorTest {
                 projectRoot,
                 session,
                 request -> request,
-                (input, lockedSpec) -> SpecRunCoordinator.ReActExecutionResult.completed("done"),
+                (phase, input, lockedSpec) -> SpecRunCoordinator.ReActExecutionResult.completed("done"),
                 verifier,
                 humanJudge);
     }

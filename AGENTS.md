@@ -13,7 +13,7 @@
 - 项目名：`PaiCLI`
 - 定位：面向商业使用的 Java Agent CLI 产品，对标 Claude Code
 - 已交付 23 期（ReAct → Plan+DAG → Memory → RAG → Multi-Agent → HITL → 并行工具 → 多模型 → 联网 → MCP 核心 → MCP 高级 → 长上下文 → Chrome DevTools → CDP 会话复用 → Skill → TUI → LSP 诊断 → Side-Git 快照 → Prompt 分层 → Runtime API → 图片输入 → 微信 iLink 通道文本 MVP）
-- ChangeSpec V1 已完成前五条切片：领域模型/Codec/校验/Digest、`/spec <需求>` Draft 生成与确认、锁定持久化并注入现有 ReAct、Workspace baseline/changed-files/final-diff/Scope/command/JUnit 验证，以及 Criterion Result/Human Criterion/Verdict/紧凑运行结果持久化。当前 `/spec` 会输出逐条 Criterion Result 和最终 `SPEC_INVALID / FAILED / INCOMPLETE / NEEDS_HUMAN / PASSED`，并保存 `.paicli/runs/<run-id>/result.json` 与 `change.diff`；下一切片是一次证据驱动修复。
+- ChangeSpec V1 已完成前六条切片：领域模型/Codec/校验/Digest、`/spec <需求>` Draft 生成与确认、锁定持久化并注入现有 ReAct、Workspace baseline/changed-files/final-diff/Scope/command/JUnit 验证、Criterion Result/Human Criterion/Verdict/紧凑运行结果持久化，以及 deterministic `FAIL` 后最多一次 Evidence 驱动修复。修复复用同一个 ReAct 会话，只有首轮存在 `FAIL` 且没有 Verifier `ERROR` 时触发；修复后基于原 baseline 重跑全部 Verifier。`result.json` 保存 `repairCount` 和一至两轮 VerificationAttempt，Evidence ID 带 attempt；下一切片是 A/B/C 评测与指标报告。
 - `PAI.md` 是 PaiCLI 的项目级记忆文件：启动时自动注入 system prompt，适合团队共享的长期稳定规则；个人/会变化的经验继续用 `/save` 长期记忆。
 - 下一步：OAuth / sampling / recovery 作为后续 MCP 增强
 - Banner 版本：`v16.1.0`，Maven 产物：`paicli-1.0-SNAPSHOT.jar`（两者不一致是正常状态）
@@ -40,7 +40,7 @@ mvn test -Dtest=XxxTest -DskipTests=false   # 针对性
 mvn test -DskipTests=false                  # 全量回归
 /init                    # 生成精简项目级记忆 PAI.md；已有文件不覆盖，/init --force 可重写
 /export                  # 导出当前 ReAct 会话为 Markdown，包含完整 system prompt
-/spec <需求>             # 生成、确认并锁定 ChangeSpec，执行 ReAct + 确定性 Verifier；当前尚无 Verdict
+/spec <需求>             # 生成、确认并锁定 ChangeSpec，执行 ReAct、确定性 Verifier、最多一次修复与最终 Verdict
 ```
 
 ## 架构概览
@@ -53,7 +53,7 @@ mvn test -DskipTests=false                  # 全量回归
 | Plan-and-Execute | `PlanExecuteAgent.java` | `/plan` |
 | Multi-Agent | `AgentOrchestrator.java` | `/team` |
 
-ChangeSpec 是现有执行路径之上的可选契约层。当前 `/spec <需求>` 使用无工具的 `SpecDraftGenerator` 读取用户需求、Project Context 和显式本地引用，结构校验失败最多重生成一次；Enter 确认、I 补充、ESC 取消。确认后 `SpecRunCoordinator` 会稳定编码并不可覆盖地锁定完整文档，回读核对 specId/revision/digest，在 ReAct 前记录独立 workspace baseline，把包含补充要求的最终确认需求、锁定 YAML 与 digest 注入现有 ReAct。ReAct 正常结束后，command Verifier 按声明顺序串行运行，JUnit 只采信本次命令新建或更新的 XML，最后基于最终 workspace 执行 `path_scope`；命令继续经过 HITL/CommandGuard。每条 deterministic Criterion 按 `FAIL > INCONCLUSIVE > PASS` 聚合其 Verifier，全部确定性条件通过后才进入 `P / F / S` Human 判断；最终结果和截断脱敏后的必要命令摘要写入 `.paicli/runs/<run-id>/result.json`，final diff 写入同目录 `change.diff`。ReAct 取消、失败或准备/验证异常也会保留锁定文件、changed-files/diff，并以 `INCOMPLETE` 持久化；Agent 自述不能生成 PASS。
+ChangeSpec 是现有执行路径之上的可选契约层。当前 `/spec <需求>` 使用无工具的 `SpecDraftGenerator` 读取用户需求、Project Context 和显式本地引用，结构校验失败最多重生成一次；Enter 确认、I 补充、ESC 取消。确认后 `SpecRunCoordinator` 会稳定编码并不可覆盖地锁定完整文档，回读核对 specId/revision/digest，在 ReAct 前记录独立 workspace baseline，把包含补充要求的最终确认需求、锁定 YAML 与 digest 注入现有 ReAct。ReAct 正常结束后，command Verifier 按声明顺序串行运行，JUnit 只采信本次命令新建或更新的 XML，最后基于最终 workspace 执行 `path_scope`；命令继续经过 HITL/CommandGuard。首轮至少一个 deterministic Criterion 为 `FAIL` 且没有 Verifier `ERROR` 时，Coordinator 向同一个 ReAct 会话追加脱敏、截断后的失败 Evidence，最多修复一次，并基于原 baseline 重跑全部 Verifier。每条最终 deterministic Criterion 按 `FAIL > INCONCLUSIVE > PASS` 聚合，全部确定性条件通过后才进入 `P / F / S` Human 判断；`result.json` 保存 `repairCount`、一至两轮 VerificationAttempt 和最终 Verdict，Evidence ID 带 attempt，`change.diff` 只保存 final diff。ReAct/修复取消、失败或准备/验证异常也会保留锁定文件、changed-files/diff，并以 `INCOMPLETE` 持久化；Agent 自述不能生成 PASS。
 
 核心内置工具 11 个：`read_file` / `write_file` / `list_dir` / `glob_files` / `grep_code` / `execute_command` / `create_project` / `search_code` / `web_search` / `web_fetch` / `revert_turn`
 

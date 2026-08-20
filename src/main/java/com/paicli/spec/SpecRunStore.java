@@ -13,20 +13,12 @@ import java.nio.file.StandardCopyOption;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.regex.Pattern;
 
 /** 将运行结果写成两个紧凑、不可覆盖的本地产物。 */
 final class SpecRunStore {
-    static final int MAX_COMMAND_OUTPUT_CHARS = 8 * 1024;
     private static final String RUNS_DIR = ".paicli/runs";
-    private static final Pattern ANSI = Pattern.compile("\\u001B\\[[;\\d]*[ -/]*[@-~]");
-    private static final List<Pattern> SECRET_PATTERNS = List.of(
-            Pattern.compile("(?i)(--?(?:api[_-]?key|authorization|password|passwd|secret|token)\\s+)(\\S+)"),
-            Pattern.compile("(?i)((?:api[_-]?key|authorization|password|passwd|secret|token)\\s*[=:]\\s*)(\\S+)"),
-            Pattern.compile("(?i)(\\bbearer\\s+)(\\S+)"));
 
     private final Path projectRoot;
     private final Clock clock;
@@ -102,7 +94,9 @@ final class SpecRunStore {
                 "changedFiles", changes.changedFiles(),
                 "diffFile", "change.diff",
                 "diffTruncated", changes.diffTruncated()));
-        root.put("verifierResults", result.verifierResults().stream().map(this::verifierJson).toList());
+        root.put("verificationAttempts", result.verificationAttempts().stream()
+                .map(this::verificationAttemptJson)
+                .toList());
         root.put("criterionResults", result.criterionResults().stream().map(this::criterionJson).toList());
         root.put("humanEvidence", result.humanEvidence().stream().map(this::humanEvidenceJson).toList());
         root.put("metrics", metricsJson(result.metrics()));
@@ -112,23 +106,35 @@ final class SpecRunStore {
         return root;
     }
 
-    private Map<String, Object> verifierJson(SpecVerifier.VerifierResult verifier) {
+    private Map<String, Object> verificationAttemptJson(SpecRunResult.VerificationAttempt attempt) {
+        return mapOf(
+                "attempt", attempt.attempt(),
+                "phase", attempt.phase().name().toLowerCase(java.util.Locale.ROOT),
+                "workspace", mapOf(
+                        "changedFiles", attempt.workspaceChanges().changedFiles(),
+                        "diffTruncated", attempt.workspaceChanges().diffTruncated()),
+                "verifierResults", attempt.verifierResults().stream()
+                        .map(verifier -> verifierJson(attempt.attempt(), verifier))
+                        .toList());
+    }
+
+    private Map<String, Object> verifierJson(int attempt, SpecVerifier.VerifierResult verifier) {
         Map<String, Object> json = new LinkedHashMap<>();
-        json.put("evidenceId", evidenceId(verifier.verifierId()));
+        json.put("evidenceId", SpecEvidenceFormatter.evidenceId(attempt, verifier.verifierId()));
         json.put("verifierId", verifier.verifierId());
         json.put("type", verifier.type().name().toLowerCase(java.util.Locale.ROOT));
         json.put("status", verifier.status().name());
-        json.put("detail", verifier.detail());
+        json.put("detail", SpecEvidenceFormatter.sanitizeText(verifier.detail()));
         if (verifier.commandResult() != null) {
             CommandExecutionResult command = verifier.commandResult();
-            OutputSummary summary = verifier.status() == SpecVerifier.Status.PASS
-                    ? new OutputSummary("", false)
-                    : summarizeOutput(command.output());
+            SpecEvidenceFormatter.OutputSummary summary = verifier.status() == SpecVerifier.Status.PASS
+                    ? new SpecEvidenceFormatter.OutputSummary("", false)
+                    : SpecEvidenceFormatter.summarizeOutput(command.output());
             json.put("command", mapOf(
-                    "input", command.command(),
+                    "input", SpecEvidenceFormatter.sanitizeText(command.command()),
                     "status", command.status().name(),
                     "exitCode", command.exitCode(),
-                    "reason", command.reason(),
+                    "reason", SpecEvidenceFormatter.sanitizeText(command.reason()),
                     "outputSummary", summary.text(),
                     "outputTruncated", summary.truncated()));
         }
@@ -170,6 +176,7 @@ final class SpecRunStore {
                 "reactExecutionMs", metrics.reactExecutionMs(),
                 "verificationMs", metrics.verificationMs(),
                 "humanCriterionMs", metrics.humanCriterionMs(),
+                "repairCount", metrics.repairCount(),
                 "totalMs", metrics.totalMs(),
                 "draftLlmUsage", usageJson(metrics.draftLlmUsage()),
                 "reactLlmUsage", usageJson(metrics.reactLlmUsage()),
@@ -190,28 +197,6 @@ final class SpecRunStore {
             return projectRoot.relativize(normalized).toString().replace('\\', '/');
         }
         return normalized.toString().replace('\\', '/');
-    }
-
-    private static OutputSummary summarizeOutput(String output) {
-        String sanitized = ANSI.matcher(output == null ? "" : output).replaceAll("");
-        for (Pattern pattern : SECRET_PATTERNS) {
-            sanitized = pattern.matcher(sanitized).replaceAll("$1***");
-        }
-        if (sanitized.length() <= MAX_COMMAND_OUTPUT_CHARS) {
-            return new OutputSummary(sanitized, false);
-        }
-        int head = 2 * 1024;
-        String marker = "\n... command output truncated ...\n";
-        int tail = MAX_COMMAND_OUTPUT_CHARS - head - marker.length();
-        return new OutputSummary(
-                sanitized.substring(0, head)
-                        + marker
-                        + sanitized.substring(sanitized.length() - tail),
-                true);
-    }
-
-    private static String evidenceId(String verifierId) {
-        return "verifier:" + verifierId;
     }
 
     private static Map<String, Object> mapOf(Object... entries) {
@@ -239,8 +224,5 @@ final class SpecRunStore {
                 Files.deleteIfExists(temporary);
             }
         }
-    }
-
-    private record OutputSummary(String text, boolean truncated) {
     }
 }

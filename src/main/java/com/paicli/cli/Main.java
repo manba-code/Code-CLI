@@ -1157,17 +1157,24 @@ public class Main {
                 projectRoot,
                 session,
                 localPathMentionExpander::expand,
-                (executionInput, lockedSpec) -> {
-                    out.println("🔒 ChangeSpec 已锁定");
-                    out.println("   路径: " + lockedSpec.path());
-                    out.println("   Spec: " + lockedSpec.specId() + " r" + lockedSpec.revision());
-                    out.println("   Digest: " + lockedSpec.specDigest());
-                    out.println("   正在交给现有 ReAct 执行；Spec 确认不会扩大工具权限。\n");
+                (phase, executionInput, lockedSpec) -> {
+                    if (phase == SpecRunCoordinator.ReActPhase.INITIAL) {
+                        out.println("🔒 ChangeSpec 已锁定");
+                        out.println("   路径: " + lockedSpec.path());
+                        out.println("   Spec: " + lockedSpec.specId() + " r" + lockedSpec.revision());
+                        out.println("   Digest: " + lockedSpec.specDigest());
+                        out.println("   正在交给现有 ReAct 执行；Spec 确认不会扩大工具权限。\n");
+                    } else {
+                        out.println("🔧 首次确定性验证未通过，正在进行 1/1 Evidence 驱动修复。\n");
+                    }
+                    String snapshotLabel = phase == SpecRunCoordinator.ReActPhase.INITIAL
+                            ? "spec"
+                            : "spec-repair";
                     return runSpecReActWithCancelSupport(
                             terminal,
                             out,
                             () -> snapshotService.runTurn(
-                                    "spec",
+                                    snapshotLabel,
                                     executionInput,
                                     () -> toSpecReActResult(reactAgent.runDetailed(executionInput))));
                 },

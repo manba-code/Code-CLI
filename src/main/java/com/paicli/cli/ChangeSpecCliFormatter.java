@@ -59,9 +59,17 @@ final class ChangeSpecCliFormatter {
 
     static String formatResult(SpecRunResult result) {
         StringBuilder out = new StringBuilder();
-        if (!result.verifierResults().isEmpty()) {
-            out.append("🧪 ChangeSpec Verifier 结果\n");
-            for (SpecVerifier.VerifierResult verifier : result.verifierResults()) {
+        for (SpecRunResult.VerificationAttempt attempt : result.verificationAttempts()) {
+            out.append("🧪 ChangeSpec Verifier 结果");
+            if (result.verificationAttempts().size() > 1) {
+                out.append(" · attempt ")
+                        .append(attempt.attempt())
+                        .append(" (")
+                        .append(lower(attempt.phase()))
+                        .append(')');
+            }
+            out.append('\n');
+            for (SpecVerifier.VerifierResult verifier : attempt.verifierResults()) {
                 out.append("  ")
                         .append(verifier.status())
                         .append(' ')
@@ -102,6 +110,9 @@ final class ChangeSpecCliFormatter {
         }
         if (result.verdict() != null) {
             out.append("🏁 最终 Verdict: ").append(result.verdict()).append('\n');
+        }
+        if (result.metrics().repairCount() > 0) {
+            out.append("自动修复: ").append(result.metrics().repairCount()).append("/1\n");
         }
         if (result.artifacts().status() == SpecRunResult.PersistenceStatus.SAVED) {
             out.append("运行结果: ").append(result.artifacts().resultJson()).append('\n');

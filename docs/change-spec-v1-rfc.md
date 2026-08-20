@@ -2,7 +2,7 @@
 
 > 状态：Accepted  
 > 目标版本：V1  
-> 实现进度：前五条垂直切片已完成（领域模型/Codec/校验/Digest；`/spec` Draft 生成与确认；锁定持久化并注入现有 ReAct；Workspace baseline、Scope 与 command/JUnit 验证；Criterion Result、Human Criterion、Verdict 与紧凑持久化）
+> 实现进度：前六条垂直切片已完成（领域模型/Codec/校验/Digest；`/spec` Draft 生成与确认；锁定持久化并注入现有 ReAct；Workspace baseline、Scope 与 command/JUnit 验证；Criterion Result、Human Criterion、Verdict 与紧凑持久化；一次 Evidence 驱动修复）
 > 核心目标：缩短从需求提出到代码被可信验收的时间，而不是增加一套需求管理流程。
 
 ## 1. 决策摘要
@@ -363,7 +363,7 @@ deterministic Criterion 引用多个 Verifier 时按固定优先级聚合：任�
 
 ## 9. 一次证据驱动修复
 
-首次验证出现 deterministic `FAIL` 时，系统向同一个 ReAct 会话追加一条结构化修复输入，只包含：
+首次验证至少出现一个 deterministic `FAIL`，且本轮所有 Verifier 都没有 `ERROR` 时，系统向同一个 ReAct 会话追加一条结构化修复输入，只包含：
 
 - 未通过的 Criterion；
 - 对应 Evidence；
@@ -373,13 +373,18 @@ deterministic Criterion 引用多个 Verifier 时按固定优先级聚合：任�
 
 Agent 最多修复一次，之后重新执行全部 Verifier，而不是只重跑失败项。
 
+Human Criterion 的存在不阻止确定性修复；它只在最终一轮 deterministic Criterion 全部通过后判断。首轮同时出现 `FAIL + ERROR` 时不修复，最终 Verdict 仍按既有固定优先级归约，因此有效 `FAIL` 仍优先得到 `FAILED`。`repairCount` 表示已经启动的修复次数，修复取消或异常也记为 1。
+
+修复正常完成后，系统再次回读锁定 Spec；身份有效才会使用运行开始时的原始 workspace baseline 重跑全部 Verifier。修复取消、失败或修复后的 Verifier 流程异常时，不使用首轮 Evidence 判断可能已部分改变的最终 workspace，最终 Criterion 记为未运行并得到 `INCOMPLETE`；修复期间锁定 Spec 被修改则得到 `SPEC_INVALID`。
+
 以下情况不自动修复：
 
 - `SPEC_INVALID`；
-- Verifier `ERROR`；
-- HITL 或策略拒绝；
-- Human Criterion 尚未判断；
+- 任一 Verifier `ERROR`，包括 Verifier 命令的 HITL/策略拒绝、取消、超时或启动异常；
+- Human Criterion 未判断本身不构成修复触发条件；
 - 需求本身需要改变。
+
+V1 的修复触发只依赖结构化的 ReAct 生命周期和 Verifier Result，不从面向模型的工具返回文本反推编码阶段是否发生过 HITL/策略拒绝。初始 ReAct 自身取消或失败不会进入验证和修复；若编码阶段拒绝后 ReAct 仍正常结束，则最终由结构化 Verifier Evidence 决定是否满足触发条件。
 
 ## 10. 与现有 PaiCLI 的接入设计
 
@@ -437,7 +442,7 @@ spec/
 .paicli/runs/<run-id>/change.diff
 ```
 
-`result.json` 使用 `paicli/spec-run-result/v1` schema，保存 Spec/run 标识、Verifier Result、Criterion Result、Verdict、changed files、Human 选择和指标。Verifier Evidence ID 为 `verifier:<verifierId>`，Human Evidence ID 为 `human:<criterionId>`。PASS 命令不保存 stdout；FAIL/ERROR 只保存脱敏后的头尾定位摘要，最多 8 KiB，并记录截断标志。`change.diff` 头部重复记录 runId/specId/revision/specDigest，正文继续使用 workspace tracker 的 256 KiB 上限。产物不可覆盖，`result.json` 最后原子写入并作为完整运行产物标志；V1 不自动清理历史 run。
+`result.json` 使用 `paicli/spec-run-result/v1` schema，保存 Spec/run 标识、一至两条 `verificationAttempts`、最终 Criterion Result、Verdict、changed files、Human 选择和指标。每条 VerificationAttempt 保存 `attempt`、`initial / post_repair` phase、当轮 changed files 和 Verifier Result；Verifier Evidence ID 为 `verifier:attempt-<n>:<verifierId>`，最终 Criterion 只引用最后一轮有效 Evidence，Human Evidence ID 为 `human:<criterionId>`。PASS 命令不保存 stdout；FAIL/ERROR 只保存脱敏后的头尾定位摘要，最多 8 KiB，并记录截断标志。修复输入复用同一脱敏/截断规则，全部 failure Evidence 另有 16 KiB 总预算。`change.diff` 只保存最终 workspace diff，头部重复记录 runId/specId/revision/specDigest，正文继续使用 workspace tracker 的 256 KiB 上限。产物不可覆盖，`result.json` 最后原子写入并作为完整运行产物标志；V1 不自动清理历史 run。
 
 持久化失败不会改写已经由 Evidence 计算出的验收 Verdict，但 CLI 必须明确显示失败状态和预期 run 目录，不能把该次运行静默当作完整成功。
 
@@ -486,7 +491,7 @@ spec/
 3. ✅ 锁定 Spec 注入现有 ReAct；
 4. ✅ Workspace baseline、Scope 和 command/JUnit 验证；
 5. ✅ Criterion Result、Verdict 和紧凑持久化；
-6. 一次证据驱动修复；
+6. ✅ 一次证据驱动修复；
 7. A/B/C 评测与指标报告。
 
 每一步都为同一条端到端链路服务，不先建设 Reviewer、通用 Verifier 平台或多执行模式。
