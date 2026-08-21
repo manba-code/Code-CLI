@@ -58,6 +58,8 @@ ChangeSpec 是现有执行路径之上的可选契约层。当前 `/spec <需求
 
 核心内置工具 11 个：`read_file` / `write_file` / `list_dir` / `glob_files` / `grep_code` / `execute_command` / `create_project` / `search_code` / `web_search` / `web_fetch` / `revert_turn`
 
+`execute_command` 按宿主平台使用原生命令壳：Windows 为 `cmd.exe`，Linux/macOS 为 POSIX `sh`，不把 Bash/WSL 作为额外运行前提；命令超时或取消时必须清理子进程树。`glob_files` / `grep_code` 面向模型返回的项目相对路径统一使用 `/`，不能泄漏 Windows `\` 分隔符。
+
 代码库理解默认走 Claude Code 式实时探索：`glob_files` 找候选文件、`grep_code` 精确定位符号或字符串、`read_file` 按需读取具体行段。`grep_code` 优先使用本机 `ripgrep`，不可用时回退到 Java 扫描；结果受 `max_results` / `head_limit` / `max_chars` 预算约束，返回 `partial: true` 或 `suggested_reads` 时应继续缩小搜索范围或按建议读取行段。`search_code` 是 RAG 语义辅助，适合模糊自然语言、关键词不明确、常规搜索无果、巨型/跨知识检索场景，不作为精确代码定位的首选。
 
 MCP 动态工具：`mcp__{server}__{tool}`（+ resources 虚拟工具）
@@ -137,7 +139,7 @@ src/main/java/com/paicli/
 - 拦截顺序：HitlToolRegistry → ToolRegistry → PathGuard/CommandGuard
 - 用户无法批准策略拒绝的请求
 - PathGuard 强制路径限定在项目根内
-- CommandGuard 是辅助黑名单，不是主防线
+- CommandGuard 是辅助黑名单，不是主防线；除 Unix 高危模式外，也快速拒绝 Windows 盘符绝对路径上的 `del` / `rmdir`、`format` 和 `diskpart`
 - 微信 iLink 通道没有人工审批面板，必须走非交互式默认拒绝策略：只读工具默认允许，`execute_command` 必须精确命中命令白名单，`mcp__*` 必须命中 MCP 白名单，`revert_turn` 和浏览器会话切换默认拒绝，文件写入仍由 PathGuard 限定在绑定 workspace 内。
 
 ### Plan 审阅交互

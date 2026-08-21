@@ -15,6 +15,8 @@ class CommandGuardTest {
         assertNull(CommandGuard.check("curl https://example.com -o out.html"));
         assertNull(CommandGuard.check("rm -rf target/classes"));
         assertNull(CommandGuard.check("find . -name '*.java'"));
+        assertNull(CommandGuard.check("del target\\cache.tmp"));
+        assertNull(CommandGuard.check("rmdir /s /q target"));
     }
 
     @Test
@@ -82,6 +84,17 @@ class CommandGuardTest {
         assertNotNull(CommandGuard.check("reboot"));
         assertNotNull(CommandGuard.check("halt"));
         assertNotNull(CommandGuard.check("poweroff"));
+    }
+
+    @Test
+    void rejectsDestructiveWindowsCommandsAgainstAbsoluteDrives() {
+        assertNotNull(CommandGuard.check("del /s /q C:\\*"));
+        assertNotNull(CommandGuard.check("erase /q D:\\important.txt"));
+        assertNotNull(CommandGuard.check("rmdir /s /q C:\\"));
+        assertNotNull(CommandGuard.check("rd /s /q D:\\workspace"));
+        assertNotNull(CommandGuard.check("format C:"));
+        assertNotNull(CommandGuard.check("format.com D: /q"));
+        assertNotNull(CommandGuard.check("diskpart /s cleanup.txt"));
     }
 
     @Test

@@ -11,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -27,9 +28,11 @@ class ToolRegistryTest {
         ToolRegistry registry = new ToolRegistry();
         registry.setProjectPath(tempDir.toString());
 
-        String result = registry.executeTool("execute_command", "{\"command\":\"pwd\"}");
+        String result = registry.executeTool("execute_command",
+                MAPPER.createObjectNode().put("command", currentDirectoryCommand()).toString());
 
-        assertTrue(result.contains(tempDir.toString()));
+        assertTrue(result.replace('\\', '/').toLowerCase(Locale.ROOT)
+                .contains(tempDir.toString().replace('\\', '/').toLowerCase(Locale.ROOT)));
     }
 
     @Test
@@ -177,7 +180,8 @@ class ToolRegistryTest {
         ToolRegistry registry = new ToolRegistry(1);
         registry.setProjectPath(tempDir.toString());
 
-        String result = registry.executeTool("execute_command", "{\"command\":\"sleep 2\"}");
+        String result = registry.executeTool("execute_command",
+                MAPPER.createObjectNode().put("command", slowCommand()).toString());
 
         assertTrue(result.contains("命令执行超时"));
     }
@@ -191,6 +195,19 @@ class ToolRegistryTest {
 
         assertEquals(CommandExecutionResult.Status.POLICY_DENIED, denied.status());
         assertTrue(denied.reason().contains("不允许扫描"));
+    }
+
+    @Test
+    void commandVerifierRunsThroughPlatformShell(@TempDir Path tempDir) {
+        ToolRegistry registry = new ToolRegistry();
+        registry.setProjectPath(tempDir.toString());
+
+        CommandExecutionResult result = registry.executeCommandForVerification(currentDirectoryCommand());
+
+        assertEquals(CommandExecutionResult.Status.COMPLETED, result.status());
+        assertEquals(0, result.exitCode());
+        assertTrue(result.output().replace('\\', '/').toLowerCase(Locale.ROOT)
+                .contains(tempDir.toString().replace('\\', '/').toLowerCase(Locale.ROOT)));
     }
 
     @Test
@@ -376,5 +393,17 @@ class ToolRegistryTest {
         } else {
             System.setProperty(key, previous);
         }
+    }
+
+    private static String currentDirectoryCommand() {
+        return isWindows() ? "cd" : "pwd";
+    }
+
+    private static String slowCommand() {
+        return isWindows() ? "ping -n 4 127.0.0.1 > NUL" : "sleep 2";
+    }
+
+    private static boolean isWindows() {
+        return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
     }
 }

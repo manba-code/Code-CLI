@@ -433,7 +433,7 @@ public class ToolRegistry {
                 }
                 Path relative = projectRoot.relativize(path);
                 if (matcher.matches(relative) || fileNameMatcher.matches(path.getFileName())) {
-                    matches.add(relative.toString());
+                    matches.add(toToolPath(relative.toString()));
                 }
             }));
         } catch (Exception e) {
@@ -498,12 +498,13 @@ public class ToolRegistry {
         int rendered = 0;
         for (int i = 0; i < result.matches().size(); i++) {
             GrepMatch match = result.matches().get(i);
-            String matchHeader = (i + 1) + ". " + match.file() + ":" + match.lineNumber() + "\n";
+            String file = toToolPath(match.file());
+            String matchHeader = (i + 1) + ". " + file + ":" + match.lineNumber() + "\n";
             if (sb.length() + matchHeader.length() > maxChars) {
                 truncatedByChars = true;
                 break;
             }
-            sb.append(i + 1).append(". ").append(match.file()).append(":").append(match.lineNumber()).append("\n");
+            sb.append(i + 1).append(". ").append(file).append(":").append(match.lineNumber()).append("\n");
             for (ContextLine line : match.context()) {
                 String marker = line.lineNumber() == match.lineNumber() ? ">" : " ";
                 String contextLine = String.format("   %s%5d | %s%n", marker, line.lineNumber(), line.text());
@@ -534,12 +535,13 @@ public class ToolRegistry {
         sb.append("\nsuggested_reads:");
         Set<String> seen = new LinkedHashSet<>();
         for (GrepMatch match : matches) {
-            if (seen.size() >= 3 || !seen.add(match.file())) {
+            String file = toToolPath(match.file());
+            if (seen.size() >= 3 || !seen.add(file)) {
                 continue;
             }
             int offset = Math.max(1, match.lineNumber() - 20);
             sb.append("\n- read_file {\"path\":\"")
-                    .append(match.file().replace("\\", "\\\\").replace("\"", "\\\""))
+                    .append(file.replace("\\", "\\\\").replace("\"", "\\\""))
                     .append("\",\"offset\":").append(offset)
                     .append(",\"limit\":80}");
         }
@@ -551,7 +553,8 @@ public class ToolRegistry {
     private void registerShellTools() {
         tools.put("execute_command", new Tool(
                 "execute_command",
-                "在当前项目目录中执行短时 Shell 命令（默认 60 秒超时，不允许全盘扫描）",
+                "在当前项目目录中通过 " + platformShellName()
+                        + " 执行短时命令（默认 60 秒超时，不允许全盘扫描）",
                 createParameters(new Param("command", "string", "要执行的命令", true)),
                 args -> executeCommand(args.get("command"))
         ));
@@ -1342,7 +1345,7 @@ public class ToolRegistry {
 
         Process process = null;
         try {
-            ProcessBuilder pb = new ProcessBuilder("bash", "-c", normalized);
+            ProcessBuilder pb = new ProcessBuilder(shellCommand(normalized));
             pb.directory(new File(projectPath));
             pb.redirectErrorStream(true);
             process = pb.start();
@@ -1352,8 +1355,7 @@ public class ToolRegistry {
 
             boolean finished = process.waitFor(commandTimeoutSeconds, TimeUnit.SECONDS);
             if (!finished) {
-                process.destroyForcibly();
-                process.waitFor(2, TimeUnit.SECONDS);
+                terminateProcessTree(process);
                 outputFuture.cancel(true);
                 return CommandExecutionResult.timedOut(normalized, "");
             }
@@ -1364,12 +1366,12 @@ public class ToolRegistry {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             if (process != null) {
-                process.destroyForcibly();
+                terminateProcessTree(process);
             }
             return CommandExecutionResult.canceled(normalized, "用户取消了此次工具调用");
         } catch (Exception e) {
             if (process != null) {
-                process.destroyForcibly();
+                terminateProcessTree(process);
             }
             return CommandExecutionResult.startError(normalized, e.getMessage());
         } finally {
@@ -1419,6 +1421,45 @@ public class ToolRegistry {
         } catch (TimeoutException e) {
             outputFuture.cancel(true);
             return "(命令已结束，但输出读取超时)";
+        }
+    }
+
+    private static List<String> shellCommand(String command) {
+        return isWindows()
+                ? List.of("cmd.exe", "/d", "/s", "/c", command)
+                : List.of("sh", "-c", command);
+    }
+
+    private static String platformShellName() {
+        return isWindows() ? "Windows cmd.exe" : "POSIX sh";
+    }
+
+    private static boolean isWindows() {
+        return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
+    }
+
+    private static String toToolPath(String path) {
+        return path == null ? "" : path.replace('\\', '/');
+    }
+
+    private static void terminateProcessTree(Process process) {
+        if (process == null) {
+            return;
+        }
+        List<ProcessHandle> descendants = process.descendants().toList();
+        for (int i = descendants.size() - 1; i >= 0; i--) {
+            ProcessHandle descendant = descendants.get(i);
+            if (descendant.isAlive()) {
+                descendant.destroyForcibly();
+            }
+        }
+        if (process.isAlive()) {
+            process.destroyForcibly();
+        }
+        try {
+            process.waitFor(2, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 

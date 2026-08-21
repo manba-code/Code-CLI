@@ -36,6 +36,12 @@ public final class CommandGuard {
                     Pattern.compile("(?i)\\bfind\\s+(/|~|\\$home)")),
             new DenyRule("禁止 chmod 777 全盘",
                     Pattern.compile("(?i)\\bchmod\\s+-R\\s+777\\s+(/|~)")),
+            new DenyRule("禁止 del/rmdir 删除 Windows 盘符绝对路径",
+                    Pattern.compile("(?i)\\b(del|erase|rd|rmdir)\\b[^\\r\\n]*\\b[a-z]:[\\\\/]")),
+            new DenyRule("禁止 format 格式化 Windows 盘符",
+                    Pattern.compile("(?i)\\bformat(?:\\.com)?\\s+[a-z]:")),
+            new DenyRule("禁止 diskpart 磁盘管理",
+                    Pattern.compile("(?i)\\bdiskpart(?:\\.exe)?\\b")),
             new DenyRule("禁止 shutdown / reboot / halt",
                     Pattern.compile("(?i)\\b(shutdown|reboot|halt|poweroff)\\b"))
     );

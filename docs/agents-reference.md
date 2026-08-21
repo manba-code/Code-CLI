@@ -133,8 +133,9 @@ scheme 白名单(http/https) / 主机黑名单(localhost/loopback/link-local/sit
 ### HITL Enhancement (Policy Layer)
 
 - `PathGuard`：路径限定在项目根内（绝对路径外逃 / `..` 穿越 / 符号链接逃逸）
-- `CommandGuard`：fast-fail 黑名单（sudo/rm -rf/mkfs/dd/fork bomb/curl|sh 等）
-- `ResourceLimit`：write_file 5MB / execute_command 60s + 8KB 输出
+- `CommandGuard`：fast-fail 黑名单（sudo/rm -rf/mkfs/dd/fork bomb/curl|sh，以及 Windows 盘符绝对路径 del/rmdir、format、diskpart 等）
+- `ResourceLimit`：write_file 5MB / execute_command 60s + 8KB 输出；命令超时或取消时清理整个子进程树
+- `execute_command`：Windows 使用原生 `cmd.exe`，Linux/macOS 使用 POSIX `sh`，不要求 Bash/WSL；`glob_files` / `grep_code` 的项目相对路径对模型统一输出 `/`
 - `AuditLog`：JSONL 字段 timestamp/tool/args/outcome/reason/approver/durationMs
 - 拦截顺序：HitlToolRegistry → ToolRegistry → 策略层。用户无法批准策略拒绝的请求
 

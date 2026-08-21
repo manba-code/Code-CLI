@@ -113,7 +113,7 @@ A/B 没有自动修复，因此首次候选通常就是最终候选；C 必须�
 
 ## 7. 运行
 
-付费运行前可显式复验六个参考实现都能通过各自的公开测试和隐藏 Oracle；该检查会启动六次本地 Maven fixture，默认回归中跳过：
+付费运行前可显式复验六个参考实现都能通过各自的公开测试和隐藏 Oracle，并额外用生产 `ToolRegistry.executeCommandForVerification` 路径运行一个公开 Maven Verifier，防止平台 Shell 差异污染 B/C；该检查默认回归中跳过：
 
 ```bash
 mvn test -Dtest=ChangeSpecEvaluationInfrastructureTest \

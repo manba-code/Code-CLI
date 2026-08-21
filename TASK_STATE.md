@@ -100,7 +100,7 @@ PaiCLI 的 ChangeSpec 是可选的 Spec-Driven Code Change 契约层：把自然
 ### 当前本切片通过
 
 - `mvn test '-Dtest=Spec*Test,ChangeSpec*Test' -DskipTests=false`：59 tests，0 failure，0 error，2 个显式评测测试按预期 skipped，`BUILD SUCCESS`。
-- `mvn test -Dtest=ChangeSpecEvaluationInfrastructureTest '-Dpaicli.changeSpecEval.validateFixtures=true' -DskipTests=false`：4 tests，0 failure，0 error，0 skipped；六个参考实现全部通过公开测试、隐藏 Oracle 和 Scope 检查。
+- `mvn test -Dtest=ChangeSpecEvaluationInfrastructureTest '-Dpaicli.changeSpecEval.validateFixtures=true' -DskipTests=false`：5 tests，0 failure，0 error，0 skipped；六个参考实现全部通过公开测试、隐藏 Oracle 和 Scope 检查，并由一个参考实现额外证明公开 Maven Verifier 可通过生产 `ToolRegistry` 命令路径运行。
 - 新增覆盖 B 组不修复、首次 VerificationAttempt observer、六任务分层/命令白名单、隐藏 Oracle 与 Scope 独立判定、报告中的 `human_intervention_time=N/A` 和 B/C digest 配对审计。
 - 测试运行期间 Maven 完成主代码 224 个源文件、测试代码 151 个源文件编译。
 - `mvn test -Pchange-spec-eval '-Dpaicli.changeSpecEval.enabled=false'`：Profile 能正确只选中 live test，并在禁用真实调用时安全 skipped。
@@ -108,8 +108,8 @@ PaiCLI 的 ChangeSpec 是可选的 Spec-Driven Code Change 契约层：把自然
 ### Quick 已知基线
 
 - `mvn test -Pquick`：817 tests，10 failures，0 errors，3 skipped，`BUILD FAILURE`。
-- 失败类和方法与第四条切片的 10 项基线完全一致：`ImageReferenceParserTest` 3 项，`MemoryManagerTest` 1 项，`PromptAssemblerTest` 1 项，`CodeIndexTest` 2 项，`CodeRetrieverTest` 1 项，`InlineRendererTest` 1 项，`CodeSearchGoldenSetTest` 1 项；本切片新增测试全部通过，没有新增 Quick 失败。
-- 额外显式运行 `ToolRegistryTest` 时，19 项中有 5 项外部命令/glob/grep/超时测试失败；当前切片没有修改 `tool/`，该现象未在本切片内归因，且 quick profile 本来就排除 `ToolRegistryTest`。
+- 此前失败类和方法与第四条切片的 10 项基线完全一致：`ImageReferenceParserTest` 3 项，`MemoryManagerTest` 1 项，`PromptAssemblerTest` 1 项，`CodeIndexTest` 2 项，`CodeRetrieverTest` 1 项，`InlineRendererTest` 1 项，`CodeSearchGoldenSetTest` 1 项；本次 Windows ToolRegistry 修复后未重跑 Quick，针对性回归与评测 fixture 预检均通过。
+- 已归因并修复 `ToolRegistryTest` 的 Windows 跨平台问题：`execute_command` 改用原生 `cmd.exe`，项目相对路径统一输出 `/`，超时清理子进程树；20 tests 全部通过。相关 `CommandGuardTest`、`ApprovalPolicyTest` 和 `SpecVerifierTest` 也通过。
 
 ## 5. 未解决问题
 
@@ -119,7 +119,6 @@ PaiCLI 的 ChangeSpec 是可选的 Spec-Driven Code Change 契约层：把自然
 - 完整 `human_intervention_time` 尚未单独汇总 Spec 确认、HITL 等待和 Human Criterion 时间；
 - V1 仍只支持 revision 1，不支持运行中修改锁定需求或恢复/重跑既有 Spec；
 - Quick 历史基线不是绿色状态，10 项既有失败归因仍未完成；
-- 独立 `ToolRegistryTest` 的 5 项当前环境失败尚未归因。
 
 ### 明确不在当前切片
 

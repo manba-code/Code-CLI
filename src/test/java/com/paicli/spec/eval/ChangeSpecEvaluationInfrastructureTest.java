@@ -1,5 +1,7 @@
 package com.paicli.spec.eval;
 
+import com.paicli.tool.CommandExecutionResult;
+import com.paicli.tool.ToolRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.api.io.TempDir;
@@ -83,6 +85,26 @@ class ChangeSpecEvaluationInfrastructureTest {
 
             assertTrue(result.passed(), evaluationCase.id() + ": " + result.detail());
         }
+    }
+
+    @Test
+    @EnabledIfSystemProperty(named = "paicli.changeSpecEval.validateFixtures", matches = "true")
+    void publicVerifierRunsThroughProductionToolRegistryPath(@TempDir Path tempDir) throws Exception {
+        ChangeSpecEvaluationCase evaluationCase = ChangeSpecEvaluationCatalog.defaultCases().get(0);
+        Path workspace = tempDir.resolve(evaluationCase.id());
+        evaluationCase.materialize(workspace);
+        for (Map.Entry<String, String> entry
+                : ChangeSpecEvaluationCatalog.referenceSolutions().get(evaluationCase.id()).entrySet()) {
+            Files.writeString(workspace.resolve(entry.getKey()), entry.getValue());
+        }
+        ToolRegistry registry = new ToolRegistry();
+        registry.setProjectPath(workspace.toString());
+
+        CommandExecutionResult result = registry.executeCommandForVerification(
+                ChangeSpecEvaluationCatalog.PUBLIC_VERIFIER);
+
+        assertEquals(CommandExecutionResult.Status.COMPLETED, result.status(), result.reason());
+        assertEquals(0, result.exitCode(), result.output());
     }
 
     @Test
