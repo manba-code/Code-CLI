@@ -15,6 +15,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -127,6 +129,17 @@ class ChangeSpecEvaluationInfrastructureTest {
     }
 
     @Test
+    void reportDoesNotCountUnavailablePairedDraftAsDigestMatch() {
+        String report = ChangeSpecEvaluationReport.toMarkdown(
+                List.of(
+                        result(ChangeSpecEvaluationMode.SPEC_NO_REPAIR, false, false, ""),
+                        result(ChangeSpecEvaluationMode.SPEC_WITH_REPAIR, false, false, "")),
+                "stub", "stub-model", 7L, 1, 60_000L, false);
+
+        assertTrue(report.contains("digest 一致：0/1 对"), report);
+    }
+
+    @Test
     void invalidPairedDraftPersistsSanitizedAttemptDiagnosticsAndLinksTheReport(
             @TempDir Path tempDir
     ) throws Exception {
@@ -163,6 +176,62 @@ class ChangeSpecEvaluationInfrastructureTest {
         assertTrue(report.contains("[Draft 诊断](<" + draft.diagnosticFile().toString().replace('\\', '/') + ">)"), report);
     }
 
+    @Test
+    void classifiesFinishedFailedSpecWithNoWorkspaceChanges() {
+        assertEquals("NO_CHANGE_COMPLETION",
+                ChangeSpecEvaluationRunner.classifyChangeSpecRun(true, false, false));
+        assertEquals("", ChangeSpecEvaluationRunner.classifyChangeSpecRun(true, true, false));
+        assertEquals("", ChangeSpecEvaluationRunner.classifyChangeSpecRun(true, false, true));
+        assertEquals("", ChangeSpecEvaluationRunner.classifyChangeSpecRun(false, false, false));
+
+        ChangeSpecEvaluationResult classified = result(
+                ChangeSpecEvaluationMode.SPEC_WITH_REPAIR,
+                false,
+                false,
+                "digest",
+                null,
+                "NO_CHANGE_COMPLETION");
+        String report = ChangeSpecEvaluationReport.toMarkdown(
+                List.of(classified), "stub", "stub-model", 7L, 1, 60_000L, false);
+        assertTrue(report.contains("| FAILED | NO_CHANGE_COMPLETION | 1 |"), report);
+    }
+
+    @Test
+    void pairedDraftRejectsCommandOutsideFixtureAllowlistAndPersistsDiagnostic(
+            @TempDir Path tempDir
+    ) throws Exception {
+        EligibilityStubLlmClient stub = new EligibilityStubLlmClient(
+                "mvn -q -DskipTests=false verify");
+        ChangeSpecEvaluationRunner runner = new ChangeSpecEvaluationRunner(
+                () -> stub, tempDir, 0d, 0d, 60_000L);
+
+        ChangeSpecPairedDraft draft = runner.preparePairedDraft(
+                ChangeSpecEvaluationCatalog.defaultCases().get(0), 4);
+
+        assertFalse(draft.available());
+        assertEquals(1, stub.calls);
+        assertTrue(draft.error().contains("不在评测任务允许列表"), draft.error());
+        assertTrue(draft.diagnosticFile() != null);
+        String diagnostic = Files.readString(tempDir.resolve(draft.diagnosticFile()));
+        assertTrue(diagnostic.contains("mvn -q -DskipTests=false verify"), diagnostic);
+        assertTrue(diagnostic.contains("不在评测任务允许列表"), diagnostic);
+    }
+
+    @Test
+    void pairedDraftAcceptsFixtureAllowlistedCommand(@TempDir Path tempDir) {
+        EligibilityStubLlmClient stub = new EligibilityStubLlmClient(
+                ChangeSpecEvaluationCatalog.PUBLIC_VERIFIER);
+        ChangeSpecEvaluationRunner runner = new ChangeSpecEvaluationRunner(
+                () -> stub, tempDir, 0d, 0d, 60_000L);
+
+        ChangeSpecPairedDraft draft = runner.preparePairedDraft(
+                ChangeSpecEvaluationCatalog.defaultCases().get(0), 5);
+
+        assertTrue(draft.available(), draft.error());
+        assertEquals(1, stub.calls);
+        assertTrue(draft.diagnosticFile() == null);
+    }
+
     private static ChangeSpecEvaluationResult result(
             ChangeSpecEvaluationMode mode,
             boolean success,
@@ -179,6 +248,17 @@ class ChangeSpecEvaluationInfrastructureTest {
             String digest,
             Path draftDiagnostic
     ) {
+        return result(mode, success, completed, digest, draftDiagnostic, "");
+    }
+
+    private static ChangeSpecEvaluationResult result(
+            ChangeSpecEvaluationMode mode,
+            boolean success,
+            boolean completed,
+            String digest,
+            Path draftDiagnostic,
+            String diagnosticClassification
+    ) {
         return new ChangeSpecEvaluationResult(
                 "case",
                 ChangeSpecEvaluationTier.MEDIUM,
@@ -191,6 +271,7 @@ class ChangeSpecEvaluationInfrastructureTest {
                 mode.usesChangeSpec() && completed,
                 false,
                 completed ? "PASSED" : "FAILED",
+                diagnosticClassification,
                 mode == ChangeSpecEvaluationMode.SPEC_WITH_REPAIR ? 1 : 0,
                 2,
                 20,
@@ -221,6 +302,70 @@ class ChangeSpecEvaluationInfrastructureTest {
         public ChatResponse chat(List<Message> messages, List<Tool> tools) {
             calls++;
             return responses.remove();
+        }
+
+        @Override
+        public ChatResponse chat(List<Message> messages, List<Tool> tools, StreamListener listener) {
+            return chat(messages, tools);
+        }
+
+        @Override public String getModelName() { return "stub-model"; }
+        @Override public String getProviderName() { return "stub"; }
+    }
+
+    private static final class EligibilityStubLlmClient implements LlmClient {
+        private static final Pattern DRAFT_ID = Pattern.compile("CHANGE-\\d{8}-\\d{6}-\\d{3}");
+        private final String command;
+        private int calls;
+
+        private EligibilityStubLlmClient(String command) {
+            this.command = command;
+        }
+
+        @Override
+        public ChatResponse chat(List<Message> messages, List<Tool> tools) {
+            calls++;
+            Matcher matcher = DRAFT_ID.matcher(messages.get(messages.size() - 1).content());
+            if (!matcher.find()) throw new IllegalStateException("未找到 Draft ID");
+            String content = """
+                    ---
+                    schema: paicli/change-spec/v1
+                    id: %s
+                    revision: 1
+                    title: 修复安全除法
+                    intent:
+                      goal: 除数为零时返回空值
+                      non_goals: []
+                    scope:
+                      mode: bounded
+                      include: [src/main/java/eval/SafeDivider.java]
+                      exclude: []
+                    acceptance:
+                      - id: AC-1
+                        kind: behavior
+                        statement: 除数为零时返回空值
+                        oracle:
+                          type: deterministic
+                          verifiers: [VT-TEST]
+                      - id: AC-SCOPE
+                        kind: scope
+                        statement: 修改不得越界
+                        oracle:
+                          type: deterministic
+                          verifiers: [VT-SCOPE]
+                    verifiers:
+                      - id: VT-SCOPE
+                        type: path_scope
+                      - id: VT-TEST
+                        type: command
+                        command: %s
+                        expect:
+                          exit_code: 0
+                          junit_report_glob: target/surefire-reports/TEST-*.xml
+                          minimum_tests: 1
+                    ---
+                    """.formatted(matcher.group(), command);
+            return new ChatResponse("assistant", content, List.of(), 10, 10);
         }
 
         @Override

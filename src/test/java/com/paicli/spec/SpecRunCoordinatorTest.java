@@ -368,6 +368,9 @@ class SpecRunCoordinatorTest {
         assertTrue(repairInput.contains("API_KEY=***"));
         assertFalse(repairInput.contains("supersecret"));
         assertTrue(repairInput.contains("锁定的 ChangeSpec 不可修改"));
+        assertTrue(repairInput.contains("workspace_changed_files_count: 0"));
+        assertTrue(repairInput.contains("首次执行没有形成任何 workspace 文件改动"));
+        assertTrue(repairInput.contains("不要只描述计划"));
 
         JsonNode json = new ObjectMapper().readTree(result.artifacts().resultJson().toFile());
         assertEquals(2, json.path("verificationAttempts").size());

@@ -50,7 +50,7 @@
 
 ## 4. 自动交互策略
 
-- 第一个结构有效的配对 Draft 自动确认；结构纠错仍遵循生产 Draft Generator 最多两次生成的规则；
+- 第一个同时通过结构和语义资格检查的配对 Draft 自动确认；结构纠错仍遵循生产 Draft Generator 最多两次生成的规则；语义资格要求至少声明一个任务允许的完整 command，且每条非 scope deterministic Criterion 都引用至少一个允许的 command；
 - 公开 Verifier 只有命令完全等于任务预声明命令时才执行，其他命令记为 `HITL_DENIED`；
 - fixture 位于隔离 workspace，Agent 继续受 PathGuard 和 CommandGuard 约束；
 - 自动评测不替代 Human Criterion：若 Draft 生成 Human Criterion，评测器选择 `SKIPPED`，最终通常为 `NEEDS_HUMAN`；
@@ -167,9 +167,16 @@ target/change-spec-eval/<run-id>/
 └── first-pass/
 ```
 
-若两次 Draft 都未通过结构校验，Codec 错误会指出 Jackson 能定位到的具体字段路径；
+若两次 Draft 都未通过结构校验，Codec 错误会指出 Jackson 能定位到的具体字段路径；结构通过但未满足
+任务命令白名单或 Criterion 引用规则时，评测器同样按 `DRAFT_INVALID` 拒绝，不进入 B/C，也不产生配对 digest。
 `draft-attempts/<case>-r<repetition>.md` 保存每次校验错误和脱敏后的模型输出，单次输出最多
 保留 8 KiB，且不保存 system prompt、reasoning 或 API Key。`report.md` 会链接该诊断文件。
+
+逐次结果的“诊断”列会把完整结束、隐藏任务失败且最终 changed-files 为空的 Spec Run 标为
+`NO_CHANGE_COMPLETION`；即使公开 Verdict 因弱 Spec 而误判为 `PASSED`，也不会漏掉该标签。
+该标签只解释失败形态，不替代公开 Verdict 或隐藏 Oracle。
+首次 Verifier 失败进入修复时，repair input 同时携带首次 changed-files 数量；数量为 0 时会明确要求
+模型实际使用工具检查并修改 workspace，不能只描述计划。修复次数仍严格限制为一次。
 
 ## 8. 报告边界
 
@@ -180,3 +187,7 @@ target/change-spec-eval/<run-id>/
 - `human_intervention_time` 是否不增加。
 
 自动 Pilot 无法测量最后一项，所以即使前两项满足，也只能说明“出现自动化质量/耗时正向信号”，不能宣称已经满足完整开发效率价值门槛。需要真实用户参与的确认、HITL 和 Human Criterion 计时试验才能补齐该结论。
+
+配对 Draft 采用双层约束：产品 Codec 拒绝让非 scope deterministic Criterion 只引用 `path_scope`；
+评测资格检查再要求 command 精确命中任务允许列表，并校验每条非 scope deterministic Criterion 引用的
+至少一个 command 来自该允许列表。资格失败只保存诊断，不额外触发 LLM 调用。

@@ -53,7 +53,7 @@ verifiers:
 5. 不要输出 `preferences`、Plan、Tasks、Evidence、执行状态、模型名或工具历史。
 6. 用户没有明确限制可修改路径时，使用 `scope.mode: open`。显式引用文件只是上下文，不自动等于 bounded 范围。
 7. 只有用户或 Project Context 明确提供了可靠命令时，才能生成 `command` Verifier；不得猜测构建命令、测试命令、测试报告位置或测试数量。
-8. `deterministic` Oracle 必须引用至少一个已有 Verifier；`human` Oracle 的 `verifiers` 必须为空。
+8. `deterministic` Oracle 必须引用至少一个已有 Verifier；`human` Oracle 的 `verifiers` 必须为空。非 scope 的 deterministic Criterion 必须至少引用一个 command Verifier；path_scope 只能证明修改范围，不能单独证明 behavior、compatibility、quality、safety 或 performance。
 9. V1 Verifier 仅支持：
    - `path_scope`：只需要 `id` 和 `type`；
    - `command`：需要 `command` 和嵌套的 `expect` 对象；`exit_code` 必须写在 `expect` 下。只有要求测试数量时才在 `expect` 下增加 `junit_report_glob` 与 `minimum_tests`。

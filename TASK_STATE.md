@@ -1,7 +1,7 @@
 # ChangeSpec 任务状态
 
 > 更新时间：2026-08-21
-> 当前状态：前六条垂直切片已完成；第七条切片的 A/B/C 评测框架已经实现。最新真实 LLM 单任务 smoke 已生成有效配对 Draft，A/B 通过，C 因初始轮和修复轮均未形成文件改动而失败；尚未运行完整 Pilot，因此还没有效率结论。
+> 当前状态：前六条垂直切片已完成；第七条切片的 A/B/C 评测框架已经实现。最新 `safe-divider × 3轮` 真实 LLM smoke 中 A/B/C 成功率分别为 66.67%/66.67%/33.33%；C 有一轮通过零改动后的 Evidence 修复成功，另有一轮因弱 Spec 公开误放行。尚未运行完整 Pilot，因此还没有效率结论。
 > 事实来源：当前工作区代码、`git status`、`git diff`、Maven/Surefire 测试结果，以及 `docs/change-spec-v1-rfc.md`。不能由这些材料证明的内容单独标为“尚未确认”。
 
 ## 1. 当前目标
@@ -27,6 +27,8 @@ PaiCLI 的 ChangeSpec 是可选的 Spec-Driven Code Change 契约层：把自然
 - `task_success_rate`、`first_pass_success_rate`、`acceptance_pass_rate`、`false_completion_rate`、Scope、TTA、Token 和成本口径；
 - 自动 Pilot 明确把 `human_intervention_time` 记为 `N/A`，不冒充为 0。
 - 配对 Draft 最终无效时保存两次校验错误和脱敏、截断后的模型输出，报告链接诊断文件；YAML 类型错误包含具体字段路径。
+- Codec 拒绝仅用 `path_scope` 证明 behavior 等非 scope deterministic Criterion；评测配对 Draft 还必须精确命中任务允许的 command，并让每条非 scope deterministic Criterion 引用允许的 command，否则按 `DRAFT_INVALID` 保存诊断且不进入 B/C。
+- 修复输入携带首次 changed-files 数量；首次零改动时要求实际使用工具修改，不能只描述计划。评测报告以 `NO_CHANGE_COMPLETION` 标记完整结束、隐藏任务失败且零改动的 Spec Run，不改变生产 Verdict。
 
 当前链路：
 
@@ -107,6 +109,10 @@ PaiCLI 的 ChangeSpec 是可选的 Spec-Driven Code Change 契约层：把自然
 - `mvn test -Pchange-spec-eval '-Dpaicli.changeSpecEval.enabled=false'`：Profile 能正确只选中 live test，并在禁用真实调用时安全 skipped。
 - `safe-divider` 的前三次单轮 smoke 中 B/C 均在配对 Draft 阶段失败，错误依次暴露 dotted key、front matter 和字符串字段收到对象三类结构漂移；加入诊断能力后的第四次 smoke 生成有效配对 Draft，A/B 通过且 B/C digest 为 `23dabcd0e7344c49877b338b82c1d400670edb62d79c765a91de0b95d0d36096`，C 初始轮只调用 `glob_files`、修复轮未调用工具，两轮 `changedFiles=0`，最终失败。
 - Draft 诊断能力的针对性回归覆盖精确字段路径、两次 attempt、敏感字段脱敏、8 KiB 截断和报告链接。
+- 针对 C 的零改动轨迹新增确定性回归：repair input 必须携带 `workspace_changed_files_count: 0` 和实际工具操作要求；评测分类仅在 Spec Run 完整结束、隐藏任务失败且 changed-files=0 时产生 `NO_CHANGE_COMPLETION`。
+- `glm / glm-4.6v-flashx`、`safe-divider`、3 次重复、seed `20260820` 的报告位于 `target/change-spec-eval/2026-08-21T14-05-30.562118800Z-20260820/report.md`：A/B/C 成功率为 66.67%/66.67%/33.33%，B/C digest 2/3（另一对 Draft 无效）；C 第 3 轮首次 changed-files=0，修复轮实际执行 `read_file`/`write_file` 后公开与隐藏验证通过。
+- 同一报告的第 1 轮 Draft 诊断成功保存两次相同的无效输出，精确定位 `verifiers[0].include`；第 2 轮有效但弱化的 Draft 让行为 Criterion 只引用 `VT-SCOPE`，没有 command Verifier，导致公开 `PASSED`、零改动、隐藏失败。
+- 双层语义资格修复后的 `safe-divider × 1轮` 报告位于 `target/change-spec-eval/2026-08-21T15-10-55.679296800Z-20260820/report.md`：A/B/C 均通过，B/C digest 1/1 一致；锁定 Spec 的两条 behavior Criterion 均引用允许命令 `mvn -q -DskipTests=false test`，C 首轮失败后一次修复通过。
 
 ### Quick 已知基线
 
@@ -118,7 +124,7 @@ PaiCLI 的 ChangeSpec 是可选的 Spec-Driven Code Change 契约层：把自然
 
 ### 已验证的缺口
 
-- 已有 A/B/C 任务集和单任务 smoke 报告，最新 B/C 已形成有效配对 Draft，但 C 的无改动执行/修复轨迹仍需归因，不能据此产生完整 Pilot 指标或效率结论；
+- 已有 A/B/C 任务集、三轮缺口定位 smoke 和一轮修复后 smoke；零改动修复防护已命中真实成功，配对 Draft 语义资格也已通过本地测试与真实有效 Draft 验证；
 - 完整 `human_intervention_time` 尚未单独汇总 Spec 确认、HITL 等待和 Human Criterion 时间；
 - V1 仍只支持 revision 1，不支持运行中修改锁定需求或恢复/重跑既有 Spec；
 - Quick 历史基线不是绿色状态，10 项既有失败归因仍未完成；
@@ -131,7 +137,7 @@ PaiCLI 的 ChangeSpec 是可选的 Spec-Driven Code Change 契约层：把自然
 
 ## 6. 下一阶段任务
 
-下一阶段先归因最新 smoke 中 C 初始轮和修复轮没有形成工具调用/文件改动的问题；在该问题有稳定解释或防护前，不运行默认 36 次的完整付费 Pilot。完整命令仍为：
+当前阻塞项已解决并通过本地回归与一次真实单任务 smoke。下一步先提交本批次，再由用户明确决定是否运行默认 36 次、会产生 Token 费用的完整 Pilot。完整 Pilot 命令为：
 
 ```bash
 mvn test -Pchange-spec-eval

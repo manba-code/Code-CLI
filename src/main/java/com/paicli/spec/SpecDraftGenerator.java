@@ -166,6 +166,8 @@ public final class SpecDraftGenerator {
                 expect:
                   exit_code: 0
 
+                非 scope 的 deterministic Criterion 必须至少引用一个 command Verifier；path_scope 只能证明修改范围。
+
                 修正后必须重新输出完整文档，首行必须是 ---，并包含结束的 ---、完整 acceptance 和 verifiers；不能只输出局部字段、补丁或解释。
                 """);
         return prompt.toString();

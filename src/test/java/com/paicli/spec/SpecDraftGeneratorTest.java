@@ -56,6 +56,10 @@ class SpecDraftGeneratorTest {
         assertEquals(2, client.requests.size());
         List<LlmClient.Message> retryMessages = client.requests.get(1).messages();
         assertTrue(retryMessages.get(retryMessages.size() - 1).content().contains("schema 必须是"));
+        assertTrue(client.requests.get(0).messages().get(0).content().contains(
+                "path_scope 只能证明修改范围，不能单独证明 behavior"));
+        assertTrue(retryMessages.get(retryMessages.size() - 1).content().contains(
+                "非 scope 的 deterministic Criterion 必须至少引用一个 command Verifier"));
     }
 
     @Test

@@ -2,6 +2,8 @@ package com.paicli.spec.eval;
 
 import com.paicli.agent.Agent;
 import com.paicli.llm.LlmClient;
+import com.paicli.spec.ChangeSpecCodec;
+import com.paicli.spec.ChangeSpecValidationException;
 import com.paicli.spec.SpecDraftGenerator;
 import com.paicli.spec.SpecDraftSession;
 import com.paicli.spec.SpecRunCoordinator;
@@ -16,6 +18,7 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -49,6 +52,13 @@ final class ChangeSpecEvaluationRunner {
         try {
             SpecDraftSession.DraftGeneration generation = new SpecDraftGenerator(client, diagnostic)
                     .generateWithMetrics(evaluationCase.task(), evaluationCase.draftContext(), "");
+            List<String> eligibilityErrors = ChangeSpecEvaluationDraftEligibility.validate(
+                    evaluationCase, generation.document());
+            if (!eligibilityErrors.isEmpty()) {
+                String encoded = new ChangeSpecCodec().encode(generation.document());
+                diagnostic.onRejected(client.calls(), encoded, eligibilityErrors);
+                throw new ChangeSpecValidationException(eligibilityErrors);
+            }
             return new ChangeSpecPairedDraft(
                     generation.document(),
                     generation.llmUsage(),
@@ -128,6 +138,9 @@ final class ChangeSpecEvaluationRunner {
         double cost = usage.inputTokens() * inputCostPerMillion / 1_000_000d
                 + usage.outputTokens() * outputCostPerMillion / 1_000_000d;
         String detail = join(finalValidation.detail(), snapshotError);
+        String diagnosticClassification = mode.usesChangeSpec()
+                ? classifyChangeSpecRun(product.specRunFinished(), taskSuccess, product.workspaceChanged())
+                : "";
 
         return new ChangeSpecEvaluationResult(
                 evaluationCase.id(),
@@ -141,6 +154,7 @@ final class ChangeSpecEvaluationRunner {
                 product.acceptancePassed(),
                 !finalValidation.unexpectedFiles().isEmpty(),
                 product.publicVerdict(),
+                diagnosticClassification,
                 product.repairCount(),
                 usage.calls(),
                 usage.inputTokens(),
@@ -175,6 +189,8 @@ final class ChangeSpecEvaluationRunner {
                 completed,
                 false,
                 result.outcome().name(),
+                false,
+                false,
                 0,
                 usage(result),
                 durationMs,
@@ -200,6 +216,8 @@ final class ChangeSpecEvaluationRunner {
                     false,
                     false,
                     "DRAFT_INVALID",
+                    false,
+                    false,
                     0,
                     draftUsage,
                     pairedDraft == null ? 0L : pairedDraft.durationMs(),
@@ -251,12 +269,26 @@ final class ChangeSpecEvaluationRunner {
                 passed,
                 passed,
                 result.verdict().name(),
+                result.status() == SpecRunResult.Status.FINISHED,
+                result.workspaceChanges() != null && !result.workspaceChanges().changedFiles().isEmpty(),
                 metrics.repairCount(),
                 metrics.totalLlmUsage(),
                 metrics.totalMs(),
                 result.identity() == null ? "" : result.identity().specDigest(),
                 snapshotError.get(),
                 result.detail());
+    }
+
+    static String classifyChangeSpecRun(
+            boolean specRunFinished,
+            boolean hiddenTaskSuccess,
+            boolean workspaceChanged
+    ) {
+        return specRunFinished
+                && !hiddenTaskSuccess
+                && !workspaceChanged
+                ? "NO_CHANGE_COMPLETION"
+                : "";
     }
 
     private static Agent agent(
@@ -368,6 +400,8 @@ final class ChangeSpecEvaluationRunner {
             boolean completionClaimed,
             boolean acceptancePassed,
             String publicVerdict,
+            boolean specRunFinished,
+            boolean workspaceChanged,
             int repairCount,
             SpecRunResult.LlmUsage usage,
             long durationMs,
@@ -385,7 +419,8 @@ final class ChangeSpecEvaluationRunner {
         }
 
         static ProductExecution failed(SpecRunResult.LlmUsage usage, long durationMs, String error) {
-            return new ProductExecution(false, false, "ERROR", 0, usage, durationMs, "", "", error);
+            return new ProductExecution(false, false, "ERROR", false, false,
+                    0, usage, durationMs, "", "", error);
         }
     }
 }

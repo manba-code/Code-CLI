@@ -14,6 +14,7 @@ record ChangeSpecEvaluationResult(
         boolean acceptancePassed,
         boolean scopeViolation,
         String publicVerdict,
+        String diagnosticClassification,
         int repairCount,
         int llmCalls,
         long inputTokens,

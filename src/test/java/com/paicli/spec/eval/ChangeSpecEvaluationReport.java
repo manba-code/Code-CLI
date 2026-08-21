@@ -129,8 +129,8 @@ final class ChangeSpecEvaluationReport {
 
     private static void appendDetails(StringBuilder report, List<ChangeSpecEvaluationResult> results) {
         report.append("\n## 逐次结果\n\n")
-                .append("| 任务 | 层级 | 组 | 轮次 | 最终 | 首次 | 公开 Verdict | 修复 | Token(in/out/cache) | 产品耗时 | 隐藏 Oracle | 说明 |\n")
-                .append("|---|---|---|---:|---|---|---|---:|---:|---:|---:|---|\n");
+                .append("| 任务 | 层级 | 组 | 轮次 | 最终 | 首次 | 公开 Verdict | 诊断 | 修复 | Token(in/out/cache) | 产品耗时 | 隐藏 Oracle | 说明 |\n")
+                .append("|---|---|---|---:|---|---|---|---|---:|---:|---:|---:|---|\n");
         results.stream()
                 .sorted(Comparator.comparing(ChangeSpecEvaluationResult::caseId)
                         .thenComparingInt(ChangeSpecEvaluationResult::repetition)
@@ -142,6 +142,7 @@ final class ChangeSpecEvaluationReport {
                         .append(value.taskSuccess() ? "PASS" : "FAIL").append(" | ")
                         .append(value.firstPassSuccess() ? "PASS" : "FAIL").append(" | ")
                         .append(escape(value.publicVerdict())).append(" | ")
+                        .append(escape(value.diagnosticClassification())).append(" | ")
                         .append(value.repairCount()).append(" | ")
                         .append(value.inputTokens()).append("/").append(value.outputTokens()).append("/")
                         .append(value.cachedInputTokens()).append(" | ")

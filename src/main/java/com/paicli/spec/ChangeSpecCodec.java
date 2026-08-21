@@ -22,10 +22,12 @@ import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -175,6 +177,7 @@ public final class ChangeSpecCodec {
         validateUniqueIds(spec, errors);
         validateVerifiers(spec.verifiers(), errors);
         validateVerifierReferences(spec, errors);
+        validateCriterionVerifierSemantics(spec, errors);
         validateScopeContract(spec, errors);
         validateAllVerifiersReferenced(spec, errors);
         if (!errors.isEmpty()) {
@@ -248,6 +251,33 @@ public final class ChangeSpecCodec {
                     errors.add("acceptance[" + criterion.id()
                             + "] 引用了不存在的 Verifier: " + verifierId);
                 }
+            }
+        }
+    }
+
+    private void validateCriterionVerifierSemantics(ChangeSpec spec, List<String> errors) {
+        Map<String, ChangeSpec.VerifierType> verifierTypes = new HashMap<>();
+        for (ChangeSpec.VerifierDefinition verifier : spec.verifiers()) {
+            if (verifier != null && !isBlank(verifier.id()) && verifier.type() != null) {
+                verifierTypes.put(verifier.id(), verifier.type());
+            }
+        }
+        for (int i = 0; i < spec.acceptance().size(); i++) {
+            ChangeSpec.AcceptanceCriterion criterion = spec.acceptance().get(i);
+            if (criterion == null
+                    || criterion.kind() == null
+                    || criterion.kind() == ChangeSpec.CriterionKind.SCOPE
+                    || criterion.oracle() == null
+                    || criterion.oracle().type() != ChangeSpec.OracleType.DETERMINISTIC
+                    || criterion.oracle().verifiers().isEmpty()) {
+                continue;
+            }
+            boolean hasCommandVerifier = criterion.oracle().verifiers().stream()
+                    .anyMatch(id -> verifierTypes.get(id) == ChangeSpec.VerifierType.COMMAND);
+            if (!hasCommandVerifier) {
+                String label = isBlank(criterion.id()) ? String.valueOf(i) : criterion.id();
+                errors.add("acceptance[" + label
+                        + "] 的非 scope deterministic Criterion 必须至少引用一个 command Verifier");
             }
         }
     }

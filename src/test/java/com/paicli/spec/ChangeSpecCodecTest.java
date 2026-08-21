@@ -277,6 +277,29 @@ class ChangeSpecCodecTest {
     }
 
     @Test
+    void rejectsNonScopeDeterministicCriterionBackedOnlyByPathScope() {
+        String input = validDocument()
+                .replace("verifiers: [VT-TEST]", "verifiers: [VT-SCOPE]")
+                .replace(
+                        "  - id: VT-TEST\n"
+                                + "    type: command\n"
+                                + "    command: mvn -q -DskipTests=false test\n"
+                                + "    expect:\n"
+                                + "      exit_code: 0\n"
+                                + "      junit_report_glob: target/surefire-reports/TEST-*.xml\n"
+                                + "      minimum_tests: 1\n",
+                        "");
+
+        ChangeSpecValidationException error = assertThrows(
+                ChangeSpecValidationException.class,
+                () -> codec.decode(input));
+
+        assertTrue(error.errors().contains(
+                "acceptance[AC-1] 的非 scope deterministic Criterion 必须至少引用一个 command Verifier"),
+                error.getMessage());
+    }
+
+    @Test
     void rejectsUnreferencedVerifierAndEscapingJUnitGlob() {
         String input = validDocument()
                 .replace(

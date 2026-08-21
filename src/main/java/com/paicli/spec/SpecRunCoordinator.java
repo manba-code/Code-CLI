@@ -331,6 +331,7 @@ public final class SpecRunCoordinator {
                     document.spec(),
                     firstDeterministic,
                     verification.verifierResults(),
+                    verification.workspaceChanges(),
                     lockedSpec.specDigest());
             long repairStartedAt = System.nanoTime();
             ReActExecutionResult repairExecution;
@@ -607,6 +608,7 @@ public final class SpecRunCoordinator {
             ChangeSpec spec,
             List<SpecRunResult.CriterionResult> deterministicResults,
             List<SpecVerifier.VerifierResult> verifierResults,
+            WorkspaceChangeTracker.WorkspaceChanges workspaceChanges,
             String specDigest
     ) {
         Map<String, SpecRunResult.CriterionResult> resultById = new LinkedHashMap<>();
@@ -649,6 +651,11 @@ public final class SpecRunCoordinator {
                     + "\n... repair evidence truncated ...";
         }
 
+        int changedFilesCount = workspaceChanges == null ? 0 : workspaceChanges.changedFiles().size();
+        String progressInstruction = changedFilesCount == 0
+                ? "检测到首次执行没有形成任何 workspace 文件改动。修复轮必须立即使用可用工具检查并实际修改 workspace；不要只描述计划或下一步。"
+                : "首次执行已经形成 workspace 文件改动，请根据失败 Evidence 检查并修正现有实现。";
+
         return """
                 首次确定性验证未通过。请在同一个 ReAct 会话中进行唯一一次 Evidence 驱动修复。
                 只能修改实现或测试代码以满足原 ChangeSpec；锁定的 ChangeSpec 不可修改、删除或替换，也不得改变需求。
@@ -665,8 +672,18 @@ public final class SpecRunCoordinator {
                 %s
                 </failure_evidence>
 
+                <workspace_progress>
+                workspace_changed_files_count: %d
+                %s
+                </workspace_progress>
+
                 修复结束后系统会重新运行全部锁定 Verifier。你的回答不是最终 Verdict，不得声称已经 PASSED。
-                """.formatted(specDigest, failedCriteria.toString().stripTrailing(), evidenceText);
+                """.formatted(
+                specDigest,
+                failedCriteria.toString().stripTrailing(),
+                evidenceText,
+                changedFilesCount,
+                progressInstruction);
     }
 
     private static SpecRunResult.Verdict reduceVerdict(List<SpecRunResult.CriterionResult> results) {
