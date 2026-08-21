@@ -677,7 +677,7 @@ I
 - `/plan <任务>` - 直接用 Plan-and-Execute 模式执行这条任务
 - `/team` - 下一条任务使用 Multi-Agent 协作模式
 - `/team <任务>` - 直接用 Multi-Agent 协作模式执行这条任务
-- `/spec <代码变更需求>` - 使用当前模型和 Project Context 生成经结构校验的 ChangeSpec Draft；command Verifier 使用嵌套的 `expect: { exit_code: ... }` 结构，生成与纠错提示不会把 `expect.exit_code` 误作带点号的 YAML 键。Enter 确认后不可覆盖地保存到 `.paicli/specs/<specId>-r1.md`，记录 ReAct 前 workspace baseline，执行后采集本轮 changed files/final diff，并依次运行 command/JUnit 与最终 `path_scope` Verifier。首次验证出现 deterministic `FAIL` 且没有 Verifier `ERROR` 时，系统会向同一个 ReAct 会话追加脱敏、截断后的失败 Evidence，最多自动修复一次，再基于原 baseline 重跑全部 Verifier。系统随后逐条生成最终 Criterion Result；确定性条件全部通过时用 `P / F / S` 处理 Human Criterion，归约为最终 Verdict，并把 `repairCount`、一至两轮 VerificationAttempt、紧凑 Evidence、指标和最终 diff 保存到 `.paicli/runs/<run-id>/`。Verifier 命令仍单独经过 HITL 与 CommandGuard
+- `/spec <代码变更需求>` - 使用当前模型和 Project Context 生成经结构校验的 ChangeSpec Draft；command Verifier 使用嵌套的 `expect: { exit_code: ... }` 结构，生成与纠错提示不会把 `expect.exit_code` 误作带点号的 YAML 键。模型回复在完整文档前附带说明或代码围栏时，系统提取其中以 `---` 开始的完整 front matter 后再严格校验。Enter 确认后不可覆盖地保存到 `.paicli/specs/<specId>-r1.md`，记录 ReAct 前 workspace baseline，执行后采集本轮 changed files/final diff，并依次运行 command/JUnit 与最终 `path_scope` Verifier。首次验证出现 deterministic `FAIL` 且没有 Verifier `ERROR` 时，系统会向同一个 ReAct 会话追加脱敏、截断后的失败 Evidence，最多自动修复一次，再基于原 baseline 重跑全部 Verifier。系统随后逐条生成最终 Criterion Result；确定性条件全部通过时用 `P / F / S` 处理 Human Criterion，归约为最终 Verdict，并把 `repairCount`、一至两轮 VerificationAttempt、紧凑 Evidence、指标和最终 diff 保存到 `.paicli/runs/<run-id>/`。Verifier 命令仍单独经过 HITL 与 CommandGuard
 - `/cancel` - 运行中请求取消当前任务；空闲时会提示当前没有正在运行的任务
 - `/hitl on` - 启用危险操作人工审批（HITL）
 - `/hitl off` - 关闭 HITL 审批

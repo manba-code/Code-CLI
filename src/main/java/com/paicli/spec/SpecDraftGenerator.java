@@ -94,7 +94,7 @@ public final class SpecDraftGenerator {
     }
 
     private ChangeSpecDocument decodeDraft(String rawDraft) {
-        String normalized = unwrapCodeFence(rawDraft);
+        String normalized = extractDocument(rawDraft);
         if (normalized.isBlank()) {
             throw new ChangeSpecValidationException(List.of("模型没有返回 ChangeSpec Draft"));
         }
@@ -144,8 +144,39 @@ public final class SpecDraftGenerator {
                 字段路径提示：expect.exit_code 只是字段路径，不是 YAML 键名。command Verifier 必须使用嵌套结构：
                 expect:
                   exit_code: 0
+
+                修正后必须重新输出完整文档，首行必须是 ---，并包含结束的 ---、完整 acceptance 和 verifiers；不能只输出局部字段、补丁或解释。
                 """);
         return prompt.toString();
+    }
+
+    private static String extractDocument(String value) {
+        String normalized = value == null ? "" : value.replace("\r\n", "\n").replace('\r', '\n').trim();
+        String unwrapped = unwrapCodeFence(normalized);
+        if (startsWithFrontMatter(unwrapped)) {
+            return unwrapped;
+        }
+
+        int fenceStart = normalized.indexOf("```");
+        while (fenceStart >= 0) {
+            int firstNewline = normalized.indexOf('\n', fenceStart);
+            int closingFence = firstNewline < 0 ? -1 : normalized.indexOf("```", firstNewline + 1);
+            if (firstNewline < 0 || closingFence < 0) {
+                break;
+            }
+            String candidate = normalized.substring(firstNewline + 1, closingFence).trim();
+            if (startsWithFrontMatter(candidate)) {
+                return candidate;
+            }
+            fenceStart = normalized.indexOf("```", closingFence + 3);
+        }
+
+        int frontMatterStart = normalized.indexOf("\n---\n");
+        return frontMatterStart >= 0 ? normalized.substring(frontMatterStart + 1).trim() : normalized;
+    }
+
+    private static boolean startsWithFrontMatter(String value) {
+        return value.equals("---") || value.startsWith("---\n");
     }
 
     private static String unwrapCodeFence(String value) {

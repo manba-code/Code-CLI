@@ -77,6 +77,23 @@ class SpecDraftGeneratorTest {
                 .get(client.requests.get(1).messages().size() - 1).content();
         assertTrue(correctionPrompt.contains("expect.exit_code 只是字段路径，不是 YAML 键名"));
         assertTrue(correctionPrompt.contains("expect:\n  exit_code: 0"));
+        assertTrue(correctionPrompt.contains("首行必须是 ---"));
+        assertTrue(correctionPrompt.contains("不能只输出局部字段"));
+    }
+
+    @Test
+    void extractsCompleteFrontMatterDocumentAfterModelPreface() throws Exception {
+        RecordingClient client = new RecordingClient(
+                "下面是修正后的完整文档：\n```yaml\n" + validDocument() + "\n```");
+        SpecDraftGenerator generator = new SpecDraftGenerator(
+                client,
+                new ChangeSpecCodec(),
+                "CHANGE-TEST-001");
+
+        ChangeSpecDocument document = generator.generate("修复问题", "", "");
+
+        assertEquals("修复登录超时重试", document.spec().title());
+        assertEquals(1, client.requests.size());
     }
 
     @Test
