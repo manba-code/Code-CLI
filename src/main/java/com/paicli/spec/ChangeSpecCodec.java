@@ -6,6 +6,7 @@ import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonSerializer;
+import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
@@ -13,6 +14,7 @@ import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.module.SimpleModule;
+import com.fasterxml.jackson.databind.exc.MismatchedInputException;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.fasterxml.jackson.dataformat.yaml.YAMLGenerator;
 
@@ -63,9 +65,62 @@ public final class ChangeSpecCodec {
             return new ChangeSpecDocument(spec, parts.markdown(), digest(spec));
         } catch (JsonProcessingException e) {
             throw new ChangeSpecValidationException(
-                    List.of("ChangeSpec YAML 无法解析: " + e.getOriginalMessage()),
+                    List.of(formatYamlError(e)),
                     e);
         }
+    }
+
+    private static String formatYamlError(JsonProcessingException error) {
+        StringBuilder message = new StringBuilder("ChangeSpec YAML 无法解析");
+        String path = mappingPath(error);
+        if (!path.isBlank()) {
+            message.append("，字段 ").append(path);
+        }
+        message.append(": ");
+        String mismatch = mismatchSummary(error);
+        if (!mismatch.isBlank()) {
+            message.append(mismatch).append("；");
+        }
+        message.append(error.getOriginalMessage());
+        return message.toString();
+    }
+
+    private static String mappingPath(JsonProcessingException error) {
+        if (!(error instanceof JsonMappingException mapping) || mapping.getPath().isEmpty()) {
+            return "";
+        }
+        StringBuilder path = new StringBuilder();
+        for (JsonMappingException.Reference reference : mapping.getPath()) {
+            if (reference.getFieldName() != null) {
+                if (!path.isEmpty()) path.append('.');
+                path.append(reference.getFieldName());
+            } else if (reference.getIndex() >= 0) {
+                path.append('[').append(reference.getIndex()).append(']');
+            }
+        }
+        return path.toString();
+    }
+
+    private static String mismatchSummary(JsonProcessingException error) {
+        if (!(error instanceof MismatchedInputException mismatch)) {
+            return "";
+        }
+        String expected = mismatch.getTargetType() == null
+                ? "目标类型"
+                : mismatch.getTargetType().getSimpleName();
+        JsonParser parser = error.getProcessor() instanceof JsonParser value ? value : null;
+        String actual = parser == null || parser.currentToken() == null
+                ? "不兼容值"
+                : switch (parser.currentToken()) {
+                    case START_OBJECT -> "Object";
+                    case START_ARRAY -> "Array";
+                    case VALUE_STRING -> "String";
+                    case VALUE_NUMBER_INT, VALUE_NUMBER_FLOAT -> "Number";
+                    case VALUE_TRUE, VALUE_FALSE -> "Boolean";
+                    case VALUE_NULL -> "Null";
+                    default -> parser.currentToken().name();
+                };
+        return "期望 " + expected + "，实际为 " + actual;
     }
 
     /**

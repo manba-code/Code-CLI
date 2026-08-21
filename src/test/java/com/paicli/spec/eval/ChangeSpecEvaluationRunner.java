@@ -42,25 +42,33 @@ final class ChangeSpecEvaluationRunner {
         this.censoredDurationMs = Math.max(1L, censoredDurationMs);
     }
 
-    ChangeSpecPairedDraft preparePairedDraft(ChangeSpecEvaluationCase evaluationCase) {
+    ChangeSpecPairedDraft preparePairedDraft(ChangeSpecEvaluationCase evaluationCase, int repetition) {
         ChangeSpecEvaluationLlmClient client = new ChangeSpecEvaluationLlmClient(clientFactory.get());
+        ChangeSpecDraftDiagnostic diagnostic = new ChangeSpecDraftDiagnostic();
         long startedAt = System.nanoTime();
         try {
-            SpecDraftSession.DraftGeneration generation = new SpecDraftGenerator(client).generateWithMetrics(
-                    evaluationCase.task(),
-                    evaluationCase.draftContext(),
-                    "");
+            SpecDraftSession.DraftGeneration generation = new SpecDraftGenerator(client, diagnostic)
+                    .generateWithMetrics(evaluationCase.task(), evaluationCase.draftContext(), "");
             return new ChangeSpecPairedDraft(
                     generation.document(),
                     generation.llmUsage(),
                     generation.durationMs(),
-                    "");
+                    "",
+                    null);
         } catch (Exception e) {
+            Path diagnosticFile = null;
+            String error = messageOf(e);
+            try {
+                diagnosticFile = diagnostic.write(runRoot, evaluationCase.id(), repetition, error);
+            } catch (IOException diagnosticError) {
+                error = join(error, "Draft 诊断保存失败: " + messageOf(diagnosticError));
+            }
             return new ChangeSpecPairedDraft(
                     null,
                     usage(client),
                     elapsedMillis(startedAt),
-                    messageOf(e));
+                    error,
+                    diagnosticFile);
         }
     }
 
@@ -145,7 +153,8 @@ final class ChangeSpecEvaluationRunner {
                 product.specDigest(),
                 detail,
                 product.error(),
-                workspace);
+                workspace,
+                mode.usesChangeSpec() && pairedDraft != null ? pairedDraft.diagnosticFile() : null);
     }
 
     private ProductExecution runReact(

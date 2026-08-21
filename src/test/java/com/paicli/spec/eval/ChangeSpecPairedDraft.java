@@ -4,11 +4,14 @@ import com.paicli.spec.ChangeSpecDocument;
 import com.paicli.spec.SpecDraftSession;
 import com.paicli.spec.SpecRunResult;
 
+import java.nio.file.Path;
+
 record ChangeSpecPairedDraft(
         ChangeSpecDocument document,
         SpecRunResult.LlmUsage usage,
         long durationMs,
-        String error
+        String error,
+        Path diagnosticFile
 ) {
     ChangeSpecPairedDraft {
         usage = usage == null ? SpecRunResult.LlmUsage.empty() : usage;

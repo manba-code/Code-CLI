@@ -26,7 +26,8 @@ record ChangeSpecEvaluationResult(
         String specDigest,
         String detail,
         String error,
-        Path workspace
+        Path workspace,
+        Path draftDiagnostic
 ) {
     boolean falseCompletion() {
         return completionClaimed && !taskSuccess;

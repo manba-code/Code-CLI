@@ -1,7 +1,7 @@
 # ChangeSpec 任务状态
 
-> 更新时间：2026-08-20
-> 当前状态：前六条垂直切片已完成；第七条切片的 A/B/C 评测框架、六个分层任务、隐藏 Oracle、指标归约和报告入口已经实现，但尚未运行会产生 Token 费用的真实 LLM 快速试验，因此还没有效率结论。
+> 更新时间：2026-08-21
+> 当前状态：前六条垂直切片已完成；第七条切片的 A/B/C 评测框架已经实现。最新真实 LLM 单任务 smoke 已生成有效配对 Draft，A/B 通过，C 因初始轮和修复轮均未形成文件改动而失败；尚未运行完整 Pilot，因此还没有效率结论。
 > 事实来源：当前工作区代码、`git status`、`git diff`、Maven/Surefire 测试结果，以及 `docs/change-spec-v1-rfc.md`。不能由这些材料证明的内容单独标为“尚未确认”。
 
 ## 1. 当前目标
@@ -26,6 +26,7 @@ PaiCLI 的 ChangeSpec 是可选的 Spec-Driven Code Change 契约层：把自然
 - 首次候选快照、公开 Verifier、隐藏 Oracle、Scope 白名单和最终报告；
 - `task_success_rate`、`first_pass_success_rate`、`acceptance_pass_rate`、`false_completion_rate`、Scope、TTA、Token 和成本口径；
 - 自动 Pilot 明确把 `human_intervention_time` 记为 `N/A`，不冒充为 0。
+- 配对 Draft 最终无效时保存两次校验错误和脱敏、截断后的模型输出，报告链接诊断文件；YAML 类型错误包含具体字段路径。
 
 当前链路：
 
@@ -104,6 +105,8 @@ PaiCLI 的 ChangeSpec 是可选的 Spec-Driven Code Change 契约层：把自然
 - 新增覆盖 B 组不修复、首次 VerificationAttempt observer、六任务分层/命令白名单、隐藏 Oracle 与 Scope 独立判定、报告中的 `human_intervention_time=N/A` 和 B/C digest 配对审计。
 - 测试运行期间 Maven 完成主代码 224 个源文件、测试代码 151 个源文件编译。
 - `mvn test -Pchange-spec-eval '-Dpaicli.changeSpecEval.enabled=false'`：Profile 能正确只选中 live test，并在禁用真实调用时安全 skipped。
+- `safe-divider` 的前三次单轮 smoke 中 B/C 均在配对 Draft 阶段失败，错误依次暴露 dotted key、front matter 和字符串字段收到对象三类结构漂移；加入诊断能力后的第四次 smoke 生成有效配对 Draft，A/B 通过且 B/C digest 为 `23dabcd0e7344c49877b338b82c1d400670edb62d79c765a91de0b95d0d36096`，C 初始轮只调用 `glob_files`、修复轮未调用工具，两轮 `changedFiles=0`，最终失败。
+- Draft 诊断能力的针对性回归覆盖精确字段路径、两次 attempt、敏感字段脱敏、8 KiB 截断和报告链接。
 
 ### Quick 已知基线
 
@@ -115,7 +118,7 @@ PaiCLI 的 ChangeSpec 是可选的 Spec-Driven Code Change 契约层：把自然
 
 ### 已验证的缺口
 
-- 已有 A/B/C 任务集和报告生成器，但尚无真实模型运行产生的指标报告与效率结论；
+- 已有 A/B/C 任务集和单任务 smoke 报告，最新 B/C 已形成有效配对 Draft，但 C 的无改动执行/修复轨迹仍需归因，不能据此产生完整 Pilot 指标或效率结论；
 - 完整 `human_intervention_time` 尚未单独汇总 Spec 确认、HITL 等待和 Human Criterion 时间；
 - V1 仍只支持 revision 1，不支持运行中修改锁定需求或恢复/重跑既有 Spec；
 - Quick 历史基线不是绿色状态，10 项既有失败归因仍未完成；
@@ -128,7 +131,7 @@ PaiCLI 的 ChangeSpec 是可选的 Spec-Driven Code Change 契约层：把自然
 
 ## 6. 下一阶段任务
 
-下一阶段是运行 RFC 第七条切片的真实 LLM 快速试验并审阅指标报告。该命令会产生网络请求和 Token 费用，必须显式运行：
+下一阶段先归因最新 smoke 中 C 初始轮和修复轮没有形成工具调用/文件改动的问题；在该问题有稳定解释或防护前，不运行默认 36 次的完整付费 Pilot。完整命令仍为：
 
 ```bash
 mvn test -Pchange-spec-eval

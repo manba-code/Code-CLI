@@ -153,7 +153,13 @@ final class ChangeSpecEvaluationReport {
         for (ChangeSpecEvaluationResult value : results) {
             report.append("- `").append(value.caseId()).append(" / ").append(value.mode().name())
                     .append(" / r").append(value.repetition()).append("`：`")
-                    .append(value.workspace().toAbsolutePath()).append("`\n");
+                    .append(value.workspace().toAbsolutePath()).append('`');
+            if (value.draftDiagnostic() != null) {
+                report.append("；[Draft 诊断](<")
+                        .append(value.draftDiagnostic().toString().replace('\\', '/'))
+                        .append(">)");
+            }
+            report.append('\n');
         }
     }
 

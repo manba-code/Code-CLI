@@ -13,7 +13,7 @@
 - 项目名：`PaiCLI`
 - 定位：面向商业使用的 Java Agent CLI 产品，对标 Claude Code
 - 已交付 23 期（ReAct → Plan+DAG → Memory → RAG → Multi-Agent → HITL → 并行工具 → 多模型 → 联网 → MCP 核心 → MCP 高级 → 长上下文 → Chrome DevTools → CDP 会话复用 → Skill → TUI → LSP 诊断 → Side-Git 快照 → Prompt 分层 → Runtime API → 图片输入 → 微信 iLink 通道文本 MVP）
-- ChangeSpec V1 已完成前六条产品切片；第七条切片的 A/B/C 评测框架、六个分层任务、配对 Spec、首次候选快照、隐藏 Oracle、指标归约和报告入口已经实现，真实 LLM 快速试验尚未运行。B/C 共用同一份锁定 Spec/digest，B 仅通过 `RunOptions` 关闭修复，C 保持 deterministic `FAIL` 后最多一次 Evidence 驱动修复；生产默认行为不变。`mvn test -Pchange-spec-eval` 默认执行 6 个任务 × 3 组 × 2 次并产生 Token 费用；自动 Pilot 的 `human_intervention_time` 必须报告为 `N/A`。
+- ChangeSpec V1 已完成前六条产品切片；第七条切片的 A/B/C 评测框架、六个分层任务、配对 Spec、首次候选快照、隐藏 Oracle、指标归约和报告入口已经实现。最新真实 LLM 单任务 smoke 已生成有效配对 Draft，A/B 通过且 B/C digest 一致；C 的初始轮和 Evidence 修复轮没有形成文件改动，最终失败，尚未运行完整 Pilot。此前 smoke 暴露过模型 YAML 结构漂移；现在配对 Draft 最终无效时会保存脱敏、截断后的两次 Draft 诊断并在报告中链接，Codec 类型错误包含具体字段路径。B/C 共用同一份锁定 Spec/digest，B 仅通过 `RunOptions` 关闭修复，C 保持 deterministic `FAIL` 后最多一次 Evidence 驱动修复；生产默认行为不变。`mvn test -Pchange-spec-eval` 默认执行 6 个任务 × 3 组 × 2 次并产生 Token 费用；自动 Pilot 的 `human_intervention_time` 必须报告为 `N/A`。
 - `PAI.md` 是 PaiCLI 的项目级记忆文件：启动时自动注入 system prompt，适合团队共享的长期稳定规则；个人/会变化的经验继续用 `/save` 长期记忆。
 - 下一步：OAuth / sampling / recovery 作为后续 MCP 增强
 - Banner 版本：`v16.1.0`，Maven 产物：`paicli-1.0-SNAPSHOT.jar`（两者不一致是正常状态）

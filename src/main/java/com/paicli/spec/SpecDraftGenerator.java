@@ -21,18 +21,38 @@ public final class SpecDraftGenerator {
     private final ChangeSpecCodec codec;
     private final String systemPrompt;
     private final String draftId;
+    private final DraftAttemptListener attemptListener;
 
     public SpecDraftGenerator(LlmClient llmClient) {
         this(
                 llmClient,
                 new ChangeSpecCodec(),
-                "CHANGE-" + LocalDateTime.now().format(ID_TIME));
+                "CHANGE-" + LocalDateTime.now().format(ID_TIME),
+                DraftAttemptListener.NO_OP);
+    }
+
+    public SpecDraftGenerator(LlmClient llmClient, DraftAttemptListener attemptListener) {
+        this(
+                llmClient,
+                new ChangeSpecCodec(),
+                "CHANGE-" + LocalDateTime.now().format(ID_TIME),
+                attemptListener);
     }
 
     SpecDraftGenerator(LlmClient llmClient, ChangeSpecCodec codec, String draftId) {
+        this(llmClient, codec, draftId, DraftAttemptListener.NO_OP);
+    }
+
+    SpecDraftGenerator(
+            LlmClient llmClient,
+            ChangeSpecCodec codec,
+            String draftId,
+            DraftAttemptListener attemptListener
+    ) {
         this.llmClient = Objects.requireNonNull(llmClient, "llmClient");
         this.codec = Objects.requireNonNull(codec, "codec");
         this.draftId = requireText(draftId, "draftId");
+        this.attemptListener = Objects.requireNonNull(attemptListener, "attemptListener");
         this.systemPrompt = PromptRepository.createDefault().loadRequired("modes/spec-draft.md");
     }
 
@@ -77,6 +97,7 @@ public final class SpecDraftGenerator {
                         elapsedMillis(startedAt));
             } catch (ChangeSpecValidationException e) {
                 lastValidationError = e;
+                attemptListener.onRejected(attempt, rawDraft, e.errors());
                 if (attempt == MAX_ATTEMPTS) {
                     throw e;
                 }
@@ -201,5 +222,13 @@ public final class SpecDraftGenerator {
             throw new IllegalArgumentException(field + " 不能为空");
         }
         return value.trim();
+    }
+
+    /** 接收被结构校验拒绝的 Draft；默认生成路径不注册监听器。 */
+    @FunctionalInterface
+    public interface DraftAttemptListener {
+        DraftAttemptListener NO_OP = (attempt, rawDraft, errors) -> { };
+
+        void onRejected(int attempt, String rawDraft, List<String> errors);
     }
 }

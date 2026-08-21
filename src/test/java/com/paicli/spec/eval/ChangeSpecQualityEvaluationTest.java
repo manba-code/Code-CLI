@@ -51,7 +51,7 @@ class ChangeSpecQualityEvaluationTest {
         Random random = new Random(seed);
         for (int repetition = 1; repetition <= repetitions; repetition++) {
             for (ChangeSpecEvaluationCase evaluationCase : cases) {
-                ChangeSpecPairedDraft pairedDraft = runner.preparePairedDraft(evaluationCase);
+                ChangeSpecPairedDraft pairedDraft = runner.preparePairedDraft(evaluationCase, repetition);
                 List<ChangeSpecEvaluationMode> modes = new ArrayList<>(List.of(ChangeSpecEvaluationMode.values()));
                 Collections.shuffle(modes, random);
                 for (ChangeSpecEvaluationMode mode : modes) {

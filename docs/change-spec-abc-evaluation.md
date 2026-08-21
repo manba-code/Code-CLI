@@ -162,9 +162,14 @@ mvn test -Pchange-spec-eval \
 ```text
 target/change-spec-eval/<run-id>/
 ├── report.md
+├── draft-attempts/  # 仅配对 Draft 最终无效时生成；脱敏并按 attempt 截断
 ├── workspaces/
 └── first-pass/
 ```
+
+若两次 Draft 都未通过结构校验，Codec 错误会指出 Jackson 能定位到的具体字段路径；
+`draft-attempts/<case>-r<repetition>.md` 保存每次校验错误和脱敏后的模型输出，单次输出最多
+保留 8 KiB，且不保存 system prompt、reasoning 或 API Key。`report.md` 会链接该诊断文件。
 
 ## 8. 报告边界
 

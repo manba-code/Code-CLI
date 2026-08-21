@@ -202,6 +202,20 @@ class ChangeSpecCodecTest {
     }
 
     @Test
+    void reportsTheExactFieldPathForYamlTypeMismatches() {
+        String input = validDocument().replace(
+                "    command: mvn -q -DskipTests=false test",
+                "    command:\n      executable: mvn");
+
+        ChangeSpecValidationException error = assertThrows(
+                ChangeSpecValidationException.class,
+                () -> codec.decode(input));
+
+        assertTrue(error.errors().get(0).contains("verifiers[1].command"), error.getMessage());
+        assertTrue(error.errors().get(0).contains("期望 String，实际为 Object"), error.getMessage());
+    }
+
+    @Test
     void digestBindsOnlyTheMachineContract() {
         ChangeSpecDocument original = codec.decode(validDocument());
         ChangeSpecDocument markdownChanged = codec.decode(

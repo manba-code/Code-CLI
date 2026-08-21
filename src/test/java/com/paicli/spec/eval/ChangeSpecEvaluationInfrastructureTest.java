@@ -1,5 +1,6 @@
 package com.paicli.spec.eval;
 
+import com.paicli.llm.LlmClient;
 import com.paicli.tool.CommandExecutionResult;
 import com.paicli.tool.ToolRegistry;
 import org.junit.jupiter.api.Test;
@@ -9,8 +10,10 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Map;
+import java.util.Queue;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -123,11 +126,58 @@ class ChangeSpecEvaluationInfrastructureTest {
         assertTrue(report.contains("A · 普通 ReAct"));
     }
 
+    @Test
+    void invalidPairedDraftPersistsSanitizedAttemptDiagnosticsAndLinksTheReport(
+            @TempDir Path tempDir
+    ) throws Exception {
+        String oversizedDraft = "---\napi_key: top-secret\ntitle:\n  nested: value\n"
+                + "x".repeat(9 * 1024)
+                + "\n---";
+        StubLlmClient stub = new StubLlmClient(
+                oversizedDraft,
+                "---\npassword: second-secret\ntitle:\n  nested: value\n---");
+        ChangeSpecEvaluationRunner runner = new ChangeSpecEvaluationRunner(
+                () -> stub, tempDir, 0d, 0d, 60_000L);
+
+        ChangeSpecPairedDraft draft = runner.preparePairedDraft(
+                ChangeSpecEvaluationCatalog.defaultCases().get(0), 3);
+
+        assertFalse(draft.available());
+        assertEquals(2, stub.calls);
+        assertTrue(draft.diagnosticFile() != null);
+        Path diagnostic = tempDir.resolve(draft.diagnosticFile());
+        assertTrue(Files.isRegularFile(diagnostic));
+        String content = Files.readString(diagnostic);
+        assertTrue(content.contains("## Attempt 1"), content);
+        assertTrue(content.contains("## Attempt 2"), content);
+        assertTrue(content.contains("verifiers") || content.contains("title"), content);
+        assertTrue(content.contains("***"), content);
+        assertFalse(content.contains("top-secret"), content);
+        assertFalse(content.contains("second-secret"), content);
+        assertTrue(content.contains("truncated: true"), content);
+
+        ChangeSpecEvaluationResult invalid = result(
+                ChangeSpecEvaluationMode.SPEC_NO_REPAIR, false, false, "", draft.diagnosticFile());
+        String report = ChangeSpecEvaluationReport.toMarkdown(
+                List.of(invalid), "stub", "stub-model", 7L, 1, 60_000L, false);
+        assertTrue(report.contains("[Draft 诊断](<" + draft.diagnosticFile().toString().replace('\\', '/') + ">)"), report);
+    }
+
     private static ChangeSpecEvaluationResult result(
             ChangeSpecEvaluationMode mode,
             boolean success,
             boolean completed,
             String digest
+    ) {
+        return result(mode, success, completed, digest, null);
+    }
+
+    private static ChangeSpecEvaluationResult result(
+            ChangeSpecEvaluationMode mode,
+            boolean success,
+            boolean completed,
+            String digest,
+            Path draftDiagnostic
     ) {
         return new ChangeSpecEvaluationResult(
                 "case",
@@ -153,7 +203,33 @@ class ChangeSpecEvaluationInfrastructureTest {
                 digest,
                 "detail",
                 "",
-                Path.of("target", mode.name().toLowerCase()));
+                Path.of("target", mode.name().toLowerCase()),
+                draftDiagnostic);
+    }
+
+    private static final class StubLlmClient implements LlmClient {
+        private final Queue<ChatResponse> responses = new ArrayDeque<>();
+        private int calls;
+
+        private StubLlmClient(String... responses) {
+            for (String response : responses) {
+                this.responses.add(new ChatResponse("assistant", response, List.of(), 10, 10));
+            }
+        }
+
+        @Override
+        public ChatResponse chat(List<Message> messages, List<Tool> tools) {
+            calls++;
+            return responses.remove();
+        }
+
+        @Override
+        public ChatResponse chat(List<Message> messages, List<Tool> tools, StreamListener listener) {
+            return chat(messages, tools);
+        }
+
+        @Override public String getModelName() { return "stub-model"; }
+        @Override public String getProviderName() { return "stub"; }
     }
 
     private static List<String> javaVersionCommand() {

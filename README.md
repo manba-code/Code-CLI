@@ -35,7 +35,8 @@ mvn test -DskipTests=false
 `change-spec-eval` 独立比较 A=普通 ReAct、B=ChangeSpec 但关闭修复、C=ChangeSpec + 一次修复。
 同一任务/轮次的 B/C 共用锁定 Spec digest，六个分层 fixture 使用公开 Verifier 与隐藏 Oracle，
 报告任务成功、首次成功、误放行、Scope、TTA、Token 和成本。自动 Pilot 的人工介入时间记为
-`N/A`，不会把自动确认冒充真人耗时。协议与参数见
+`N/A`，不会把自动确认冒充真人耗时。YAML 类型错误会报告具体字段路径；配对 Draft 两次结构校验
+均失败时，评测目录会保存脱敏、单次最多 8 KiB 的 Draft 诊断并在报告中链接。协议与参数见
 [`docs/change-spec-abc-evaluation.md`](docs/change-spec-abc-evaluation.md)。
 
 ## 演进历程
