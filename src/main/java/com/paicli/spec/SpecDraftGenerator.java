@@ -139,6 +139,12 @@ public final class SpecDraftGenerator {
         for (String error : errors) {
             prompt.append("- ").append(error).append('\n');
         }
+        prompt.append("""
+
+                字段路径提示：expect.exit_code 只是字段路径，不是 YAML 键名。command Verifier 必须使用嵌套结构：
+                expect:
+                  exit_code: 0
+                """);
         return prompt.toString();
     }
 

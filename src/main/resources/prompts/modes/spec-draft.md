@@ -56,7 +56,21 @@ verifiers:
 8. `deterministic` Oracle 必须引用至少一个已有 Verifier；`human` Oracle 的 `verifiers` 必须为空。
 9. V1 Verifier 仅支持：
    - `path_scope`：只需要 `id` 和 `type`；
-   - `command`：需要 `command` 和 `expect.exit_code`；只有要求测试数量时才增加 `junit_report_glob` 与 `minimum_tests`。
+   - `command`：需要 `command` 和嵌套的 `expect` 对象；`exit_code` 必须写在 `expect` 下。只有要求测试数量时才在 `expect` 下增加 `junit_report_glob` 与 `minimum_tests`。
+
+   command Verifier 的正确 YAML 结构如下。`expect.exit_code` 只是字段路径说明，绝不能作为包含点号的 YAML 键名：
+
+   ```yaml
+   - id: VT-TEST
+     type: command
+     command: 调用方明确提供的测试命令
+     expect:
+       exit_code: 0
+       junit_report_glob: target/surefire-reports/TEST-*.xml
+       minimum_tests: 1
+   ```
+
+   未明确要求测试报告或最少测试数时，省略 `junit_report_glob` 和 `minimum_tests`，但仍保留嵌套的 `expect.exit_code`。
 10. 每份 Draft 必须有且仅有一个 `path_scope` Verifier，以及一个 `kind: scope` 的 deterministic Criterion；该 Criterion 只能引用这个 `path_scope` Verifier。每个 Verifier 都必须至少被一个 deterministic Criterion 引用。
 11. `junit_report_glob` 必须是项目根内使用 `/` 的相对 glob，不得使用绝对路径、反斜杠或 `..`。
 12. Markdown 不得重新定义另一套验收条件，只解释背景、示例或设计原因。

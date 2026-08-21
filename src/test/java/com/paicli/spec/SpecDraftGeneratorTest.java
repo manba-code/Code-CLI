@@ -59,6 +59,27 @@ class SpecDraftGeneratorTest {
     }
 
     @Test
+    void explainsThatDottedCommandExpectationPathMustBeNestedYaml() throws Exception {
+        RecordingClient client = new RecordingClient(
+                flatCommandExpectationDocument(),
+                validDocument());
+        SpecDraftGenerator generator = new SpecDraftGenerator(
+                client,
+                new ChangeSpecCodec(),
+                "CHANGE-TEST-001");
+
+        generator.generate("修复除零行为，测试命令为 mvn test", "", "");
+
+        assertEquals(2, client.requests.size());
+        String systemPrompt = client.requests.get(0).messages().get(0).content();
+        assertTrue(systemPrompt.contains("expect:\n       exit_code: 0"));
+        String correctionPrompt = client.requests.get(1).messages()
+                .get(client.requests.get(1).messages().size() - 1).content();
+        assertTrue(correctionPrompt.contains("expect.exit_code 只是字段路径，不是 YAML 键名"));
+        assertTrue(correctionPrompt.contains("expect:\n  exit_code: 0"));
+    }
+
+    @Test
     void stopsAfterOneFailedRegeneration() {
         RecordingClient client = new RecordingClient(
                 "---\nschema: wrong\n---",
@@ -109,6 +130,44 @@ class SpecDraftGeneratorTest {
                 # 背景
 
                 修复无限重试。
+                """;
+    }
+
+    private static String flatCommandExpectationDocument() {
+        return """
+                ---
+                schema: paicli/change-spec/v1
+                id: CHANGE-TEST-001
+                revision: 1
+                title: 修复除零行为
+                intent:
+                  goal: 除数为零时返回空结果
+                  non_goals: []
+                scope:
+                  mode: open
+                  include: []
+                  exclude: []
+                acceptance:
+                  - id: AC-1
+                    kind: behavior
+                    statement: 除数为零时返回空结果
+                    oracle:
+                      type: deterministic
+                      verifiers: [VT-TEST]
+                  - id: AC-SCOPE
+                    kind: scope
+                    statement: 修改不得超出声明的 Scope
+                    oracle:
+                      type: deterministic
+                      verifiers: [VT-SCOPE]
+                verifiers:
+                  - id: VT-TEST
+                    type: command
+                    command: mvn test
+                    expect.exit_code: 0
+                  - id: VT-SCOPE
+                    type: path_scope
+                ---
                 """;
     }
 
