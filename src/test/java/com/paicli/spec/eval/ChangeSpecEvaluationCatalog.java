@@ -22,6 +22,7 @@ final class ChangeSpecEvaluationCatalog {
                 timeoutConfig(),
                 featureFlagPrecedence(),
                 orderStateMachine(),
+                clarifiedDisplayName(),
                 workspacePath(),
                 operationResultCompatibility(),
                 secretRedactor(),
@@ -779,6 +780,98 @@ final class ChangeSpecEvaluationCatalog {
                 Set.of("src/main/java/eval/OrderTransitions.java"));
     }
 
+    private static ChangeSpecEvaluationCase clarifiedDisplayName() {
+        return evaluationCase(
+                "clarified-display-name",
+                ChangeSpecEvaluationTier.MEDIUM,
+                """
+                原始需求（存在歧义）：让 DisplayNameNormalizer.normalize(String) 更友好地处理名字，太长时截短。
+
+                统一用户澄清记录（A/B/C 三组收到完全相同的记录）：
+                1. null、空串或只含 Unicode whitespace/space character 的输入返回 Anonymous；
+                2. 去除首尾空白，并把连续 Unicode whitespace/space character 折叠为一个 ASCII 空格；
+                3. 大小写、标点和所有非空白 code point 必须保持不变，不做拼写、Locale 或字符替换；
+                4. 最长 20 个 Unicode code point；超过时保留前 19 个 code point 并追加单字符省略号 …，不得按 UTF-16 char 截断代理对；
+                5. 只允许修改 src/main/java/eval/DisplayNameNormalizer.java，不得修改测试和 pom.xml；
+                6. 公开验证命令必须使用：mvn -q -DskipTests=false test。
+                """,
+                List.of(
+                        "空值与全空白输入使用 Anonymous",
+                        "首尾空白移除且连续 Unicode 空白折叠为 ASCII 空格",
+                        "大小写、标点和非空白 code point 原样保留",
+                        "按 Unicode code point 执行 20 字符边界和省略号截断"),
+                Map.of(
+                        "pom.xml", fixturePom(),
+                        "src/main/java/eval/DisplayNameNormalizer.java", """
+                                package eval;
+
+                                public final class DisplayNameNormalizer {
+                                    private DisplayNameNormalizer() { }
+                                    public static String normalize(String input) {
+                                        if (input == null || input.isBlank()) return "Anonymous";
+                                        String value = input.trim().replaceAll("\\s+", " ");
+                                        return value.length() <= 20
+                                                ? value
+                                                : value.substring(0, 19) + "…";
+                                    }
+                                }
+                                """,
+                        "src/test/java/eval/DisplayNameNormalizerVisibleTest.java", """
+                                package eval;
+
+                                import org.junit.jupiter.api.Test;
+                                import static org.junit.jupiter.api.Assertions.*;
+
+                                class DisplayNameNormalizerVisibleTest {
+                                    @Test void substitutesAnonymousForMissingNames() {
+                                        assertEquals("Anonymous", DisplayNameNormalizer.normalize(null));
+                                        assertEquals("Anonymous", DisplayNameNormalizer.normalize(" \\t \\n"));
+                                    }
+
+                                    @Test void trimsAndCollapsesUnicodeWhitespace() {
+                                        assertEquals("Ada Lovelace",
+                                                DisplayNameNormalizer.normalize("\\t Ada   Lovelace \\n"));
+                                    }
+
+                                    @Test void preservesCasePunctuationAndNonWhitespace() {
+                                        assertEquals("Mc'DONALD-Jr.",
+                                                DisplayNameNormalizer.normalize("  Mc'DONALD-Jr.  "));
+                                    }
+
+                                    @Test void truncatesByUnicodeCodePoint() {
+                                        assertEquals("abcdefghijklmnopqrst",
+                                                DisplayNameNormalizer.normalize("abcdefghijklmnopqrst"));
+                                        assertEquals("abcdefghijklmnopqrs…",
+                                                DisplayNameNormalizer.normalize("abcdefghijklmnopqrstu"));
+                                        assertEquals("abcdefghijklmnopqrs😀",
+                                                DisplayNameNormalizer.normalize("abcdefghijklmnopqrs😀"));
+                                        assertEquals("abcdefghijklmnopqr😀…",
+                                                DisplayNameNormalizer.normalize("abcdefghijklmnopqr😀xy"));
+                                    }
+                                }
+                                """),
+                Map.of("src/test/java/eval/DisplayNameNormalizerHiddenTest.java", """
+                        package eval;
+
+                        import org.junit.jupiter.api.Test;
+                        import static org.junit.jupiter.api.Assertions.*;
+
+                        class DisplayNameNormalizerHiddenTest {
+                            @Test void treatsNoBreakSpaceAsSpaceCharacter() {
+                                assertEquals("Ada Lovelace",
+                                        DisplayNameNormalizer.normalize("Ada\u00a0\u00a0Lovelace"));
+                            }
+
+                            @Test void keepsExactlyNineteenCodePointsBeforeEllipsis() {
+                                String result = DisplayNameNormalizer.normalize("123456789012345678😀ab");
+                                assertEquals("123456789012345678😀…", result);
+                                assertEquals(20, result.codePointCount(0, result.length()));
+                            }
+                        }
+                        """),
+                Set.of("src/main/java/eval/DisplayNameNormalizer.java"));
+    }
+
     private static ChangeSpecEvaluationCase workspacePath() {
         return evaluationCase(
                 "workspace-path-safety",
@@ -1196,7 +1289,7 @@ final class ChangeSpecEvaluationCatalog {
         return List.of("sh", "-lc", PUBLIC_VERIFIER);
     }
 
-    /** 仅供确定性基础设施测试证明十二个 fixture 存在可通过公开和隐藏 Oracle 的实现。 */
+    /** 仅供确定性基础设施测试证明十三个 fixture 存在可通过公开和隐藏 Oracle 的实现。 */
     static Map<String, Map<String, String>> referenceSolutions() {
         Map<String, Map<String, String>> solutions = new LinkedHashMap<>(Map.of(
                 "safe-divider", Map.of("src/main/java/eval/SafeDivider.java", """
@@ -1392,6 +1485,34 @@ final class ChangeSpecEvaluationCatalog {
                             }
                         }
                         """));
+        solutions.put("clarified-display-name", Map.of(
+                "src/main/java/eval/DisplayNameNormalizer.java", """
+                        package eval;
+                        public final class DisplayNameNormalizer {
+                            private DisplayNameNormalizer() { }
+                            public static String normalize(String input) {
+                                if (input == null) return "Anonymous";
+                                StringBuilder normalized = new StringBuilder();
+                                boolean pendingSpace = false;
+                                for (int offset = 0; offset < input.length();) {
+                                    int codePoint = input.codePointAt(offset);
+                                    offset += Character.charCount(codePoint);
+                                    if (Character.isWhitespace(codePoint) || Character.isSpaceChar(codePoint)) {
+                                        pendingSpace = !normalized.isEmpty();
+                                    } else {
+                                        if (pendingSpace) normalized.append(' ');
+                                        normalized.appendCodePoint(codePoint);
+                                        pendingSpace = false;
+                                    }
+                                }
+                                if (normalized.isEmpty()) return "Anonymous";
+                                String value = normalized.toString();
+                                if (value.codePointCount(0, value.length()) <= 20) return value;
+                                int end = value.offsetByCodePoints(0, 19);
+                                return value.substring(0, end) + "…";
+                            }
+                        }
+                        """));
         solutions.put("secret-redactor", Map.of(
                 "src/main/java/eval/SecretRedactor.java", """
                         package eval;
@@ -1478,6 +1599,11 @@ final class ChangeSpecEvaluationCatalog {
                         "src/main/java/eval/OrderTransitions.java",
                         "throw new IllegalArgumentException(\"transition is not allowed\");",
                         "return current;"),
+                new PublicEvidenceMutation(
+                        "clarified-display-name",
+                        "src/main/java/eval/DisplayNameNormalizer.java",
+                        "int end = value.offsetByCodePoints(0, 19);",
+                        "int end = value.offsetByCodePoints(0, 18);"),
                 new PublicEvidenceMutation(
                         "workspace-path-safety",
                         "src/main/java/eval/WorkspacePath.java",

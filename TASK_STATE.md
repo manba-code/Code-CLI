@@ -172,3 +172,31 @@ PaiCLI 的 ChangeSpec 是可选的 Spec-Driven Code Change 契约层：把自然
 3. 单阶段不超过 15 次 ReAct 迭代，没有重复两步循环长尾；
 4. 当时报告明确区分产品耗时、成功 TTA、固定失败惩罚 TTA/失败数，并以 `CNY` 显示本次成本；新报告进一步拆分可信产品决策和失败实际耗时；
 5. 小样通过后才运行的原模型 36 次已经归档；现在具备冻结条件后换模型的实验前提，但尚未形成跨模型结论。
+
+## 7. 当前暂停点（2026-08-23）
+
+用户要求暂停，准备更换地点且可能断网。当前没有运行中的测试或模型调用；第二次完整 fixture 预检已按要求人工中断，其退出码只表示中断，不代表测试失败。
+
+### 已提交成果
+
+- `430bc46 test(eval): strengthen ChangeSpec value reporting`：完善质量、产品价值指标以及报告统计口径。
+- `cf9f957 test(eval): enforce public evidence contracts`：增加公开证据契约和最低测试资格检查。
+- `6d83c35 test(eval): expand ChangeSpec task catalog`：目录扩展到 12 个任务，默认完整评测规模为 72 次产品运行。
+- `5861cbf fix: make quick regression cross-platform`：修复 Quick 的 9 个历史跨平台/测试隔离问题；Quick 为 846 tests 全绿，未启用付费 Profile 的全量测试为 892 tests 全绿。
+
+### 暂停中的 WIP：歧义澄清任务
+
+- `ChangeSpecEvaluationCatalog` 已新增第 13 个中型 fixture `clarified-display-name`，A/B/C 接收完全相同的统一澄清记录，用于测量“明确需求契约”而非模型获得不同信息的效果。
+- `ChangeSpecEvaluationInfrastructureTest` 已更新目录断言为 13 个任务（4 small / 5 medium / 4 high）。
+- 非 fixture 基础设施测试已通过：22 tests，0 failure，0 error，3 个显式慢检查 skipped。
+- 第一次完整 fixture 预检发现新生成测试源码中的换行转义问题；该问题已经修正。
+- 修正后的第二次完整 fixture 预检尚未完成，在用户要求暂停时主动中断；因此第 13 个 fixture 的公开测试、隐藏 Oracle 和突变杀伤验证仍为待办，不能宣称已通过。
+- 正式文档仍保持已验证的 12 任务 / 72 次口径，尚未同步为 13 任务 / 78 次；应在上述预检通过后再统一更新。
+- 此 WIP 没有调用真实模型 API，也没有执行后续 72/78/108/117 次付费评测。
+
+### 恢复顺序
+
+1. 只运行免费 fixture 预检：`mvn test -Dtest=ChangeSpecEvaluationInfrastructureTest '-Dpaicli.changeSpecEval.validateFixtures=true' -DskipTests=false '-Dmaven.compiler.useIncrementalCompilation=false'`。
+2. 预检通过后，将 `AGENTS.md`、`README.md`、`ROADMAP.md`、`pom.xml`、RFC、评测方案、remediation checklist 和本文件统一更新为 13 个任务、4/5/4 分层及默认 `13×3×2=78`。
+3. 再运行免费定向回归与无付费 Profile 回归，最后提交 `clarified-display-name` 完整实现。
+4. 任何真实模型新版基线或正式研究仍须用户单独审核并明确授权，恢复工作时不得自动启动。

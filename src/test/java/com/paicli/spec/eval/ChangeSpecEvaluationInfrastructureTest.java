@@ -42,14 +42,14 @@ class ChangeSpecEvaluationInfrastructureTest {
     }
 
     @Test
-    void catalogContainsFourCasesPerTierAndFixedVerifierCommand() {
+    void catalogHasExpectedTierCoverageAndFixedVerifierCommand() {
         List<ChangeSpecEvaluationCase> cases = ChangeSpecEvaluationCatalog.defaultCases();
 
-        assertEquals(12, cases.size());
-        for (ChangeSpecEvaluationTier tier : ChangeSpecEvaluationTier.values()) {
-            assertEquals(4, cases.stream().filter(value -> value.tier() == tier).count());
-        }
-        assertEquals(12, cases.stream().map(ChangeSpecEvaluationCase::id).collect(Collectors.toSet()).size());
+        assertEquals(13, cases.size());
+        assertEquals(4, cases.stream().filter(value -> value.tier() == ChangeSpecEvaluationTier.SMALL).count());
+        assertEquals(5, cases.stream().filter(value -> value.tier() == ChangeSpecEvaluationTier.MEDIUM).count());
+        assertEquals(4, cases.stream().filter(value -> value.tier() == ChangeSpecEvaluationTier.HIGH_RISK).count());
+        assertEquals(13, cases.stream().map(ChangeSpecEvaluationCase::id).collect(Collectors.toSet()).size());
         assertEquals(
                 cases.stream().map(ChangeSpecEvaluationCase::id).collect(Collectors.toSet()),
                 ChangeSpecEvaluationCatalog.publicEvidenceMutations().stream()
