@@ -18,7 +18,7 @@ mvn test -Pquick
 # 真实 LLM Agent A/B 质量评测（会产生网络请求和 Token 费用，默认不运行）
 mvn test -Pagent-eval
 
-# ChangeSpec A/B/C 快速评测（默认 6 个任务 × 3 组 × 2 次；会产生 Token 费用）
+# ChangeSpec A/B/C 评测（默认 12 个任务 × 3 组 × 2 次 = 72 次；会产生 Token 费用）
 mvn test -Pchange-spec-eval
 
 # 代码搜索 deterministic golden set
@@ -33,7 +33,7 @@ mvn test -DskipTests=false
 [`docs/agent-ab-evaluation-pilot-report-2026-08-10.md`](docs/agent-ab-evaluation-pilot-report-2026-08-10.md)。
 
 `change-spec-eval` 独立比较 A=普通 ReAct、B=ChangeSpec 但关闭修复、C=ChangeSpec + 一次修复。
-同一任务/轮次的 B/C 共用锁定 Spec digest，六个分层 fixture 使用公开 Verifier 与隐藏 Oracle，
+同一任务/轮次的 B/C 共用锁定 Spec digest，12 个分层 fixture（每层 4 个）使用公开 Verifier 与隐藏 Oracle，
 报告使用 `PASS / FAIL / NOT_EVALUABLE / NOT_MEASURED` 分维度判断，区分成功率天花板、零缺陷下限、
 无修复机会和未采集人工时间；同时显示成功率 95% Wilson 区间、A→B/B→C/A→C 配对胜负、完成声明
 覆盖率、声明内/全运行虚假率、Scope、修复机会/条件成功率，以及客观正确候选、可信产品决策、
@@ -47,7 +47,8 @@ ReAct 耗时另行拆出 LLM 请求等待墙钟和工具批次墙钟；并行工
 且每条非 scope deterministic Criterion 都要引用其中至少一个。报告显示公开证据执行数/任务下限；不合格时按 `DRAFT_INVALID` 保存诊断，不进入 B/C。Spec Run 以失败
 Verifier 进入唯一一次修复时还会注入首次 changed-files 数量；若为 0，会明确要求实际使用工具修改，
 不能只描述计划。评测报告把完整结束、隐藏任务失败且零改动的 Spec Run 标为
-`NO_CHANGE_COMPLETION`。协议与参数见
+`NO_CHANGE_COMPLETION`。每个 fixture 另有一个单点错误突变，免费预检要求公开 Verifier 必须拒绝它。
+任务目录和公开证据契约在历史 Pilot 后已变化，新的完整付费评测必须建立新版基线且需单独批准。协议与参数见
 [`docs/change-spec-abc-evaluation.md`](docs/change-spec-abc-evaluation.md)；首次 Pilot 的修复与复跑顺序见
 [`docs/change-spec-pilot-remediation-checklist.md`](docs/change-spec-pilot-remediation-checklist.md)。
 

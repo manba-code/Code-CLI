@@ -1,6 +1,7 @@
 package com.paicli.spec.eval;
 
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -15,10 +16,16 @@ final class ChangeSpecEvaluationCatalog {
         return List.of(
                 safeDivider(),
                 slugifier(),
+                emailCanonicalizer(),
+                inclusiveClamp(),
                 loginRetry(),
                 timeoutConfig(),
+                featureFlagPrecedence(),
+                orderStateMachine(),
                 workspacePath(),
-                operationResultCompatibility());
+                operationResultCompatibility(),
+                secretRedactor(),
+                tokenExpiryPolicy());
     }
 
     private static ChangeSpecEvaluationCase safeDivider() {
@@ -162,6 +169,157 @@ final class ChangeSpecEvaluationCatalog {
                         }
                         """),
                 Set.of("src/main/java/eval/Slugifier.java"));
+    }
+
+    private static ChangeSpecEvaluationCase emailCanonicalizer() {
+        return evaluationCase(
+                "email-canonicalizer",
+                ChangeSpecEvaluationTier.SMALL,
+                """
+                实现 EmailCanonicalizer.canonicalize(String input)：
+                1. null 或全空白输入返回 Optional.empty()；
+                2. 去除首尾空白并使用 Locale.ROOT 小写；
+                3. 只接受恰好一个 @ 且两侧非空的地址，否则返回 Optional.empty()；
+                4. 不进行 IDN、Unicode 规范化或 plus-tag 改写；
+                5. 只允许修改 src/main/java/eval/EmailCanonicalizer.java，不得修改测试和 pom.xml；
+                6. 公开验证命令必须使用：mvn -q -DskipTests=false test。
+                """,
+                List.of(
+                        "null 或全空白输入返回 Optional.empty()",
+                        "去除首尾空白并使用 Locale.ROOT 小写",
+                        "只接受恰好一个 @ 且两侧非空的地址"),
+                Map.of(
+                        "pom.xml", fixturePom(),
+                        "src/main/java/eval/EmailCanonicalizer.java", """
+                                package eval;
+
+                                import java.util.Optional;
+
+                                public final class EmailCanonicalizer {
+                                    private EmailCanonicalizer() { }
+                                    public static Optional<String> canonicalize(String input) {
+                                        return Optional.ofNullable(input);
+                                    }
+                                }
+                                """,
+                        "src/test/java/eval/EmailCanonicalizerVisibleTest.java", """
+                                package eval;
+
+                                import java.util.Locale;
+                                import org.junit.jupiter.api.Test;
+                                import static org.junit.jupiter.api.Assertions.*;
+
+                                class EmailCanonicalizerVisibleTest {
+                                    @Test void rejectsMissingInput() {
+                                        assertTrue(EmailCanonicalizer.canonicalize(null).isEmpty());
+                                        assertTrue(EmailCanonicalizer.canonicalize("   ").isEmpty());
+                                    }
+
+                                    @Test void trimsAndLowercasesWithLocaleRoot() {
+                                        Locale previous = Locale.getDefault();
+                                        try {
+                                            Locale.setDefault(Locale.forLanguageTag("tr"));
+                                            assertEquals("info@example.com",
+                                                    EmailCanonicalizer.canonicalize(" INFO@Example.COM ").orElseThrow());
+                                        } finally {
+                                            Locale.setDefault(previous);
+                                        }
+                                    }
+
+                                    @Test void rejectsMalformedSeparatorCounts() {
+                                        assertTrue(EmailCanonicalizer.canonicalize("missing-at").isEmpty());
+                                        assertTrue(EmailCanonicalizer.canonicalize("@example.com").isEmpty());
+                                        assertTrue(EmailCanonicalizer.canonicalize("a@b@c").isEmpty());
+                                    }
+                                }
+                                """),
+                Map.of("src/test/java/eval/EmailCanonicalizerHiddenTest.java", """
+                        package eval;
+
+                        import org.junit.jupiter.api.Test;
+                        import static org.junit.jupiter.api.Assertions.*;
+
+                        class EmailCanonicalizerHiddenTest {
+                            @Test void preservesCharactersOutsideTheDeclaredNormalization() {
+                                assertEquals("user+tag@éxample.test",
+                                        EmailCanonicalizer.canonicalize("User+Tag@Éxample.Test").orElseThrow());
+                            }
+
+                            @Test void rejectsEmptyDomain() {
+                                assertTrue(EmailCanonicalizer.canonicalize("user@").isEmpty());
+                            }
+                        }
+                        """),
+                Set.of("src/main/java/eval/EmailCanonicalizer.java"));
+    }
+
+    private static ChangeSpecEvaluationCase inclusiveClamp() {
+        return evaluationCase(
+                "inclusive-clamp",
+                ChangeSpecEvaluationTier.SMALL,
+                """
+                修复 IntClamp.clamp(int value, int minimum, int maximum)：
+                1. value 小于 minimum 时返回 minimum，大于 maximum 时返回 maximum；
+                2. 区间内值和两个边界值保持不变；
+                3. minimum 大于 maximum 时抛 IllegalArgumentException；
+                4. 保持现有公共静态方法签名，不增加饱和算术等额外行为；
+                5. 只允许修改 src/main/java/eval/IntClamp.java，不得修改测试和 pom.xml；
+                6. 公开验证命令必须使用：mvn -q -DskipTests=false test。
+                """,
+                List.of(
+                        "区间外值被限制到 minimum 或 maximum",
+                        "区间内值和边界值保持不变",
+                        "minimum 大于 maximum 时抛 IllegalArgumentException"),
+                Map.of(
+                        "pom.xml", fixturePom(),
+                        "src/main/java/eval/IntClamp.java", """
+                                package eval;
+
+                                public final class IntClamp {
+                                    private IntClamp() { }
+                                    public static int clamp(int value, int minimum, int maximum) {
+                                        return Math.min(value, maximum);
+                                    }
+                                }
+                                """,
+                        "src/test/java/eval/IntClampVisibleTest.java", """
+                                package eval;
+
+                                import org.junit.jupiter.api.Test;
+                                import static org.junit.jupiter.api.Assertions.*;
+
+                                class IntClampVisibleTest {
+                                    @Test void clampsValuesOutsideTheInterval() {
+                                        assertEquals(10, IntClamp.clamp(5, 10, 20));
+                                        assertEquals(20, IntClamp.clamp(25, 10, 20));
+                                    }
+
+                                    @Test void preservesInteriorAndBoundaryValues() {
+                                        assertEquals(10, IntClamp.clamp(10, 10, 20));
+                                        assertEquals(15, IntClamp.clamp(15, 10, 20));
+                                        assertEquals(20, IntClamp.clamp(20, 10, 20));
+                                    }
+
+                                    @Test void rejectsInvertedIntervals() {
+                                        assertThrows(IllegalArgumentException.class,
+                                                () -> IntClamp.clamp(15, 20, 10));
+                                    }
+                                }
+                                """),
+                Map.of("src/test/java/eval/IntClampHiddenTest.java", """
+                        package eval;
+
+                        import org.junit.jupiter.api.Test;
+                        import static org.junit.jupiter.api.Assertions.*;
+
+                        class IntClampHiddenTest {
+                            @Test void handlesIntegerExtremesWithoutArithmetic() {
+                                assertEquals(-1, IntClamp.clamp(Integer.MIN_VALUE, -1, 1));
+                                assertEquals(1, IntClamp.clamp(Integer.MAX_VALUE, -1, 1));
+                            }
+                        }
+                        """),
+                Set.of("src/main/java/eval/IntClamp.java"));
     }
 
     private static ChangeSpecEvaluationCase loginRetry() {
@@ -419,6 +577,208 @@ final class ChangeSpecEvaluationCatalog {
                 Set.of("src/main/java/eval/TimeoutConfig.java"));
     }
 
+    private static ChangeSpecEvaluationCase featureFlagPrecedence() {
+        return evaluationCase(
+                "feature-flag-precedence",
+                ChangeSpecEvaluationTier.MEDIUM,
+                """
+                修复 FeatureFlagConfig.load(Map<String,String>, Properties) 的兼容优先级：
+                1. 系统属性 paicli.feature.preview 优先，其次 PAICLI_FEATURE_PREVIEW，再其次旧变量 PAI_FEATURE_PREVIEW；
+                2. 都未提供时默认关闭；
+                3. 只接受忽略大小写的 true 或 false，其他值抛 IllegalArgumentException；
+                4. 保持 enabled() 公共方法不变，不新增自动猜测 1/0、yes/no；
+                5. 只允许修改 src/main/java/eval/FeatureFlagConfig.java，不得修改测试和 pom.xml；
+                6. 公开验证命令必须使用：mvn -q -DskipTests=false test。
+                """,
+                List.of(
+                        "系统属性、新环境变量、旧环境变量按顺序取值",
+                        "未配置时默认关闭",
+                        "只接受忽略大小写的 true 或 false",
+                        "保持 enabled() 公共方法可用"),
+                Map.of(
+                        "pom.xml", fixturePom(),
+                        "src/main/java/eval/FeatureFlagConfig.java", """
+                                package eval;
+
+                                import java.util.Map;
+                                import java.util.Properties;
+
+                                public final class FeatureFlagConfig {
+                                    private final boolean enabled;
+                                    private FeatureFlagConfig(boolean enabled) { this.enabled = enabled; }
+                                    public boolean enabled() { return enabled; }
+
+                                    public static FeatureFlagConfig load(
+                                            Map<String, String> env, Properties properties) {
+                                        return new FeatureFlagConfig(Boolean.parseBoolean(
+                                                env.get("PAICLI_FEATURE_PREVIEW")));
+                                    }
+                                }
+                                """,
+                        "src/test/java/eval/FeatureFlagConfigVisibleTest.java", """
+                                package eval;
+
+                                import java.util.Map;
+                                import java.util.Properties;
+                                import org.junit.jupiter.api.Test;
+                                import static org.junit.jupiter.api.Assertions.*;
+
+                                class FeatureFlagConfigVisibleTest {
+                                    @Test void followsCompatibilityPrecedence() {
+                                        Properties properties = new Properties();
+                                        properties.setProperty("paicli.feature.preview", "false");
+                                        assertFalse(FeatureFlagConfig.load(
+                                                Map.of("PAICLI_FEATURE_PREVIEW", "true",
+                                                        "PAI_FEATURE_PREVIEW", "true"), properties).enabled());
+                                        assertTrue(FeatureFlagConfig.load(
+                                                Map.of("PAICLI_FEATURE_PREVIEW", "true",
+                                                        "PAI_FEATURE_PREVIEW", "false"),
+                                                new Properties()).enabled());
+                                        assertTrue(FeatureFlagConfig.load(
+                                                Map.of("PAI_FEATURE_PREVIEW", "true"),
+                                                new Properties()).enabled());
+                                    }
+
+                                    @Test void defaultsToDisabled() {
+                                        assertFalse(FeatureFlagConfig.load(Map.of(), new Properties()).enabled());
+                                    }
+
+                                    @Test void acceptsOnlyBooleanWords() {
+                                        assertTrue(FeatureFlagConfig.load(
+                                                Map.of("PAICLI_FEATURE_PREVIEW", "TrUe"),
+                                                new Properties()).enabled());
+                                        assertThrows(IllegalArgumentException.class,
+                                                () -> FeatureFlagConfig.load(
+                                                        Map.of("PAICLI_FEATURE_PREVIEW", "1"),
+                                                        new Properties()));
+                                    }
+
+                                    @Test void keepsEnabledAccessor() {
+                                        FeatureFlagConfig config = FeatureFlagConfig.load(
+                                                Map.of("PAICLI_FEATURE_PREVIEW", "false"),
+                                                new Properties());
+                                        assertFalse(config.enabled());
+                                    }
+                                }
+                                """),
+                Map.of("src/test/java/eval/FeatureFlagConfigHiddenTest.java", """
+                        package eval;
+
+                        import java.util.Map;
+                        import java.util.Properties;
+                        import org.junit.jupiter.api.Test;
+                        import static org.junit.jupiter.api.Assertions.*;
+
+                        class FeatureFlagConfigHiddenTest {
+                            @Test void rejectsCommonButUndeclaredAliases() {
+                                assertThrows(IllegalArgumentException.class,
+                                        () -> FeatureFlagConfig.load(
+                                                Map.of("PAICLI_FEATURE_PREVIEW", "yes"),
+                                                new Properties()));
+                                assertThrows(IllegalArgumentException.class,
+                                        () -> FeatureFlagConfig.load(
+                                                Map.of("PAICLI_FEATURE_PREVIEW", "0"),
+                                                new Properties()));
+                            }
+                        }
+                        """),
+                Set.of("src/main/java/eval/FeatureFlagConfig.java"));
+    }
+
+    private static ChangeSpecEvaluationCase orderStateMachine() {
+        return evaluationCase(
+                "order-state-machine",
+                ChangeSpecEvaluationTier.MEDIUM,
+                """
+                修复 OrderTransitions.next(OrderState current, OrderEvent event)：
+                1. NEW 可通过 PAY 进入 PAID，或通过 CANCEL 进入 CANCELLED；
+                2. PAID 可通过 SHIP 进入 SHIPPED，或通过 CANCEL 进入 CANCELLED；
+                3. SHIPPED 与 CANCELLED 是终态，任何事件都必须拒绝；
+                4. null 或未声明的状态/事件组合统一抛 IllegalArgumentException；
+                5. 只允许修改 src/main/java/eval/OrderTransitions.java，不得修改枚举、测试和 pom.xml；
+                6. 公开验证命令必须使用：mvn -q -DskipTests=false test。
+                """,
+                List.of(
+                        "NEW 支持 PAY 和 CANCEL 转移",
+                        "PAID 支持 SHIP 和 CANCEL 转移",
+                        "SHIPPED 与 CANCELLED 拒绝所有事件",
+                        "null 和未声明组合抛 IllegalArgumentException"),
+                Map.of(
+                        "pom.xml", fixturePom(),
+                        "src/main/java/eval/OrderState.java", """
+                                package eval;
+                                public enum OrderState { NEW, PAID, SHIPPED, CANCELLED }
+                                """,
+                        "src/main/java/eval/OrderEvent.java", """
+                                package eval;
+                                public enum OrderEvent { PAY, SHIP, CANCEL }
+                                """,
+                        "src/main/java/eval/OrderTransitions.java", """
+                                package eval;
+
+                                public final class OrderTransitions {
+                                    private OrderTransitions() { }
+                                    public static OrderState next(OrderState current, OrderEvent event) {
+                                        return event == OrderEvent.CANCEL ? OrderState.CANCELLED : current;
+                                    }
+                                }
+                                """,
+                        "src/test/java/eval/OrderTransitionsVisibleTest.java", """
+                                package eval;
+
+                                import org.junit.jupiter.api.Test;
+                                import static org.junit.jupiter.api.Assertions.*;
+
+                                class OrderTransitionsVisibleTest {
+                                    @Test void transitionsFromNew() {
+                                        assertEquals(OrderState.PAID,
+                                                OrderTransitions.next(OrderState.NEW, OrderEvent.PAY));
+                                        assertEquals(OrderState.CANCELLED,
+                                                OrderTransitions.next(OrderState.NEW, OrderEvent.CANCEL));
+                                    }
+
+                                    @Test void transitionsFromPaid() {
+                                        assertEquals(OrderState.SHIPPED,
+                                                OrderTransitions.next(OrderState.PAID, OrderEvent.SHIP));
+                                        assertEquals(OrderState.CANCELLED,
+                                                OrderTransitions.next(OrderState.PAID, OrderEvent.CANCEL));
+                                    }
+
+                                    @Test void rejectsEventsFromTerminalStates() {
+                                        for (OrderEvent event : OrderEvent.values()) {
+                                            assertThrows(IllegalArgumentException.class,
+                                                    () -> OrderTransitions.next(OrderState.SHIPPED, event));
+                                            assertThrows(IllegalArgumentException.class,
+                                                    () -> OrderTransitions.next(OrderState.CANCELLED, event));
+                                        }
+                                    }
+
+                                    @Test void rejectsNullAndUndeclaredCombinations() {
+                                        assertThrows(IllegalArgumentException.class,
+                                                () -> OrderTransitions.next(null, OrderEvent.PAY));
+                                        assertThrows(IllegalArgumentException.class,
+                                                () -> OrderTransitions.next(OrderState.NEW, null));
+                                        assertThrows(IllegalArgumentException.class,
+                                                () -> OrderTransitions.next(OrderState.NEW, OrderEvent.SHIP));
+                                    }
+                                }
+                                """),
+                Map.of("src/test/java/eval/OrderTransitionsHiddenTest.java", """
+                        package eval;
+
+                        import org.junit.jupiter.api.Test;
+                        import static org.junit.jupiter.api.Assertions.*;
+
+                        class OrderTransitionsHiddenTest {
+                            @Test void paidCannotBePaidAgain() {
+                                assertThrows(IllegalArgumentException.class,
+                                        () -> OrderTransitions.next(OrderState.PAID, OrderEvent.PAY));
+                            }
+                        }
+                        """),
+                Set.of("src/main/java/eval/OrderTransitions.java"));
+    }
+
     private static ChangeSpecEvaluationCase workspacePath() {
         return evaluationCase(
                 "workspace-path-safety",
@@ -613,6 +973,186 @@ final class ChangeSpecEvaluationCatalog {
                 Set.of("src/main/java/eval/OperationResult.java"));
     }
 
+    private static ChangeSpecEvaluationCase secretRedactor() {
+        return evaluationCase(
+                "secret-redactor",
+                ChangeSpecEvaluationTier.HIGH_RISK,
+                """
+                加固 SecretRedactor.redact(String input) 的日志脱敏：
+                1. null 返回空字符串，普通文本原样返回；
+                2. 查询式 token= 和 api_key= 的值替换为 ***，键名匹配忽略大小写并保留键名；
+                3. Bearer 凭据替换为 Bearer ***，scheme 匹配忽略大小写；
+                4. 不得误伤 monkey、tokenized 等普通单词，不解析 JSON 或改变其他文本；
+                5. 只允许修改 src/main/java/eval/SecretRedactor.java，不得修改测试和 pom.xml；
+                6. 公开验证命令必须使用：mvn -q -DskipTests=false test。
+                """,
+                List.of(
+                        "null 与普通文本安全返回",
+                        "token 和 api_key 查询值按键边界脱敏",
+                        "Bearer 凭据忽略 scheme 大小写脱敏",
+                        "不误伤包含敏感词片段的普通单词"),
+                Map.of(
+                        "pom.xml", fixturePom(),
+                        "src/main/java/eval/SecretRedactor.java", """
+                                package eval;
+
+                                public final class SecretRedactor {
+                                    private SecretRedactor() { }
+                                    public static String redact(String input) {
+                                        return input;
+                                    }
+                                }
+                                """,
+                        "src/test/java/eval/SecretRedactorVisibleTest.java", """
+                                package eval;
+
+                                import org.junit.jupiter.api.Test;
+                                import static org.junit.jupiter.api.Assertions.*;
+
+                                class SecretRedactorVisibleTest {
+                                    @Test void handlesNullAndBenignText() {
+                                        assertEquals("", SecretRedactor.redact(null));
+                                        assertEquals("request completed", SecretRedactor.redact("request completed"));
+                                    }
+
+                                    @Test void redactsQueryStyleSecretsCaseInsensitively() {
+                                        assertEquals("url?token=***&API_KEY=***&page=1",
+                                                SecretRedactor.redact(
+                                                        "url?token=abc123&API_KEY=top-secret&page=1"));
+                                    }
+
+                                    @Test void redactsBearerCredentials() {
+                                        assertEquals("Authorization: Bearer ***",
+                                                SecretRedactor.redact("Authorization: bearer abc.DEF-123"));
+                                    }
+
+                                    @Test void preservesWordsContainingSensitiveFragments() {
+                                        assertEquals("monkey tokenized api_keys",
+                                                SecretRedactor.redact("monkey tokenized api_keys"));
+                                    }
+                                }
+                                """),
+                Map.of("src/test/java/eval/SecretRedactorHiddenTest.java", """
+                        package eval;
+
+                        import org.junit.jupiter.api.Test;
+                        import static org.junit.jupiter.api.Assertions.*;
+
+                        class SecretRedactorHiddenTest {
+                            @Test void stopsQuerySecretAtWhitespaceOrAmpersand() {
+                                assertEquals("token=*** next api_key=***&safe=yes",
+                                        SecretRedactor.redact(
+                                                "token=first next api_key=second&safe=yes"));
+                            }
+
+                            @Test void leavesJsonUntouchedAsDeclaredNonGoal() {
+                                assertEquals("{\\\"token\\\":\\\"plain\\\"}",
+                                        SecretRedactor.redact("{\\\"token\\\":\\\"plain\\\"}"));
+                            }
+                        }
+                        """),
+                Set.of("src/main/java/eval/SecretRedactor.java"));
+    }
+
+    private static ChangeSpecEvaluationCase tokenExpiryPolicy() {
+        return evaluationCase(
+                "token-expiry-cross-file",
+                ChangeSpecEvaluationTier.HIGH_RISK,
+                """
+                完成 TokenClaims 与 TokenPolicy 的跨文件过期策略：
+                1. 保留 TokenClaims(long expiresAtEpochSecond) 构造器和 expiresAtEpochSecond()；
+                2. 为 TokenClaims 新增 isExpired(long nowEpochSecond)，expiresAt <= now 时为过期；
+                3. TokenPolicy.isUsable(TokenClaims claims, long nowEpochSecond, long skewSeconds) 在 claims 非空、skew 非负且 token 在 now+skew 后仍有效时返回 true；
+                4. now+skew 必须防 long 溢出，溢出视为已过期；
+                5. 只允许修改 src/main/java/eval/TokenClaims.java 和 src/main/java/eval/TokenPolicy.java，不得修改测试和 pom.xml；
+                6. 公开验证命令必须使用：mvn -q -DskipTests=false test。
+                """,
+                List.of(
+                        "保留 TokenClaims 构造器与 expiresAtEpochSecond()",
+                        "TokenClaims.isExpired 使用 expiresAt <= now 边界",
+                        "TokenPolicy 校验 null、负 skew 和提前量后的有效性",
+                        "now+skew 溢出时安全判为不可用"),
+                Map.of(
+                        "pom.xml", fixturePom(),
+                        "src/main/java/eval/TokenClaims.java", """
+                                package eval;
+
+                                public final class TokenClaims {
+                                    private final long expiresAtEpochSecond;
+                                    public TokenClaims(long expiresAtEpochSecond) {
+                                        this.expiresAtEpochSecond = expiresAtEpochSecond;
+                                    }
+                                    public long expiresAtEpochSecond() { return expiresAtEpochSecond; }
+                                }
+                                """,
+                        "src/main/java/eval/TokenPolicy.java", """
+                                package eval;
+
+                                public final class TokenPolicy {
+                                    private TokenPolicy() { }
+                                    public static boolean isUsable(
+                                            TokenClaims claims, long nowEpochSecond, long skewSeconds) {
+                                        return claims.expiresAtEpochSecond() >= nowEpochSecond + skewSeconds;
+                                    }
+                                }
+                                """,
+                        "src/test/java/eval/TokenPolicyVisibleTest.java", """
+                                package eval;
+
+                                import org.junit.jupiter.api.Test;
+                                import static org.junit.jupiter.api.Assertions.*;
+
+                                class TokenPolicyVisibleTest {
+                                    @Test void preservesClaimsApi() {
+                                        TokenClaims claims = new TokenClaims(120);
+                                        assertEquals(120, claims.expiresAtEpochSecond());
+                                    }
+
+                                    @Test void claimsExpiryUsesInclusiveBoundary() {
+                                        TokenClaims claims = new TokenClaims(120);
+                                        assertFalse(claims.isExpired(119));
+                                        assertTrue(claims.isExpired(120));
+                                        assertTrue(claims.isExpired(121));
+                                    }
+
+                                    @Test void policyValidatesInputsAndSkew() {
+                                        assertThrows(IllegalArgumentException.class,
+                                                () -> TokenPolicy.isUsable(null, 100, 0));
+                                        assertThrows(IllegalArgumentException.class,
+                                                () -> TokenPolicy.isUsable(new TokenClaims(120), 100, -1));
+                                        assertTrue(TokenPolicy.isUsable(new TokenClaims(121), 100, 20));
+                                        assertFalse(TokenPolicy.isUsable(new TokenClaims(120), 100, 20));
+                                    }
+
+                                    @Test void overflowIsNotUsable() {
+                                        assertFalse(TokenPolicy.isUsable(
+                                                new TokenClaims(Long.MAX_VALUE), Long.MAX_VALUE - 5, 10));
+                                    }
+                                }
+                                """),
+                Map.of("src/test/java/eval/TokenPolicyHiddenTest.java", """
+                        package eval;
+
+                        import org.junit.jupiter.api.Test;
+                        import static org.junit.jupiter.api.Assertions.*;
+
+                        class TokenPolicyHiddenTest {
+                            @Test void zeroSkewDelegatesToClaimsBoundary() {
+                                assertTrue(TokenPolicy.isUsable(new TokenClaims(101), 100, 0));
+                                assertFalse(TokenPolicy.isUsable(new TokenClaims(100), 100, 0));
+                            }
+
+                            @Test void handlesLargeButSafeSkew() {
+                                assertTrue(TokenPolicy.isUsable(
+                                        new TokenClaims(Long.MAX_VALUE), Long.MAX_VALUE - 10, 5));
+                            }
+                        }
+                        """),
+                Set.of(
+                        "src/main/java/eval/TokenClaims.java",
+                        "src/main/java/eval/TokenPolicy.java"));
+    }
+
     private static ChangeSpecEvaluationCase evaluationCase(
             String id,
             ChangeSpecEvaluationTier tier,
@@ -656,9 +1196,9 @@ final class ChangeSpecEvaluationCatalog {
         return List.of("sh", "-lc", PUBLIC_VERIFIER);
     }
 
-    /** 仅供确定性基础设施测试证明六个 fixture 存在可通过公开和隐藏 Oracle 的实现。 */
+    /** 仅供确定性基础设施测试证明十二个 fixture 存在可通过公开和隐藏 Oracle 的实现。 */
     static Map<String, Map<String, String>> referenceSolutions() {
-        return Map.of(
+        Map<String, Map<String, String>> solutions = new LinkedHashMap<>(Map.of(
                 "safe-divider", Map.of("src/main/java/eval/SafeDivider.java", """
                         package eval;
                         import java.util.OptionalInt;
@@ -773,7 +1313,211 @@ final class ChangeSpecEvaluationCatalog {
                             public String errorCode() { return errorCode; }
                             public boolean isSuccess() { return error == null; }
                         }
+                        """)));
+        solutions.put("email-canonicalizer", Map.of(
+                "src/main/java/eval/EmailCanonicalizer.java", """
+                        package eval;
+                        import java.util.Locale;
+                        import java.util.Optional;
+                        public final class EmailCanonicalizer {
+                            private EmailCanonicalizer() { }
+                            public static Optional<String> canonicalize(String input) {
+                                if (input == null || input.isBlank()) return Optional.empty();
+                                String value = input.strip().toLowerCase(Locale.ROOT);
+                                int separator = value.indexOf('@');
+                                if (separator <= 0
+                                        || separator != value.lastIndexOf('@')
+                                        || separator == value.length() - 1) {
+                                    return Optional.empty();
+                                }
+                                return Optional.of(value);
+                            }
+                        }
                         """));
+        solutions.put("inclusive-clamp", Map.of(
+                "src/main/java/eval/IntClamp.java", """
+                        package eval;
+                        public final class IntClamp {
+                            private IntClamp() { }
+                            public static int clamp(int value, int minimum, int maximum) {
+                                if (minimum > maximum) throw new IllegalArgumentException("inverted interval");
+                                if (value < minimum) return minimum;
+                                if (value > maximum) return maximum;
+                                return value;
+                            }
+                        }
+                        """));
+        solutions.put("feature-flag-precedence", Map.of(
+                "src/main/java/eval/FeatureFlagConfig.java", """
+                        package eval;
+                        import java.util.Locale;
+                        import java.util.Map;
+                        import java.util.Properties;
+                        public final class FeatureFlagConfig {
+                            private final boolean enabled;
+                            private FeatureFlagConfig(boolean enabled) { this.enabled = enabled; }
+                            public boolean enabled() { return enabled; }
+                            public static FeatureFlagConfig load(
+                                    Map<String, String> env, Properties properties) {
+                                String raw = properties.getProperty("paicli.feature.preview");
+                                if (raw == null) raw = env.get("PAICLI_FEATURE_PREVIEW");
+                                if (raw == null) raw = env.get("PAI_FEATURE_PREVIEW");
+                                if (raw == null) return new FeatureFlagConfig(false);
+                                return switch (raw.toLowerCase(Locale.ROOT)) {
+                                    case "true" -> new FeatureFlagConfig(true);
+                                    case "false" -> new FeatureFlagConfig(false);
+                                    default -> throw new IllegalArgumentException("feature flag must be true or false");
+                                };
+                            }
+                        }
+                        """));
+        solutions.put("order-state-machine", Map.of(
+                "src/main/java/eval/OrderTransitions.java", """
+                        package eval;
+                        public final class OrderTransitions {
+                            private OrderTransitions() { }
+                            public static OrderState next(OrderState current, OrderEvent event) {
+                                if (current == null || event == null) {
+                                    throw new IllegalArgumentException("state and event are required");
+                                }
+                                if (current == OrderState.NEW && event == OrderEvent.PAY) return OrderState.PAID;
+                                if (current == OrderState.NEW && event == OrderEvent.CANCEL) {
+                                    return OrderState.CANCELLED;
+                                }
+                                if (current == OrderState.PAID && event == OrderEvent.SHIP) return OrderState.SHIPPED;
+                                if (current == OrderState.PAID && event == OrderEvent.CANCEL) {
+                                    return OrderState.CANCELLED;
+                                }
+                                throw new IllegalArgumentException("transition is not allowed");
+                            }
+                        }
+                        """));
+        solutions.put("secret-redactor", Map.of(
+                "src/main/java/eval/SecretRedactor.java", """
+                        package eval;
+                        public final class SecretRedactor {
+                            private SecretRedactor() { }
+                            public static String redact(String input) {
+                                if (input == null) return "";
+                                String queryRedacted = input.replaceAll(
+                                        "(?i)(\\\\b(?:token|api_key)=)[^&\\\\s]*", "$1***");
+                                return queryRedacted.replaceAll(
+                                        "(?i)\\\\bBearer\\\\s+[A-Za-z0-9._~-]+", "Bearer ***");
+                            }
+                        }
+                        """));
+        solutions.put("token-expiry-cross-file", Map.of(
+                "src/main/java/eval/TokenClaims.java", """
+                        package eval;
+                        public final class TokenClaims {
+                            private final long expiresAtEpochSecond;
+                            public TokenClaims(long expiresAtEpochSecond) {
+                                this.expiresAtEpochSecond = expiresAtEpochSecond;
+                            }
+                            public long expiresAtEpochSecond() { return expiresAtEpochSecond; }
+                            public boolean isExpired(long nowEpochSecond) {
+                                return expiresAtEpochSecond <= nowEpochSecond;
+                            }
+                        }
+                        """,
+                "src/main/java/eval/TokenPolicy.java", """
+                        package eval;
+                        public final class TokenPolicy {
+                            private TokenPolicy() { }
+                            public static boolean isUsable(
+                                    TokenClaims claims, long nowEpochSecond, long skewSeconds) {
+                                if (claims == null) throw new IllegalArgumentException("claims are required");
+                                if (skewSeconds < 0) throw new IllegalArgumentException("skew must not be negative");
+                                if (nowEpochSecond > Long.MAX_VALUE - skewSeconds) return false;
+                                return !claims.isExpired(nowEpochSecond + skewSeconds);
+                            }
+                        }
+                        """));
+        return Map.copyOf(solutions);
+    }
+
+    static List<PublicEvidenceMutation> publicEvidenceMutations() {
+        return List.of(
+                new PublicEvidenceMutation(
+                        "safe-divider",
+                        "src/main/java/eval/SafeDivider.java",
+                        "return divisor == 0 ? OptionalInt.empty() : OptionalInt.of(dividend / divisor);",
+                        "return OptionalInt.empty();"),
+                new PublicEvidenceMutation(
+                        "ascii-slugifier",
+                        "src/main/java/eval/Slugifier.java",
+                        "return out.toString();",
+                        "return value;"),
+                new PublicEvidenceMutation(
+                        "email-canonicalizer",
+                        "src/main/java/eval/EmailCanonicalizer.java",
+                        "|| separator != value.lastIndexOf('@')",
+                        ""),
+                new PublicEvidenceMutation(
+                        "inclusive-clamp",
+                        "src/main/java/eval/IntClamp.java",
+                        "if (minimum > maximum) throw new IllegalArgumentException(\"inverted interval\");",
+                        ""),
+                new PublicEvidenceMutation(
+                        "login-retry-policy",
+                        "src/main/java/eval/LoginRetrier.java",
+                        "retries >= 3",
+                        "retries >= 4"),
+                new PublicEvidenceMutation(
+                        "timeout-config-compat",
+                        "src/main/java/eval/TimeoutConfig.java",
+                        "String raw = properties.getProperty(\"paicli.timeout.ms\");",
+                        "String raw = env.get(\"PAICLI_TIMEOUT_MS\");"),
+                new PublicEvidenceMutation(
+                        "feature-flag-precedence",
+                        "src/main/java/eval/FeatureFlagConfig.java",
+                        "default -> throw new IllegalArgumentException(\"feature flag must be true or false\");",
+                        "default -> new FeatureFlagConfig(false);"),
+                new PublicEvidenceMutation(
+                        "order-state-machine",
+                        "src/main/java/eval/OrderTransitions.java",
+                        "throw new IllegalArgumentException(\"transition is not allowed\");",
+                        "return current;"),
+                new PublicEvidenceMutation(
+                        "workspace-path-safety",
+                        "src/main/java/eval/WorkspacePath.java",
+                        "if (!resolved.startsWith(normalizedRoot)) throw new IllegalArgumentException(\"escape\");",
+                        ""),
+                new PublicEvidenceMutation(
+                        "operation-result-api-compat",
+                        "src/main/java/eval/OperationResult.java",
+                        "this.errorCode = errorCode == null ? \"\" : errorCode;",
+                        "this.errorCode = \"\";"),
+                new PublicEvidenceMutation(
+                        "secret-redactor",
+                        "src/main/java/eval/SecretRedactor.java",
+                        "api_key",
+                        "api-key"),
+                new PublicEvidenceMutation(
+                        "token-expiry-cross-file",
+                        "src/main/java/eval/TokenPolicy.java",
+                        "if (nowEpochSecond > Long.MAX_VALUE - skewSeconds) return false;",
+                        ""));
+    }
+
+    record PublicEvidenceMutation(
+            String caseId,
+            String relativePath,
+            String target,
+            String replacement
+    ) {
+        Map<String, String> apply(Map<String, String> referenceSolution) {
+            String source = referenceSolution.get(relativePath);
+            if (source == null || !source.contains(target)) {
+                throw new IllegalArgumentException("Mutation target 不存在: " + caseId + " / " + relativePath);
+            }
+            if (source.indexOf(target) != source.lastIndexOf(target)) {
+                throw new IllegalArgumentException("Mutation target 不唯一: " + caseId + " / " + relativePath);
+            }
+            Map<String, String> mutated = new LinkedHashMap<>(referenceSolution);
+            mutated.put(relativePath, source.replace(target, replacement));
+            return Map.copyOf(mutated);
+        }
     }
 
     private static String fixturePom() {

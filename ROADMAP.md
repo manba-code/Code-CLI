@@ -605,9 +605,9 @@
 
 ## ChangeSpec V1 — Spec-to-Evidence 闭环（进行中）
 
-**当前已完成前六条产品切片和第七条评测基础设施**：产品链路已覆盖领域模型/Codec/校验/Digest、Draft/确认、锁定/ReAct、Workspace/Verifier、Criterion/Verdict/持久化和最多一次 Evidence 驱动修复；评测侧已提供 6 个分层 fixture、A/B/C 配对运行、首次候选快照、隐藏 Oracle、独立 `change-spec-eval` Profile，以及四态分维度结论、A→B/B→C/A→C 作用拆分、95% 区间、修复机会分母、客观正确/可信决策/失败实际/惩罚 TTA 和 ReAct LLM/工具批次墙钟拆分。生产默认修复行为不变，B 组只在评测运行中显式关闭修复。
+**当前已完成前六条产品切片和第七条评测基础设施**：产品链路已覆盖领域模型/Codec/校验/Digest、Draft/确认、锁定/ReAct、Workspace/Verifier、Criterion/Verdict/持久化和最多一次 Evidence 驱动修复；评测侧已提供 12 个分层 fixture（每层 4 个）、逐项公开证据契约和每任务一个确定性单点突变，以及 A/B/C 配对运行、首次候选快照、隐藏 Oracle、独立 `change-spec-eval` Profile、四态分维度结论、A→B/B→C/A→C 作用拆分、95% 区间、修复机会分母、客观正确/可信决策/失败实际/惩罚 TTA 和 ReAct LLM/工具批次墙钟拆分。生产默认修复行为不变，B 组只在评测运行中显式关闭修复。
 
-**下一步**：扩展到 12～15 个包含歧义需求、跨文件约束和确定性错误候选/变异的任务，并设计包含确认、HITL、复核与返工的真人总人时实验。六个现有 fixture 已补逐项公开证据契约和最低测试数校验；这改变了历史 Pilot 使用的公开测试与 Draft 资格条件，后续真实结果必须建立新版基线。DeepSeek 代表性小样已完成但完整复跑未获授权；自动 Pilot 的人工总投入为 `NOT_MEASURED`，只限制人工效率结论，不抹去已测得的技术质量或自动时间结论。
+**下一步**：在不启动未授权付费评测的前提下归因 Quick 历史失败，并设计包含确认、HITL、复核与返工的真人总人时实验；任务集仍可继续补充专门的歧义澄清场景。12 个现有 fixture 已覆盖显式非目标、兼容性、安全边界、状态转换和跨文件约束，并补齐公开证据下限与单点突变；这改变了历史 Pilot 的任务、公开测试与 Draft 资格条件，后续真实结果必须建立新版基线。DeepSeek 代表性小样已完成但任何新的完整复跑均未获授权；自动 Pilot 的人工总投入为 `NOT_MEASURED`，只限制人工效率结论，不抹去已测得的技术质量或自动时间结论。
 
 详细设计与完成定义见 `docs/change-spec-v1-rfc.md`。
 

@@ -1,7 +1,7 @@
 # ChangeSpec 任务状态
 
 > 更新时间：2026-08-23
-> 当前状态：前六条垂直切片已完成；第七条切片的首次 Pilot 修复、GLM 同模型代表性小样和完整 36 次复跑均已完成。`glm-4.6v-flashx` 完整复跑 A/B/C 成功率为 58.33%/41.67%/41.67%；`deepseek-v4-pro-0813` 的冻结三任务小样 A/B/C 均为 100%，出现成功率天花板且 C 没有修复机会。新报告已改为四态分维度结论，当前证据证明模型/API 组合影响显著，但既不能用 GLM 单模型结果否定 ChangeSpec，也不能用 DeepSeek 饱和小样证明增量提效。
+> 当前状态：前六条垂直切片已完成；第七条切片的首次 Pilot 修复、GLM 同模型代表性小样和完整 36 次复跑均已完成。评测目录已扩展到 12 个任务（每层 4 个），每个任务都有逐项公开证据契约和一个确定性单点错误突变。`glm-4.6v-flashx` 历史完整复跑 A/B/C 成功率为 58.33%/41.67%/41.67%；`deepseek-v4-pro-0813` 的历史冻结三任务小样 A/B/C 均为 100%。两者均早于本次任务目录与证据加固，不能直接与未来新版基线比较；任何新的完整付费评测均未获授权。
 > 事实来源：当前工作区代码、`git status`、`git diff`、Maven/Surefire 测试结果，以及 `docs/change-spec-v1-rfc.md`。不能由这些材料证明的内容单独标为“尚未确认”。
 
 ## 1. 当前目标
@@ -22,7 +22,7 @@ PaiCLI 的 ChangeSpec 是可选的 Spec-Driven Code Change 契约层：把自然
 - 独立 `change-spec-eval` Maven Profile，不改变原 ReAct/Plan/Team 的 `agent-eval`；
 - A=普通 ReAct、B=ChangeSpec 完整验收但关闭修复、C=ChangeSpec 完整验收并允许一次修复；
 - 每个“任务 × 重复轮次”的 B/C 共用同一份锁定 ChangeSpec document/digest；
-- 2 个小型、2 个中型、2 个高风险隔离 Java fixture；
+- 4 个小型、4 个中型、4 个高风险隔离 Java fixture；
 - 首次候选快照、公开 Verifier、隐藏 Oracle、Scope 白名单和最终报告；
 - `task_success_rate`、`first_pass_success_rate`、完成声明覆盖率、声明内/全运行虚假率、Scope、修复机会/条件成功率、四类时间口径、Token、平均产品成本和单位成功成本；
 - 报告使用 `PASS / FAIL / NOT_EVALUABLE / NOT_MEASURED`，显示成功率 95% Wilson 区间和 A→B/B→C/A→C 配对胜/负/平，不再输出单一“有价值/无价值”总分；
@@ -31,7 +31,7 @@ PaiCLI 的 ChangeSpec 是可选的 Spec-Driven Code Change 契约层：把自然
 - Codec 拒绝仅用 `path_scope` 证明 behavior 等非 scope deterministic Criterion；评测配对 Draft 还必须精确命中任务允许的 command，并让每条非 scope deterministic Criterion 引用允许的 command，否则按 `DRAFT_INVALID` 保存诊断且不进入 B/C。
 - 修复输入携带首次 changed-files 数量；首次零改动时要求实际使用工具修改，不能只描述计划。评测报告以 `NO_CHANGE_COMPLETION` 标记完整结束、隐藏任务失败且零改动的 Spec Run，不改变生产 Verdict。
 - 评测语义资格失败会进入 Draft Generator 既有的最多两次纠错链路；最终仍无效才保存 `DRAFT_INVALID`。
-- 六个 fixture 按需求语义声明 2～4 项公开证据契约，公开测试按证据项拆分；Draft command 的命令、JUnit glob、`minimum_tests` 下限和 Criterion 引用均在锁定前校验，报告显示执行测试数/任务下限。
+- 12 个 fixture 按需求语义声明逐项公开证据契约，公开测试按证据项拆分；Draft command 的命令、JUnit glob、`minimum_tests` 下限和 Criterion 引用均在锁定前校验，报告显示执行测试数/任务下限。每个 fixture 另有一个参考实现上的确定性单点错误突变，免费预检要求生产公开 Verifier 必须拒绝它。
 - 自动评测使用独立的 15 轮/250k Token ReAct 预算，生产 CLI 默认不变；停滞检测同时覆盖相同单步与两步工具周期。
 - 报告将产品耗时、客观正确候选 TTA、可信产品决策 TTA、失败实际耗时和惩罚 TTA 分列；B/C 产品耗时包含配对 Draft，成本币种可显式配置。
 - ReAct 内单独累计 LLM 请求等待墙钟与工具批次墙钟；失败模型请求仍计时，并行工具按 Agent 实际等待的整批时间统计，公开 Verifier 不混入工具批次列。
@@ -131,6 +131,9 @@ PaiCLI 的 ChangeSpec 是可选的 Spec-Driven Code Change 契约层：把自然
 - DeepSeek 冻结代表性小样报告位于 `target/change-spec-eval/2026-08-23T06-23-26.095442900Z-20260820/report.md`，SHA-256 `BC027951BE2DDA53E31727DBC071751F66CB025700F3649731FB8A6617721184`：A/B/C 均为 100%，B/C digest `3/3`，Scope 越界和虚假完成均为 0，C 修复次数为 0；后续 36 次未运行。
 - 评测结论口径、ReAct LLM/工具墙钟拆分与公开证据契约后的免费回归：`AgentBudgetTest,SpecDraftGeneratorTest,ChangeSpecEvaluationInfrastructureTest` 共 41 tests、0 failure、0 error、2 skipped；扩大 Spec/ChangeSpec 回归 83 tests、0 failure、0 error、3 skipped；显式 fixture 预检 21/21 通过六任务公开证据下限、隐藏 Oracle、Scope 和生产命令执行路径。`change-spec-eval` profile 以 `enabled=false` 验证为 1 skipped，未调用真实模型。
 - 公开证据加固修改了六个 fixture 的 visible tests 和 Draft `minimum_tests` 资格下限；历史 GLM/DeepSeek 报告继续归档，但后续付费结果必须建立新版基线，不能把差异直接归因给模型。
+- 任务扩展后的免费回归：`AgentBudgetTest,SpecDraftGeneratorTest,ChangeSpecEvaluationInfrastructureTest` 共 42 tests、0 failure、0 error、3 个慢 fixture 检查按预期 skipped；扩大 Spec/ChangeSpec 回归 84 tests、0 failure、0 error、4 个显式慢/付费项按预期 skipped。
+- 完整本地 fixture 预检 22/22 通过，0 failure、0 error、0 skipped，耗时约 6 分钟；12 个参考实现分别通过公开测试和隐藏 Oracle，12 个确定性单点错误突变分别被生产公开 Verifier 拒绝。
+- 本次目录扩展新增 `email-canonicalizer`、`inclusive-clamp`、`feature-flag-precedence`、`order-state-machine`、`secret-redactor` 和 `token-expiry-cross-file`，覆盖显式非目标、非法输入、兼容优先级、状态转换、安全脱敏和跨文件约束。默认完整评测规模因此变为 12×3×2=72 次产品运行；未运行任何真实模型。
 - 去除 B/C 产品行重复计入的配对 Draft 后，本轮实际 API 用量约 1,108,295 输入 Token、99,509 输出 Token，按本次 CNY 单价估算约 0.3155 元。最长 ReAct 阶段为 15 次；没有旧 Pilot 的 50 次循环长尾。
 
 ### Quick 已知基线
@@ -144,7 +147,7 @@ PaiCLI 的 ChangeSpec 是可选的 Spec-Driven Code Change 契约层：把自然
 ### 已验证的缺口
 
 - DeepSeek 代表性跨模型小样已完成，但每任务只重复一次且任务出现成功率天花板，仍不能给纯模型原因分配可信百分比，也不能判定 ChangeSpec 的增量成功或修复价值；
-- 现有六个 fixture 的公开证据覆盖已加固，但仍缺少确定性错误候选/变异来证明每个测试能杀死对应缺陷；
+- 12 个 fixture 的公开证据与单点突变均已通过免费预检，但仍缺少专门测量需求澄清价值的歧义任务，以及每组至少 3 次的新版真实模型基线；
 - LLM 请求墙钟仍把服务端推理、网络传输和流式接收合并在一起，不能进一步归因到 provider 内部阶段；
 - 完整 `total_human_effort` 尚未采集 Spec 确认、HITL、结果复核、返工和沟通时间；
 - V1 仍只支持 revision 1，不支持运行中修改锁定需求或恢复/重跑既有 Spec；
@@ -158,7 +161,7 @@ PaiCLI 的 ChangeSpec 是可选的 Spec-Driven Code Change 契约层：把自然
 
 ## 6. 下一阶段任务
 
-免费回归 → 原模型 3 个代表任务 × 1 次 → 原模型完整 36 次 → DeepSeek 冻结代表性 9 次小样均已完成并归档。下一阶段先完成新报告口径的免费回归、Verifier 证据覆盖审计和任务扩展设计；DeepSeek 36 次完整复跑未获授权，不得自动启动。详细边界见 [`docs/change-spec-pilot-remediation-checklist.md`](docs/change-spec-pilot-remediation-checklist.md)。
+历史免费回归 → 原模型 3 个代表任务 × 1 次 → 原模型完整 36 次 → DeepSeek 冻结代表性 9 次小样均已完成并归档；此后 12 任务目录、公开证据契约和确定性突变的免费验证也已完成。下一阶段仅继续 Quick 历史失败归因和真人总人时实验设计；12×3×2 的新版基线或 12×3×3 的正式研究均未获授权，不得自动启动。详细边界见 [`docs/change-spec-pilot-remediation-checklist.md`](docs/change-spec-pilot-remediation-checklist.md)。
 
 同模型代表性小样的完成证据：
 

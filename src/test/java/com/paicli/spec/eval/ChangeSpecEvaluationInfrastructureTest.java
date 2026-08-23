@@ -42,14 +42,19 @@ class ChangeSpecEvaluationInfrastructureTest {
     }
 
     @Test
-    void catalogContainsTwoCasesPerTierAndFixedVerifierCommand() {
+    void catalogContainsFourCasesPerTierAndFixedVerifierCommand() {
         List<ChangeSpecEvaluationCase> cases = ChangeSpecEvaluationCatalog.defaultCases();
 
-        assertEquals(6, cases.size());
+        assertEquals(12, cases.size());
         for (ChangeSpecEvaluationTier tier : ChangeSpecEvaluationTier.values()) {
-            assertEquals(2, cases.stream().filter(value -> value.tier() == tier).count());
+            assertEquals(4, cases.stream().filter(value -> value.tier() == tier).count());
         }
-        assertEquals(6, cases.stream().map(ChangeSpecEvaluationCase::id).collect(Collectors.toSet()).size());
+        assertEquals(12, cases.stream().map(ChangeSpecEvaluationCase::id).collect(Collectors.toSet()).size());
+        assertEquals(
+                cases.stream().map(ChangeSpecEvaluationCase::id).collect(Collectors.toSet()),
+                ChangeSpecEvaluationCatalog.publicEvidenceMutations().stream()
+                        .map(ChangeSpecEvaluationCatalog.PublicEvidenceMutation::caseId)
+                        .collect(Collectors.toSet()));
         assertTrue(cases.stream().allMatch(value -> value.isAllowedVerifierCommand(
                 ChangeSpecEvaluationCatalog.PUBLIC_VERIFIER)));
         assertTrue(cases.stream().noneMatch(value -> value.isAllowedVerifierCommand("mvn clean test")));
@@ -140,6 +145,35 @@ class ChangeSpecEvaluationInfrastructureTest {
             assertEquals(0, result.exitCode(), evaluationCase.id() + ": " + result.output());
             assertTrue(junitTestCount(workspace) >= evaluationCase.minimumPublicTests(),
                     evaluationCase.id() + " 未产出足够的公开 JUnit 证据");
+        }
+    }
+
+    @Test
+    @EnabledIfSystemProperty(named = "paicli.changeSpecEval.validateFixtures", matches = "true")
+    void publicVerifierRejectsOneDeterministicMutationPerFixture(@TempDir Path tempDir) throws Exception {
+        Map<String, Map<String, String>> solutions = ChangeSpecEvaluationCatalog.referenceSolutions();
+        ToolRegistry registry = new ToolRegistry();
+        for (ChangeSpecEvaluationCatalog.PublicEvidenceMutation mutation
+                : ChangeSpecEvaluationCatalog.publicEvidenceMutations()) {
+            ChangeSpecEvaluationCase evaluationCase = ChangeSpecEvaluationCatalog.defaultCases().stream()
+                    .filter(value -> value.id().equals(mutation.caseId()))
+                    .findFirst()
+                    .orElseThrow();
+            Path workspace = tempDir.resolve("mutation-" + evaluationCase.id());
+            evaluationCase.materialize(workspace);
+            Map<String, String> candidate = mutation.apply(solutions.get(evaluationCase.id()));
+            for (Map.Entry<String, String> entry : candidate.entrySet()) {
+                Files.writeString(workspace.resolve(entry.getKey()), entry.getValue());
+            }
+            registry.setProjectPath(workspace.toString());
+
+            CommandExecutionResult result = registry.executeCommandForVerification(
+                    ChangeSpecEvaluationCatalog.PUBLIC_VERIFIER);
+
+            assertEquals(CommandExecutionResult.Status.COMPLETED, result.status(),
+                    evaluationCase.id() + ": " + result.reason());
+            assertTrue(result.exitCode() != 0,
+                    evaluationCase.id() + " 的公开证据未拒绝确定性错误候选");
         }
     }
 
