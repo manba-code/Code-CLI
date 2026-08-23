@@ -32,6 +32,9 @@ final class ChangeSpecEvaluationCatalog {
                 3. 只允许修改 src/main/java/eval/SafeDivider.java，不得修改测试和 pom.xml；
                 4. 公开验证命令必须使用：mvn -q -DskipTests=false test。
                 """,
+                List.of(
+                        "divisor 为 0 时返回 OptionalInt.empty()",
+                        "非零 divisor 保持 Java 整数除法语义"),
                 Map.of(
                         "pom.xml", fixturePom(),
                         "src/main/java/eval/SafeDivider.java", """
@@ -56,6 +59,11 @@ final class ChangeSpecEvaluationCatalog {
                                 class SafeDividerVisibleTest {
                                     @Test void returnsEmptyForZero() {
                                         assertTrue(SafeDivider.divide(7, 0).isEmpty());
+                                    }
+
+                                    @Test void keepsIntegerDivisionForNonZeroDivisors() {
+                                        assertEquals(4, SafeDivider.divide(9, 2).orElseThrow());
+                                        assertEquals(-4, SafeDivider.divide(-9, 2).orElseThrow());
                                     }
                                 }
                                 """),
@@ -88,6 +96,11 @@ final class ChangeSpecEvaluationCatalog {
                 5. 只允许修改 src/main/java/eval/Slugifier.java，不得修改测试和 pom.xml；
                 6. 公开验证命令必须使用：mvn -q -DskipTests=false test。
                 """,
+                List.of(
+                        "null 或全空白输入返回空字符串",
+                        "使用 Locale.ROOT 转为小写",
+                        "连续非 ASCII 字母数字字符折叠为单个连字符",
+                        "删除结果首尾连字符"),
                 Map.of(
                         "pom.xml", fixturePom(),
                         "src/main/java/eval/Slugifier.java", """
@@ -104,11 +117,31 @@ final class ChangeSpecEvaluationCatalog {
                         "src/test/java/eval/SlugifierVisibleTest.java", """
                                 package eval;
 
+                                import java.util.Locale;
                                 import org.junit.jupiter.api.Test;
                                 import static org.junit.jupiter.api.Assertions.*;
 
                                 class SlugifierVisibleTest {
-                                    @Test void normalizesSimpleWords() {
+                                    @Test void returnsEmptyForNullAndBlank() {
+                                        assertEquals("", Slugifier.slugify(null));
+                                        assertEquals("", Slugifier.slugify("   "));
+                                    }
+
+                                    @Test void lowercasesWithLocaleRoot() {
+                                        Locale previous = Locale.getDefault();
+                                        try {
+                                            Locale.setDefault(Locale.forLanguageTag("tr"));
+                                            assertEquals("i", Slugifier.slugify("I"));
+                                        } finally {
+                                            Locale.setDefault(previous);
+                                        }
+                                    }
+
+                                    @Test void foldsSeparatorRuns() {
+                                        assertEquals("api-v2-guide", Slugifier.slugify("API___v2 / Guide"));
+                                    }
+
+                                    @Test void trimsLeadingAndTrailingSeparators() {
                                         assertEquals("hello-world", Slugifier.slugify("  Hello WORLD  "));
                                     }
                                 }
@@ -143,6 +176,11 @@ final class ChangeSpecEvaluationCatalog {
                 4. 只允许修改 src/main/java/eval/LoginRetrier.java，不得修改其他源码、测试和 pom.xml；
                 5. 公开验证命令必须使用：mvn -q -DskipTests=false test。
                 """,
+                List.of(
+                        "TIMEOUT 包含首次调用在内最多调用四次",
+                        "UNAUTHORIZED 和 SERVER_ERROR 不重试",
+                        "中途成功立即返回",
+                        "最终失败抛出最后一次 LoginFailure"),
                 Map.of(
                         "pom.xml", fixturePom(),
                         "src/main/java/eval/FailureKind.java", """
@@ -191,11 +229,18 @@ final class ChangeSpecEvaluationCatalog {
                                 import static org.junit.jupiter.api.Assertions.*;
 
                                 class LoginRetrierVisibleTest {
-                                    @Test void doesNotRetryUnauthorized() {
+                                    @Test void doesNotRetryNonTimeoutFailures() {
                                         AtomicInteger calls = new AtomicInteger();
                                         assertThrows(LoginFailure.class, () -> new LoginRetrier().execute(() -> {
                                             calls.incrementAndGet();
                                             throw new LoginFailure(FailureKind.UNAUTHORIZED, "denied");
+                                        }));
+                                        assertEquals(1, calls.get());
+
+                                        calls.set(0);
+                                        assertThrows(LoginFailure.class, () -> new LoginRetrier().execute(() -> {
+                                            calls.incrementAndGet();
+                                            throw new LoginFailure(FailureKind.SERVER_ERROR, "down");
                                         }));
                                         assertEquals(1, calls.get());
                                     }
@@ -210,6 +255,25 @@ final class ChangeSpecEvaluationCatalog {
                                         });
                                         assertEquals("ok", value);
                                         assertEquals(3, calls.get());
+                                    }
+
+                                    @Test void persistentTimeoutStopsAfterFourCalls() {
+                                        AtomicInteger calls = new AtomicInteger();
+                                        assertThrows(LoginFailure.class, () -> new LoginRetrier().execute(() -> {
+                                            calls.incrementAndGet();
+                                            throw new LoginFailure(FailureKind.TIMEOUT, "slow");
+                                        }));
+                                        assertEquals(4, calls.get());
+                                    }
+
+                                    @Test void finalFailureIsTheLastObservedFailure() {
+                                        AtomicInteger calls = new AtomicInteger();
+                                        LoginFailure failure = assertThrows(LoginFailure.class,
+                                                () -> new LoginRetrier().execute(() -> {
+                                                    int call = calls.incrementAndGet();
+                                                    throw new LoginFailure(FailureKind.TIMEOUT, "timeout-" + call);
+                                                }));
+                                        assertEquals("timeout-4", failure.getMessage());
                                     }
                                 }
                                 """),
@@ -258,6 +322,11 @@ final class ChangeSpecEvaluationCatalog {
                 5. 只允许修改 src/main/java/eval/TimeoutConfig.java，不得修改测试和 pom.xml；
                 6. 公开验证命令必须使用：mvn -q -DskipTests=false test。
                 """,
+                List.of(
+                        "系统属性、新环境变量、旧环境变量按顺序取值",
+                        "未配置时使用 3000",
+                        "只接受 100..60000 的整数",
+                        "保持 timeoutMillis() 公共方法可用"),
                 Map.of(
                         "pom.xml", fixturePom(),
                         "src/main/java/eval/TimeoutConfig.java", """
@@ -286,12 +355,39 @@ final class ChangeSpecEvaluationCatalog {
                                 import static org.junit.jupiter.api.Assertions.*;
 
                                 class TimeoutConfigVisibleTest {
-                                    @Test void propertyWinsAndDefaultIsStable() {
+                                    @Test void followsPropertyAndEnvironmentPrecedence() {
                                         Properties properties = new Properties();
                                         properties.setProperty("paicli.timeout.ms", "900");
                                         assertEquals(900, TimeoutConfig.load(
-                                                Map.of("PAICLI_TIMEOUT_MS", "800"), properties).timeoutMillis());
+                                                Map.of("PAICLI_TIMEOUT_MS", "800", "PAI_TIMEOUT_MS", "700"),
+                                                properties).timeoutMillis());
+                                        assertEquals(800, TimeoutConfig.load(
+                                                Map.of("PAICLI_TIMEOUT_MS", "800", "PAI_TIMEOUT_MS", "700"),
+                                                new Properties()).timeoutMillis());
+                                        assertEquals(700, TimeoutConfig.load(
+                                                Map.of("PAI_TIMEOUT_MS", "700"), new Properties()).timeoutMillis());
+                                    }
+
+                                    @Test void defaultIsStable() {
                                         assertEquals(3000, TimeoutConfig.load(Map.of(), new Properties()).timeoutMillis());
+                                    }
+
+                                    @Test void rejectsNonIntegerAndOutOfRangeValues() {
+                                        assertThrows(IllegalArgumentException.class,
+                                                () -> TimeoutConfig.load(
+                                                        Map.of("PAICLI_TIMEOUT_MS", "oops"), new Properties()));
+                                        assertThrows(IllegalArgumentException.class,
+                                                () -> TimeoutConfig.load(
+                                                        Map.of("PAICLI_TIMEOUT_MS", "99"), new Properties()));
+                                        assertThrows(IllegalArgumentException.class,
+                                                () -> TimeoutConfig.load(
+                                                        Map.of("PAICLI_TIMEOUT_MS", "60001"), new Properties()));
+                                    }
+
+                                    @Test void keepsTimeoutMillisAccessor() {
+                                        TimeoutConfig config = TimeoutConfig.load(
+                                                Map.of("PAICLI_TIMEOUT_MS", "1200"), new Properties());
+                                        assertEquals(1200, config.timeoutMillis());
                                     }
                                 }
                                 """),
@@ -336,6 +432,11 @@ final class ChangeSpecEvaluationCatalog {
                 5. 只允许修改 src/main/java/eval/WorkspacePath.java，不得修改测试和 pom.xml；
                 6. 公开验证命令必须使用：mvn -q -DskipTests=false test。
                 """,
+                List.of(
+                        "root 内相对路径解析为规范化绝对路径",
+                        "拒绝 null、空白、绝对路径和规范化逃逸",
+                        "所有拒绝统一抛 IllegalArgumentException",
+                        "目录边界使用 Path 语义而不是字符串前缀"),
                 Map.of(
                         "pom.xml", fixturePom(),
                         "src/main/java/eval/WorkspacePath.java", """
@@ -360,11 +461,33 @@ final class ChangeSpecEvaluationCatalog {
 
                                 class WorkspacePathVisibleTest {
                                     @TempDir Path root;
-                                    @Test void resolvesNestedPathAndRejectsTraversal() {
+
+                                    @Test void resolvesNestedPathToNormalizedAbsolutePath() {
                                         assertEquals(root.resolve("src/Main.java").toAbsolutePath().normalize(),
                                                 WorkspacePath.resolve(root, "src/Main.java"));
+                                    }
+
+                                    @Test void rejectsInvalidAndEscapingInputs() {
+                                        assertThrows(IllegalArgumentException.class,
+                                                () -> WorkspacePath.resolve(root, null));
+                                        assertThrows(IllegalArgumentException.class,
+                                                () -> WorkspacePath.resolve(root, "  "));
+                                        assertThrows(IllegalArgumentException.class,
+                                                () -> WorkspacePath.resolve(root, root.resolve("absolute.txt").toString()));
                                         assertThrows(IllegalArgumentException.class,
                                                 () -> WorkspacePath.resolve(root, "../outside.txt"));
+                                    }
+
+                                    @Test void rejectionUsesIllegalArgumentException() {
+                                        assertThrows(IllegalArgumentException.class,
+                                                () -> WorkspacePath.resolve(root, "a/../../outside.txt"));
+                                    }
+
+                                    @Test void siblingWithSharedStringPrefixIsOutsideRoot() {
+                                        Path sibling = root.resolveSibling(root.getFileName() + "-other");
+                                        Path relativeEscape = root.relativize(sibling.resolve("file.txt"));
+                                        assertThrows(IllegalArgumentException.class,
+                                                () -> WorkspacePath.resolve(root, relativeEscape.toString()));
                                     }
                                 }
                                 """),
@@ -404,6 +527,11 @@ final class ChangeSpecEvaluationCatalog {
                 5. 只允许修改 src/main/java/eval/OperationResult.java，不得修改测试和 pom.xml；
                 6. 公开验证命令必须使用：mvn -q -DskipTests=false test。
                 """,
+                List.of(
+                        "保留旧构造器和 value/error/isSuccess API",
+                        "新增三参数构造器",
+                        "errorCode() 对旧构造器和 success() 返回空字符串",
+                        "failure(message, errorCode) 保留失败消息和错误码"),
                 Map.of(
                         "pom.xml", fixturePom(),
                         "src/main/java/eval/OperationResult.java", """
@@ -434,7 +562,24 @@ final class ChangeSpecEvaluationCatalog {
                                 import static org.junit.jupiter.api.Assertions.*;
 
                                 class OperationResultVisibleTest {
-                                    @Test void exposesNewErrorCodeApi() {
+                                    @Test void preservesOldConstructorAndAccessors() {
+                                        OperationResult<Integer> old = new OperationResult<>(null, "old-error");
+                                        assertFalse(old.isSuccess());
+                                        assertEquals("old-error", old.error());
+                                        assertNull(old.value());
+                                    }
+
+                                    @Test void supportsThreeArgumentConstructor() {
+                                        OperationResult<String> value = new OperationResult<>(null, "bad", "E-1");
+                                        assertEquals("E-1", value.errorCode());
+                                    }
+
+                                    @Test void oldConstructorAndSuccessUseEmptyErrorCode() {
+                                        assertEquals("", new OperationResult<>(null, "old-error").errorCode());
+                                        assertEquals("", OperationResult.success(42).errorCode());
+                                    }
+
+                                    @Test void failureFactoryPreservesMessageAndCode() {
                                         OperationResult<String> failed = OperationResult.failure("denied", "AUTH-403");
                                         assertFalse(failed.isSuccess());
                                         assertEquals("denied", failed.error());
@@ -472,21 +617,30 @@ final class ChangeSpecEvaluationCatalog {
             String id,
             ChangeSpecEvaluationTier tier,
             String task,
+            List<String> publicEvidenceRequirements,
             Map<String, String> visibleFiles,
             Map<String, String> hiddenFiles,
             Set<String> allowedChangedFiles
     ) {
         String includes = String.join(", ", allowedChangedFiles.stream().sorted().toList());
+        String evidence = publicEvidenceRequirements.stream()
+                .map(value -> "- " + value)
+                .reduce((first, second) -> first + "\n" + second)
+                .orElseThrow();
         String context = """
                 这是隔离的 Java 17 Maven 评测项目。ChangeSpec 必须使用 bounded scope，include 只能包含：%s。
                 pom.xml 和 src/test/** 必须排除。所有 Acceptance Criterion 必须是 deterministic；不要生成 Human Criterion。
-                command Verifier 必须原样使用 `%s`，JUnit glob 使用 target/surefire-reports/TEST-*.xml，minimum_tests 至少为 1。
-                """.formatted(includes, PUBLIC_VERIFIER);
+                command Verifier 必须原样使用 `%s`，JUnit glob 使用 target/surefire-reports/TEST-*.xml，minimum_tests 至少为 %d。
+                每条非 scope Criterion 必须引用该 command Verifier。公开测试对以下 %d 项证据负责：
+                %s
+                """.formatted(includes, PUBLIC_VERIFIER, publicEvidenceRequirements.size(),
+                publicEvidenceRequirements.size(), evidence);
         return new ChangeSpecEvaluationCase(
                 id,
                 tier,
                 task.strip(),
                 context.strip(),
+                publicEvidenceRequirements,
                 visibleFiles,
                 hiddenFiles,
                 allowedChangedFiles,

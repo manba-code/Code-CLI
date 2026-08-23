@@ -189,6 +189,8 @@ final class ChangeSpecEvaluationRunner {
                 product.publicVerificationMs(),
                 oracleDurationMs,
                 timeToAccepted,
+                mode.usesChangeSpec() ? evaluationCase.minimumPublicTests() : 0,
+                product.publicEvidenceExecutedTests(),
                 cost,
                 product.specDigest(),
                 detail,
@@ -225,6 +227,7 @@ final class ChangeSpecEvaluationRunner {
                 client.requestDurationMs(),
                 registry.batchDurationMs(),
                 0L,
+                0,
                 "",
                 snapshotError,
                 completed ? "" : result.response());
@@ -257,6 +260,7 @@ final class ChangeSpecEvaluationRunner {
                     0L,
                     0L,
                     0L,
+                    0,
                     "",
                     snapshotError,
                     pairedDraft == null ? "配对 Draft 缺失" : pairedDraft.error());
@@ -315,6 +319,7 @@ final class ChangeSpecEvaluationRunner {
                 client.requestDurationMs(),
                 registry.batchDurationMs(),
                 metrics.verificationMs(),
+                executedPublicTests(result),
                 result.identity() == null ? "" : result.identity().specDigest(),
                 snapshotError.get(),
                 result.detail());
@@ -382,6 +387,14 @@ final class ChangeSpecEvaluationRunner {
     private static SpecRunResult.LlmUsage usage(ChangeSpecEvaluationLlmClient client) {
         return new SpecRunResult.LlmUsage(
                 client.calls(), client.inputTokens(), client.outputTokens(), client.cachedInputTokens());
+    }
+
+    private static int executedPublicTests(SpecRunResult result) {
+        return result.verifierResults().stream()
+                .filter(value -> value.type() == com.paicli.spec.ChangeSpec.VerifierType.COMMAND)
+                .filter(value -> value.junitSummary() != null)
+                .mapToInt(value -> Math.max(0, value.junitSummary().executedTests()))
+                .sum();
     }
 
     private static String copyFirstPass(
@@ -461,6 +474,7 @@ final class ChangeSpecEvaluationRunner {
             long reactLlmRequestMs,
             long reactToolExecutionMs,
             long publicVerificationMs,
+            int publicEvidenceExecutedTests,
             String specDigest,
             String snapshotError,
             String error
@@ -474,6 +488,7 @@ final class ChangeSpecEvaluationRunner {
             reactLlmRequestMs = Math.max(0L, reactLlmRequestMs);
             reactToolExecutionMs = Math.max(0L, reactToolExecutionMs);
             publicVerificationMs = Math.max(0L, publicVerificationMs);
+            publicEvidenceExecutedTests = Math.max(0, publicEvidenceExecutedTests);
             specDigest = specDigest == null ? "" : specDigest;
             snapshotError = snapshotError == null ? "" : snapshotError;
             error = error == null ? "" : error;
@@ -481,7 +496,7 @@ final class ChangeSpecEvaluationRunner {
 
         static ProductExecution failed(SpecRunResult.LlmUsage usage, long durationMs, String error) {
             return new ProductExecution(false, false, "ERROR", false, false,
-                    0, usage, durationMs, 0L, durationMs, 0L, 0L, 0L, "", "", error);
+                    0, usage, durationMs, 0L, durationMs, 0L, 0L, 0L, 0, "", "", error);
         }
     }
 }

@@ -28,6 +28,8 @@ record ChangeSpecEvaluationResult(
         long publicVerificationMs,
         long hiddenOracleDurationMs,
         long penalizedTimeToAcceptedChangeMs,
+        int publicEvidenceMinimumTests,
+        int publicEvidenceExecutedTests,
         double estimatedCost,
         String specDigest,
         String detail,
@@ -44,6 +46,8 @@ record ChangeSpecEvaluationResult(
         publicVerificationMs = Math.max(0L, publicVerificationMs);
         hiddenOracleDurationMs = Math.max(0L, hiddenOracleDurationMs);
         penalizedTimeToAcceptedChangeMs = Math.max(0L, penalizedTimeToAcceptedChangeMs);
+        publicEvidenceMinimumTests = Math.max(0, publicEvidenceMinimumTests);
+        publicEvidenceExecutedTests = Math.max(0, publicEvidenceExecutedTests);
     }
 
     boolean falseCompletion() {
@@ -64,6 +68,12 @@ record ChangeSpecEvaluationResult(
 
     boolean repairEligible() {
         return mode == ChangeSpecEvaluationMode.SPEC_WITH_REPAIR && repairCount > 0;
+    }
+
+    boolean publicEvidenceSatisfied() {
+        return mode.usesChangeSpec()
+                && publicEvidenceMinimumTests > 0
+                && publicEvidenceExecutedTests >= publicEvidenceMinimumTests;
     }
 
     private static long saturatingAdd(long first, long second) {

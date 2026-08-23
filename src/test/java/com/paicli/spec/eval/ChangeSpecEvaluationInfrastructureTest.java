@@ -28,6 +28,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ChangeSpecEvaluationInfrastructureTest {
+    private static final Pattern JUNIT_TEST_COUNT = Pattern.compile(
+            "<testsuite\\b[^>]*\\btests=\"(\\d+)\"");
 
     @Test
     void evaluationModelOverrideOnlyMutatesInMemoryConfig() {
@@ -52,6 +54,16 @@ class ChangeSpecEvaluationInfrastructureTest {
                 ChangeSpecEvaluationCatalog.PUBLIC_VERIFIER)));
         assertTrue(cases.stream().noneMatch(value -> value.isAllowedVerifierCommand("mvn clean test")));
         assertTrue(cases.stream().allMatch(value -> value.draftContext().contains("deterministic")));
+        assertTrue(cases.stream().allMatch(value -> value.minimumPublicTests() >= 2));
+        assertTrue(cases.stream().allMatch(value -> value.draftContext().contains(
+                "minimum_tests 至少为 " + value.minimumPublicTests())));
+        for (ChangeSpecEvaluationCase evaluationCase : cases) {
+            long declaredTests = evaluationCase.visibleFiles().values().stream()
+                    .mapToLong(ChangeSpecEvaluationInfrastructureTest::countTestAnnotations)
+                    .sum();
+            assertEquals(evaluationCase.minimumPublicTests(), declaredTests,
+                    evaluationCase.id() + " 的公开测试数必须与证据契约一一对应");
+        }
     }
 
     @Test
@@ -61,6 +73,7 @@ class ChangeSpecEvaluationInfrastructureTest {
                 ChangeSpecEvaluationTier.SMALL,
                 "change allowed.txt",
                 "bounded deterministic",
+                List.of("java command exits successfully"),
                 Map.of("allowed.txt", "before", "protected.txt", "keep"),
                 Map.of("hidden.txt", "secret"),
                 Set.of("allowed.txt"),
@@ -109,21 +122,25 @@ class ChangeSpecEvaluationInfrastructureTest {
     @Test
     @EnabledIfSystemProperty(named = "paicli.changeSpecEval.validateFixtures", matches = "true")
     void publicVerifierRunsThroughProductionToolRegistryPath(@TempDir Path tempDir) throws Exception {
-        ChangeSpecEvaluationCase evaluationCase = ChangeSpecEvaluationCatalog.defaultCases().get(0);
-        Path workspace = tempDir.resolve(evaluationCase.id());
-        evaluationCase.materialize(workspace);
-        for (Map.Entry<String, String> entry
-                : ChangeSpecEvaluationCatalog.referenceSolutions().get(evaluationCase.id()).entrySet()) {
-            Files.writeString(workspace.resolve(entry.getKey()), entry.getValue());
-        }
         ToolRegistry registry = new ToolRegistry();
-        registry.setProjectPath(workspace.toString());
+        for (ChangeSpecEvaluationCase evaluationCase : ChangeSpecEvaluationCatalog.defaultCases()) {
+            Path workspace = tempDir.resolve("public-" + evaluationCase.id());
+            evaluationCase.materialize(workspace);
+            for (Map.Entry<String, String> entry
+                    : ChangeSpecEvaluationCatalog.referenceSolutions().get(evaluationCase.id()).entrySet()) {
+                Files.writeString(workspace.resolve(entry.getKey()), entry.getValue());
+            }
+            registry.setProjectPath(workspace.toString());
 
-        CommandExecutionResult result = registry.executeCommandForVerification(
-                ChangeSpecEvaluationCatalog.PUBLIC_VERIFIER);
+            CommandExecutionResult result = registry.executeCommandForVerification(
+                    ChangeSpecEvaluationCatalog.PUBLIC_VERIFIER);
 
-        assertEquals(CommandExecutionResult.Status.COMPLETED, result.status(), result.reason());
-        assertEquals(0, result.exitCode(), result.output());
+            assertEquals(CommandExecutionResult.Status.COMPLETED, result.status(),
+                    evaluationCase.id() + ": " + result.reason());
+            assertEquals(0, result.exitCode(), evaluationCase.id() + ": " + result.output());
+            assertTrue(junitTestCount(workspace) >= evaluationCase.minimumPublicTests(),
+                    evaluationCase.id() + " 未产出足够的公开 JUnit 证据");
+        }
     }
 
     @Test
@@ -147,6 +164,8 @@ class ChangeSpecEvaluationInfrastructureTest {
         assertTrue(report.contains("ReAct LLM 请求 P50"));
         assertTrue(report.contains("ReAct 工具批次墙钟 P50"));
         assertTrue(report.contains("并行批次按整批等待时间统计"));
+        assertTrue(report.contains("公开证据达标率"));
+        assertTrue(report.contains("公开证据(执行/下限)"));
     }
 
     @Test
@@ -317,7 +336,7 @@ class ChangeSpecEvaluationInfrastructureTest {
                 "NO_CHANGE_COMPLETION");
         String report = ChangeSpecEvaluationReport.toMarkdown(
                 List.of(classified), "stub", "stub-model", 7L, 1, 60_000L, false, "USD");
-        assertTrue(report.contains("| FAILED | NO_CHANGE_COMPLETION | YES | 1 |"), report);
+        assertTrue(report.contains("| FAILED | NO_CHANGE_COMPLETION | 2/2 | YES | 1 |"), report);
     }
 
     @Test
@@ -371,6 +390,24 @@ class ChangeSpecEvaluationInfrastructureTest {
         assertTrue(draft.available(), draft.error());
         assertEquals(1, stub.calls);
         assertTrue(draft.diagnosticFile() == null);
+    }
+
+    @Test
+    void pairedDraftRejectsVerifierBelowPublicEvidenceMinimum(@TempDir Path tempDir) {
+        EligibilityStubLlmClient stub = new EligibilityStubLlmClient(
+                1,
+                ChangeSpecEvaluationCatalog.PUBLIC_VERIFIER,
+                ChangeSpecEvaluationCatalog.PUBLIC_VERIFIER);
+        ChangeSpecEvaluationRunner runner = new ChangeSpecEvaluationRunner(
+                () -> stub, tempDir, 0d, 0d, 60_000L);
+
+        ChangeSpecPairedDraft draft = runner.preparePairedDraft(
+                ChangeSpecEvaluationCatalog.defaultCases().get(0), 7);
+
+        assertFalse(draft.available());
+        assertEquals(2, stub.calls);
+        assertTrue(draft.error().contains("expect.minimum_tests=1"), draft.error());
+        assertTrue(draft.error().contains("公开证据契约要求的 2"), draft.error());
     }
 
     private static ChangeSpecEvaluationResult result(
@@ -468,6 +505,8 @@ class ChangeSpecEvaluationInfrastructureTest {
                 mode.usesChangeSpec() ? 10L : 0L,
                 oracleDurationMs,
                 penalizedTtaMs,
+                mode.usesChangeSpec() ? 2 : 0,
+                mode.usesChangeSpec() ? 2 : 0,
                 0,
                 digest,
                 "detail",
@@ -504,10 +543,16 @@ class ChangeSpecEvaluationInfrastructureTest {
     private static final class EligibilityStubLlmClient implements LlmClient {
         private static final Pattern DRAFT_ID = Pattern.compile("CHANGE-\\d{8}-\\d{6}-\\d{3}");
         private final List<String> commands;
+        private final int minimumTests;
         private int calls;
 
         private EligibilityStubLlmClient(String... commands) {
+            this(2, commands);
+        }
+
+        private EligibilityStubLlmClient(int minimumTests, String... commands) {
             this.commands = List.of(commands);
+            this.minimumTests = minimumTests;
         }
 
         @Override
@@ -555,9 +600,10 @@ class ChangeSpecEvaluationInfrastructureTest {
                         expect:
                           exit_code: 0
                           junit_report_glob: target/surefire-reports/TEST-*.xml
-                          minimum_tests: 1
+                          minimum_tests: %d
                     ---
-                    """.formatted(matcher.group(), commands.get(Math.min(calls - 1, commands.size() - 1)));
+                    """.formatted(matcher.group(),
+                    commands.get(Math.min(calls - 1, commands.size() - 1)), minimumTests);
             return new ChatResponse("assistant", content, List.of(), 10, 10);
         }
 
@@ -574,5 +620,25 @@ class ChangeSpecEvaluationInfrastructureTest {
         String executable = System.getProperty("os.name", "").toLowerCase().contains("win")
                 ? "java.exe" : "java";
         return List.of(Path.of(System.getProperty("java.home"), "bin", executable).toString(), "-version");
+    }
+
+    private static long countTestAnnotations(String source) {
+        return Pattern.compile("@Test\\b").matcher(source).results().count();
+    }
+
+    private static long junitTestCount(Path workspace) throws Exception {
+        Path reports = workspace.resolve("target/surefire-reports");
+        if (!Files.isDirectory(reports)) return 0L;
+        long total = 0L;
+        try (var paths = Files.list(reports)) {
+            for (Path report : paths
+                    .filter(path -> path.getFileName().toString().startsWith("TEST-"))
+                    .filter(path -> path.getFileName().toString().endsWith(".xml"))
+                    .toList()) {
+                Matcher matcher = JUNIT_TEST_COUNT.matcher(Files.readString(report));
+                if (matcher.find()) total += Long.parseLong(matcher.group(1));
+            }
+        }
+        return total;
     }
 }

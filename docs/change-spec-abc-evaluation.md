@@ -51,7 +51,7 @@
 
 ## 4. 自动交互策略
 
-- 第一个同时通过结构和语义资格检查的配对 Draft 自动确认；结构或语义资格失败都进入 Draft Generator 最多两次生成的同一纠错链路；语义资格要求至少声明一个任务允许的完整 command，且每条非 scope deterministic Criterion 都引用至少一个允许的 command；
+- 第一个同时通过结构和语义资格检查的配对 Draft 自动确认；结构或语义资格失败都进入 Draft Generator 最多两次生成的同一纠错链路；语义资格要求 command、JUnit report glob 和任务最低公开测试数满足该 fixture 的证据契约，且每条非 scope deterministic Criterion 都引用至少一个合格 command；
 - 公开 Verifier 只有命令完全等于任务预声明命令时才执行，其他命令记为 `HITL_DENIED`；
 - fixture 位于隔离 workspace，Agent 继续受 PathGuard 和 CommandGuard 约束；
 - 自动评测不替代 Human Criterion：若 Draft 生成 Human Criterion，评测器选择 `SKIPPED`，最终通常为 `NEEDS_HUMAN`；
@@ -195,7 +195,7 @@ target/change-spec-eval/<run-id>/
 ```
 
 若两次 Draft 都未通过结构或评测语义资格校验，Codec 错误会指出 Jackson 能定位到的具体字段路径；结构通过但未满足
-任务命令白名单或 Criterion 引用规则时，错误也会反馈给第二次 Draft 纠错，最终仍不合格才按 `DRAFT_INVALID` 拒绝，不进入 B/C，也不产生配对 digest。
+任务 command、JUnit glob、最低公开测试数或 Criterion 引用规则时，错误也会反馈给第二次 Draft 纠错，最终仍不合格才按 `DRAFT_INVALID` 拒绝，不进入 B/C，也不产生配对 digest。
 `draft-attempts/<case>-r<repetition>.md` 保存每次校验错误和脱敏后的模型输出，单次输出最多
 保留 8 KiB，且不保存 system prompt、reasoning 或 API Key。`report.md` 会链接该诊断文件。
 
@@ -219,7 +219,8 @@ target/change-spec-eval/<run-id>/
 自动 Pilot 可以分别给出技术质量与自动时间结论；它无法测量 `total_human_effort`，因此该维度必须为 `NOT_MEASURED`。这不等于其他维度无价值，也不能据此宣称完整开发效率已经得到证明。
 
 配对 Draft 采用双层约束：产品 Codec 拒绝让非 scope deterministic Criterion 只引用 `path_scope`；
-评测资格检查再要求 command 精确命中任务允许列表，并校验每条非 scope deterministic Criterion 引用的
-至少一个 command 来自该允许列表。首次资格失败复用 Draft Generator 的唯一一次纠错机会；第二次仍失败才保存诊断。
+评测资格检查再要求 command 精确命中任务允许列表、JUnit glob 固定为 `target/surefire-reports/TEST-*.xml`、`minimum_tests` 达到 fixture 的逐项公开证据下限，并校验每条非 scope deterministic Criterion 引用至少一个合格 command。报告分列公开证据实际执行测试数/任务下限。首次资格失败复用 Draft Generator 的唯一一次纠错机会；第二次仍失败才保存诊断。
+
+六个现有 fixture 的公开测试已按 2～4 个证据项拆分，并由免费预检核对声明测试数、实际 JUnit 执行数和参考实现。此变更发生在历史 GLM/DeepSeek Pilot 之后，因此后续付费结果必须建立新版基线，不能直接把与旧报告的变化归因给模型。
 
 首次完整 Pilot、修复后的复跑结果与后续跨模型边界见 [ChangeSpec Pilot 修复与复跑清单](change-spec-pilot-remediation-checklist.md)。

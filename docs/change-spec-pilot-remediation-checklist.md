@@ -18,19 +18,19 @@
 
 ## 2. 免费验证
 
-- [x] ChangeSpec/预算/报告回归全部通过；四态结论、新时间口径和 ReAct LLM/工具墙钟拆分落地后的最新结果为 40 tests、0 failure、0 error、2 个 fixture 预检按开关跳过：
+- [x] ChangeSpec/预算/报告回归全部通过；四态结论、新时间口径、ReAct LLM/工具墙钟拆分和公开证据契约落地后的最新结果为 41 tests、0 failure、0 error、2 个 fixture 预检按开关跳过：
 
 ```powershell
 mvn test '-Dtest=AgentBudgetTest,SpecDraftGeneratorTest,ChangeSpecEvaluationInfrastructureTest' -DskipTests=false
 ```
 
-- [x] 六个 fixture 通过公开与隐藏 Oracle，并验证生产命令执行路径（含新增计时回归，最新 20/20，0 failure，0 error）：
+- [x] 六个 fixture 通过逐项公开证据下限与隐藏 Oracle，并验证生产命令执行路径（最新 21/21，0 failure，0 error）：
 
 ```powershell
 mvn test -Dtest=ChangeSpecEvaluationInfrastructureTest '-Dpaicli.changeSpecEval.validateFixtures=true' -DskipTests=false
 ```
 
-- [x] 扩大免费回归：`mvn test '-Dtest=Spec*Test,ChangeSpec*Test' -DskipTests=false`，最新 82 tests、0 failure、0 error、3 个显式评测项按预期跳过。不要把仓库既有 Quick 红灯混成这批修复的回归。
+- [x] 扩大免费回归：`mvn test '-Dtest=Spec*Test,ChangeSpec*Test' -DskipTests=false`，最新 83 tests、0 failure、0 error、3 个显式评测项按预期跳过。不要把仓库既有 Quick 红灯混成这批修复的回归。
 
 ## 3. 同模型代表性小样本（已完成，9 次产品运行）
 
@@ -76,10 +76,12 @@ mvn test -Pchange-spec-eval '-Dpaicli.changeSpecEval.provider=glm' '-Dpaicli.cha
 - [x] 时间指标分为客观正确候选 TTA、可信产品决策 TTA、失败实际耗时和惩罚 TTA；固定 `600s` 明确只是历史失败惩罚，不再称为实际失败耗时或严格删失时间。
 - [x] 报告增加 Draft、ReAct、公开 Verifier、隐藏 Oracle 分段 P50、成功率 95% Wilson 区间和单位成功成本。
 - [x] ReAct 内增加 LLM 请求与工具批次各自的墙钟采集；失败模型请求仍计时，并行工具按整批等待时间统计，公开 Verifier 继续单列。LLM 请求内部的服务端推理、网络和流式接收仍无法再拆分。
-- [ ] 审计公开 Verifier 对每条 Criterion 的证据覆盖强度；“一个宽泛 Maven 命令证明全部语义”仍可能造成公开验收过浅。
+- [x] 六个 fixture 声明 2～4 项逐项公开证据契约，公开测试按证据项拆分；Draft 的 command、JUnit glob、`minimum_tests` 下限和 Criterion 引用在锁定前校验，报告显示执行测试数/任务下限。免费预检覆盖声明数与实际 JUnit 数；确定性错误候选/变异继续归入任务扩展项。
 - [ ] 扩大到 12～15 个任务、每组至少 3 次；新增歧义需求、非目标、跨文件约束、兼容性决策和确定性错误候选/变异测试。当前报告已有置信区间，但现有 12 次/组仍只能作工程判断。
 - [ ] 设计真人参与的 Spec 确认、HITL、结果复核、返工与沟通总人时；自动 Pilot 的 `total_human_effort` 继续是 `NOT_MEASURED`。
 - [ ] 单独归因仓库 Quick 的历史失败，避免简历材料声称“全量测试绿色”。
+
+> 第 79 项增强了 fixture 公开测试和 Draft 资格契约，发生在已归档的 GLM/DeepSeek Pilot 之后。旧报告继续作为历史证据，但未来付费结果必须先建立新版 A/B/C 基线，不能把与旧报告的变化直接归因给模型。
 
 ## 6. 跨模型对照（DeepSeek 小样已完成，完整复跑未执行）
 

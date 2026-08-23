@@ -62,8 +62,8 @@ final class ChangeSpecEvaluationReport {
             String currency
     ) {
         report.append("## 结果质量总览\n\n")
-                .append("| 组 | 客观成功率（95% CI） | 首次成功率 | 完成声明覆盖率 | 公开接受率 | 声明内虚假率 | 全运行虚假率 | Scope 越界率 | 修复机会/尝试率/条件成功率 | 平均 LLM 调用 | 平均 Token(in/out) | 平均产品成本 | 单位成功成本 |\n")
-                .append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+                .append("| 组 | 客观成功率（95% CI） | 首次成功率 | 完成声明覆盖率 | 公开接受率 | 公开证据达标率 | 声明内虚假率 | 全运行虚假率 | Scope 越界率 | 修复机会/尝试率/条件成功率 | 平均 LLM 调用 | 平均 Token(in/out) | 平均产品成本 | 单位成功成本 |\n")
+                .append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
         for (ChangeSpecEvaluationMode mode : ChangeSpecEvaluationMode.values()) {
             List<ChangeSpecEvaluationResult> group = group(results, mode, value -> true);
             long successes = count(group, ChangeSpecEvaluationResult::taskSuccess);
@@ -74,6 +74,10 @@ final class ChangeSpecEvaluationReport {
                     .append(rate(count(group, ChangeSpecEvaluationResult::firstPassSuccess), group.size())).append(" | ")
                     .append(rate(completions, group.size())).append(" | ")
                     .append(acceptanceRate(group)).append(" | ")
+                    .append(mode.usesChangeSpec()
+                            ? rate(count(group, ChangeSpecEvaluationResult::publicEvidenceSatisfied), group.size())
+                            : "N/A")
+                    .append(" | ")
                     .append(rate(falseCompletions, completions)).append(" | ")
                     .append(rate(falseCompletions, group.size())).append(" | ")
                     .append(rate(count(group, ChangeSpecEvaluationResult::scopeViolation), group.size())).append(" | ")
@@ -220,13 +224,15 @@ final class ChangeSpecEvaluationReport {
                 .count();
         report.append("\n## B/C 配对审计\n\n")
                 .append("- digest 一致：").append(matched).append("/").append(pairs.size()).append(" 对。\n")
-                .append("- B 仅关闭自动修复；公开 Verifier、Criterion、Verdict 与 C 保持同一生产链路。\n");
+                .append("- B 仅关闭自动修复；公开 Verifier、Criterion、Verdict 与 C 保持同一生产链路。\n")
+                .append("- 配对 Draft 的 command、JUnit glob、最低公开测试数及 Criterion 引用均在锁定前校验；")
+                .append("逐次结果显示最终公开证据的执行测试数/任务下限。\n");
     }
 
     private static void appendDetails(StringBuilder report, List<ChangeSpecEvaluationResult> results) {
         report.append("\n## 逐次结果\n\n")
-                .append("| 任务 | 层级 | 组 | 轮次 | 最终 | 首次 | 公开 Verdict | 诊断 | 修复机会 | 修复 | Token(in/out/cache) | 产品耗时 | ReAct LLM | ReAct 工具批次 | 隐藏 Oracle | 说明 |\n")
-                .append("|---|---|---|---:|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---|\n");
+                .append("| 任务 | 层级 | 组 | 轮次 | 最终 | 首次 | 公开 Verdict | 诊断 | 公开证据(执行/下限) | 修复机会 | 修复 | Token(in/out/cache) | 产品耗时 | ReAct LLM | ReAct 工具批次 | 隐藏 Oracle | 说明 |\n")
+                .append("|---|---|---|---:|---|---|---|---|---:|---|---:|---:|---:|---:|---:|---:|---|\n");
         results.stream()
                 .sorted(Comparator.comparing(ChangeSpecEvaluationResult::caseId)
                         .thenComparingInt(ChangeSpecEvaluationResult::repetition)
@@ -239,6 +245,10 @@ final class ChangeSpecEvaluationReport {
                         .append(value.firstPassSuccess() ? "PASS" : "FAIL").append(" | ")
                         .append(escape(value.publicVerdict())).append(" | ")
                         .append(escape(value.diagnosticClassification())).append(" | ")
+                        .append(value.mode().usesChangeSpec()
+                                ? value.publicEvidenceExecutedTests() + "/" + value.publicEvidenceMinimumTests()
+                                : "N/A")
+                        .append(" | ")
                         .append(value.repairEligible() ? "YES" : "NO").append(" | ")
                         .append(value.repairCount()).append(" | ")
                         .append(value.inputTokens()).append("/").append(value.outputTokens()).append("/")

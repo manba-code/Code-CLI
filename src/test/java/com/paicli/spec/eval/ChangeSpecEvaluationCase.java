@@ -26,6 +26,7 @@ record ChangeSpecEvaluationCase(
         ChangeSpecEvaluationTier tier,
         String task,
         String draftContext,
+        List<String> publicEvidenceRequirements,
         Map<String, String> visibleFiles,
         Map<String, String> hiddenVerificationFiles,
         Set<String> allowedChangedFiles,
@@ -39,6 +40,11 @@ record ChangeSpecEvaluationCase(
         if (task == null || task.isBlank()) throw new IllegalArgumentException("task 不能为空");
         if (draftContext == null || draftContext.isBlank()) {
             throw new IllegalArgumentException("draftContext 不能为空");
+        }
+        publicEvidenceRequirements = List.copyOf(publicEvidenceRequirements);
+        if (publicEvidenceRequirements.isEmpty()
+                || publicEvidenceRequirements.stream().anyMatch(value -> value == null || value.isBlank())) {
+            throw new IllegalArgumentException("publicEvidenceRequirements 必须包含非空证据项");
         }
         visibleFiles = Map.copyOf(visibleFiles);
         hiddenVerificationFiles = Map.copyOf(hiddenVerificationFiles);
@@ -119,6 +125,10 @@ record ChangeSpecEvaluationCase(
 
     boolean isAllowedVerifierCommand(String command) {
         return publicVerifierCommand.equals(normalizeCommand(command));
+    }
+
+    int minimumPublicTests() {
+        return publicEvidenceRequirements.size();
     }
 
     private CommandResult runVerification(Path workspace) throws IOException, InterruptedException {

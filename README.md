@@ -43,8 +43,8 @@ ReAct 耗时另行拆出 LLM 请求等待墙钟和工具批次墙钟；并行工
 自动评测默认给每个 ReAct 阶段 15 次迭代和 250k Token 的安全预算，并检测重复两步工具周期，
 但生产 CLI 默认预算不变。YAML 类型错误会报告具体字段路径；配对 Draft 的结构或评测语义资格失败
 共用最多两次生成的纠错链路，最终仍失败时保存脱敏、单次最多 8 KiB 的 Draft 诊断并在报告中链接。
-结构有效的配对 Draft 还必须声明任务允许的 command Verifier，且每条非 scope deterministic Criterion
-都要引用其中至少一个；不合格时按 `DRAFT_INVALID` 保存诊断，不进入 B/C。Spec Run 以失败
+结构有效的配对 Draft 还必须声明满足任务公开证据契约的 command Verifier：命令、JUnit glob、最低执行测试数都要达标，
+且每条非 scope deterministic Criterion 都要引用其中至少一个。报告显示公开证据执行数/任务下限；不合格时按 `DRAFT_INVALID` 保存诊断，不进入 B/C。Spec Run 以失败
 Verifier 进入唯一一次修复时还会注入首次 changed-files 数量；若为 0，会明确要求实际使用工具修改，
 不能只描述计划。评测报告把完整结束、隐藏任务失败且零改动的 Spec Run 标为
 `NO_CHANGE_COMPLETION`。协议与参数见
