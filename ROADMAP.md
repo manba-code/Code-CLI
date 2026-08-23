@@ -605,9 +605,9 @@
 
 ## ChangeSpec V1 — Spec-to-Evidence 闭环（进行中）
 
-**当前已完成前六条产品切片和第七条评测基础设施**：产品链路已覆盖领域模型/Codec/校验/Digest、Draft/确认、锁定/ReAct、Workspace/Verifier、Criterion/Verdict/持久化和最多一次 Evidence 驱动修复；评测侧已提供 6 个分层 fixture、A/B/C 配对运行、首次候选快照、隐藏 Oracle、指标归约、报告和独立 `change-spec-eval` Profile。生产默认修复行为不变，B 组只在评测运行中显式关闭修复。
+**当前已完成前六条产品切片和第七条评测基础设施**：产品链路已覆盖领域模型/Codec/校验/Digest、Draft/确认、锁定/ReAct、Workspace/Verifier、Criterion/Verdict/持久化和最多一次 Evidence 驱动修复；评测侧已提供 6 个分层 fixture、A/B/C 配对运行、首次候选快照、隐藏 Oracle、独立 `change-spec-eval` Profile，以及四态分维度结论、A→B/B→C/A→C 作用拆分、95% 区间、修复机会分母、客观正确/可信决策/失败实际/惩罚 TTA 和 ReAct LLM/工具批次墙钟拆分。生产默认修复行为不变，B 组只在评测运行中显式关闭修复。
 
-**下一步**：显式运行会产生 Token 费用的真实 LLM 快速试验并审阅指标报告。自动 Pilot 的人工介入时间为 `N/A`，所以在补充真实用户计时之前不能宣称满足完整提效门槛。
+**下一步**：扩展到 12～15 个包含歧义需求、跨文件约束和确定性错误候选的任务，审计 Criterion/Verifier 语义覆盖，并设计包含确认、HITL、复核与返工的真人总人时实验。DeepSeek 代表性小样已完成但完整复跑未获授权；自动 Pilot 的人工总投入为 `NOT_MEASURED`，只限制人工效率结论，不抹去已测得的技术质量或自动时间结论。
 
 详细设计与完成定义见 `docs/change-spec-v1-rfc.md`。
 

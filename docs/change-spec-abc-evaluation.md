@@ -1,14 +1,15 @@
 # ChangeSpec V1 A/B/C 评测协议
 
-> 状态：评测框架、修复后的代表性小样和同模型 36 次真实 LLM Pilot 均已完成；复跑结果仍未显示 ChangeSpec 提效。
+> 状态：评测框架、修复后的代表性小样和 GLM 同模型 36 次真实 LLM Pilot 均已完成；DeepSeek 代表性小样 A/B/C 均为 100%，出现成功率天花板。新报告使用四态分维度结论，不再把天花板、零基线、没有修复机会或未测人工时间解释成“没有价值”。
 > 运行入口：`mvn test -Pchange-spec-eval`（会产生网络请求和 Token 费用）。
 
 ## 1. 要回答的问题
 
-本评测只回答两个产品问题：
+本评测分别回答三个产品问题：
 
-1. ChangeSpec 契约和确定性 Evidence Gate 是否比普通 ReAct 更可靠；
-2. 在同一份锁定 ChangeSpec 下，一次 Evidence 驱动修复是否带来可测的增益。
+1. A→B：ChangeSpec 契约和确定性 Evidence Gate 是否比普通 ReAct 更可靠；
+2. B→C：在同一份锁定 ChangeSpec 下，一次 Evidence 驱动修复是否带来可测的条件增益；
+3. A→C：完整 ChangeSpec 产品路径相对普通 ReAct 的综合质量、时间和成本变化。
 
 它不比较 Plan-and-Execute 或 Multi-Agent；现有 `agent-eval` Profile 继续负责三条 Agent 架构的质量实验。
 
@@ -54,7 +55,7 @@
 - 公开 Verifier 只有命令完全等于任务预声明命令时才执行，其他命令记为 `HITL_DENIED`；
 - fixture 位于隔离 workspace，Agent 继续受 PathGuard 和 CommandGuard 约束；
 - 自动评测不替代 Human Criterion：若 Draft 生成 Human Criterion，评测器选择 `SKIPPED`，最终通常为 `NEEDS_HUMAN`；
-- 因为没有真实用户，本 Pilot 的 `human_intervention_time` 固定报告为 `N/A`，不能写成 0。
+- 因为没有真实用户，本 Pilot 的 `total_human_effort` 固定报告为 `NOT_MEASURED`，不能写成 0；自动确认也不能冒充真人投入。
 
 ## 5. 指标定义
 
@@ -83,25 +84,39 @@ A/B 没有自动修复，因此首次候选通常就是最终候选；C 必须�
 - 完成信号存在但最终隐藏 Oracle/Scope 未通过，记为一次虚假完成；
 - 分母是形成该组完成信号的运行数。分母为 0 时报告 `N/A`。
 
+为了避免严格系统通过“从不声明完成”获得好看的虚假完成率，报告还必须同时给出：
+
+- `completion_claim_rate`：形成完成信号的运行数 / 全部运行数；
+- `false_completion_all_run_rate`：虚假完成数 / 全部运行数。
+
+A 的“ReAct 正常结束”和 B/C 的 `Verdict=PASSED` 是不同强度的产品信号，报告必须显式说明，不能把两者当成完全同质的分类器输出。
+
 ### `scope_violation_rate`
 
 最终 changed files 出现任何不在 `allowedChangedFiles` 中的业务文件，即为一次越界。`target`、`.paicli`、评测日志和记忆目录不作为业务变化。
 
-### `time_to_accepted_change`
+### 时间指标
 
-成功运行记录：
+- `time_to_objectively_correct_candidate`：成功运行记录 `产品运行总耗时 + 最终隐藏 Oracle 耗时`；只回答多久得到客观正确候选。
+- `time_to_trusted_product_decision`：B/C 客观成功且产品 `Verdict=PASSED` 时记录产品运行总耗时；A 没有等价结构化可信决定，报告 `N/A`。
+- `observed_failure_time`：失败运行记录实际 `产品运行总耗时 + 最终隐藏 Oracle 耗时`。
+- `penalized_tta`：失败运行替换为统一 `censorMinutes` 固定值，用于与历史工程评分对照；该值不是实际失败耗时，也不是严格统计删失时间。
 
-```text
-产品运行总耗时 + 最终隐藏 Oracle 耗时
-```
+报告分开展示产品耗时、客观正确候选 TTA、可信产品决策 TTA、失败实际耗时、惩罚 TTA、失败数，以及 Draft、ReAct、ReAct LLM 请求、ReAct 工具批次、公开 Verifier 和隐藏 Oracle P50。B/C 的产品运行总耗时包含配对 Draft 生成耗时；Draft 耗时仍可由单次运行指标单独审计。LLM 请求墙钟包含失败请求，并仍合并服务端推理、网络传输和流式接收；工具列按 Agent 实际等待的批次墙钟累计，并行工具不相加，公开 Verifier 不计入该列。
 
-失败运行按统一 `censorMinutes` 截断。报告同时展示产品耗时 P50、仅成功样本的 TTA P50、包含失败截断值的 TTA P50、截断数和隐藏 Oracle 耗时，不能把 `600s` 截断中位数解释成真实执行时长。B/C 的产品运行总耗时包含配对 Draft 生成耗时；Draft 耗时仍可由单次运行指标单独审计。
+默认失败惩罚值为 10 分钟；这是历史工程评分口径，不是执行超时。为防止付费评测被异常 Agent 长尾支配，自动评测默认给每个 ReAct 阶段 15 次迭代和 250,000 Token 的独立安全预算，并检测重复单步/两步工具周期；这些限制不改变生产 CLI 的默认预算。
 
-默认截断值为 10 分钟；这是统计口径，不是执行超时。为防止付费评测被异常 Agent 长尾支配，自动评测默认给每个 ReAct 阶段 15 次迭代和 250,000 Token 的独立安全预算，并检测重复单步/两步工具周期；这些限制不改变生产 CLI 的默认预算。
+### 修复机会与条件增益
+
+- `repair_eligible_count`：C 中实际满足生产修复触发条件并启动修复的运行数；
+- `repair_attempt_rate`：已启动修复数 / 修复机会数；当前生产策略自动启动，因此正常情况下为 100%；
+- `conditional_repair_success_rate`：首次失败、修复后最终客观成功的运行数 / 修复机会数。
+
+若 `repair_eligible_count=0`，修复价值状态为 `NOT_EVALUABLE_NO_OPPORTUNITY`，不能解释为修复没有价值。
 
 ### Token 与成本
 
-记录 Draft + ReAct 的 calls、input/output/cached tokens。成本只有显式提供每百万 Token 单价时才估算，报告不内置可能变化的模型价格；`costCurrency` 只控制报告币种标签，不执行汇率换算。
+记录 Draft + ReAct 的 calls、input/output/cached tokens。成本只有显式提供每百万 Token 单价时才估算，报告不内置可能变化的模型价格；`costCurrency` 只控制报告币种标签，不执行汇率换算。报告同时给出平均产品成本和 `总产品成本 / 客观成功数` 的单位成功成本；不同 provider 的 Token 口径和缓存统计可能不同，跨模型比较必须同时审阅调用数和墙钟。
 
 ## 6. 公平性与随机性
 
@@ -112,6 +127,8 @@ A/B 没有自动修复，因此首次候选通常就是最终候选；C 必须�
 - 每个“任务 × 模式 × 重复轮次”使用独立 workspace 和记忆；
 - 当前客户端不能统一设置所有 provider 的采样 seed，真实模型输出不能完全复现，因此快速试验默认重复两次；
 - 快速样本只能形成描述性结论，稳定后按 RFC 扩展到 12～15 个任务、每组 3 次。
+- 成功率使用 95% Wilson 区间；A→B、B→C、A→C 按相同任务与重复轮次报告候选胜/负/平。当前只形成描述性配对统计，不用小样本点估计冒充显著性结论。
+- 现有六个 fixture 的需求、Scope 和命令较明确，适合作为执行能力基线，但不足以测量需求澄清价值；扩展任务必须加入歧义需求、非目标、跨文件约束、兼容性决策和确定性错误候选/变异测试。
 
 ## 7. 运行
 
@@ -160,7 +177,7 @@ mvn test -Pchange-spec-eval \
 | `paicli.changeSpecEval.repetitions` | `2` | 每任务/组重复次数，1～20 |
 | `paicli.changeSpecEval.seed` | `20260820` | 三组运行顺序 seed |
 | `paicli.changeSpecEval.cases` | 全部 | 逗号分隔任务 ID |
-| `paicli.changeSpecEval.censorMinutes` | `10` | 失败 TTA 截断分钟数，1～60 |
+| `paicli.changeSpecEval.censorMinutes` | `10` | 失败惩罚 TTA 固定分钟数，1～60；不是实际超时或统计删失时间 |
 | `paicli.changeSpecEval.inputCostPerMillion` | `0` | 输入 Token 单价；0 表示不估价 |
 | `paicli.changeSpecEval.outputCostPerMillion` | `0` | 输出 Token 单价；0 表示不估价 |
 | `paicli.changeSpecEval.costCurrency` | `USD` | 三字母报告币种标签，不换算汇率 |
@@ -190,13 +207,16 @@ target/change-spec-eval/<run-id>/
 
 ## 8. 报告边界
 
-报告按全部任务和三个层级分别显示成功率，并对中型 + 高风险任务计算 RFC 门槛：
+报告按全部任务和三个层级显示成功率，并对中型 + 高风险任务输出独立维度状态：
 
-- C 相比 A 成功率是否提高至少 10 个百分点，或虚假完成率是否相对下降至少 30%；
-- C 的失败截断 TTA P50 是否恶化不超过 15%，并同时审阅成功 TTA P50 与截断数；
-- `human_intervention_time` 是否不增加。
+- `PASS`：该维度存在评测机会且达到暂定门槛；
+- `FAIL`：该维度存在评测机会但未达到暂定门槛；
+- `NOT_EVALUABLE`：成功率天花板、缺陷率下限、无完成声明分母或没有修复机会；
+- `NOT_MEASURED`：自动 Pilot 未采集人工总投入等维度。
 
-自动 Pilot 无法测量最后一项，所以即使前两项满足，也只能说明“出现自动化质量/耗时正向信号”，不能宣称已经满足完整开发效率价值门槛。需要真实用户参与的确认、HITL 和 Human Criterion 计时试验才能补齐该结论。
+质量门槛先检查 C 相对 A 暂定 -5 个百分点的非劣护栏，再在存在改善空间时检查 +10 个百分点成功率增益或 30% 虚假完成下降。惩罚 TTA 暂保留“不恶化超过 15%”作为历史工程假设，但必须与成功 TTA、失败实际耗时、失败数、可信产品决策 TTA 和错误成本共同审阅。所有阈值都需要真实 SLA、缺陷成本和人力数据校准。
+
+自动 Pilot 可以分别给出技术质量与自动时间结论；它无法测量 `total_human_effort`，因此该维度必须为 `NOT_MEASURED`。这不等于其他维度无价值，也不能据此宣称完整开发效率已经得到证明。
 
 配对 Draft 采用双层约束：产品 Codec 拒绝让非 scope deterministic Criterion 只引用 `path_scope`；
 评测资格检查再要求 command 精确命中任务允许列表，并校验每条非 scope deterministic Criterion 引用的

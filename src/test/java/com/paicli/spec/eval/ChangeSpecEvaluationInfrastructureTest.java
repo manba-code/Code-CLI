@@ -24,6 +24,7 @@ import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ChangeSpecEvaluationInfrastructureTest {
@@ -135,13 +136,61 @@ class ChangeSpecEvaluationInfrastructureTest {
         String report = ChangeSpecEvaluationReport.toMarkdown(
                 results, "stub", "stub-model", 7L, 1, 60_000L, false, "USD");
 
-        assertTrue(report.contains("人工介入时间：N/A"));
+        assertTrue(report.contains("人工总投入：NOT_MEASURED"));
         assertTrue(report.contains("digest 一致：1/1 对"));
-        assertTrue(report.contains("不能单独得出‘满足完整提效门槛’"));
+        assertTrue(report.contains("PASS / FAIL / NOT_EVALUABLE / NOT_MEASURED"));
         assertTrue(report.contains("A · 普通 ReAct"));
         assertTrue(report.contains("产品耗时 P50"));
-        assertTrue(report.contains("成功 TTA P50"));
-        assertTrue(report.contains("截断 TTA P50"));
+        assertTrue(report.contains("客观正确候选 TTA P50"));
+        assertTrue(report.contains("可信产品决策 TTA P50"));
+        assertTrue(report.contains("惩罚 TTA P50"));
+        assertTrue(report.contains("ReAct LLM 请求 P50"));
+        assertTrue(report.contains("ReAct 工具批次墙钟 P50"));
+        assertTrue(report.contains("并行批次按整批等待时间统计"));
+    }
+
+    @Test
+    void reportTreatsCeilingFloorAndNoRepairOpportunityAsNotEvaluable() {
+        List<ChangeSpecEvaluationResult> results = List.of(
+                detailedResult(ChangeSpecEvaluationMode.REACT, true, true, true, "", 0,
+                        1_000L, 200L, 1_200L),
+                detailedResult(ChangeSpecEvaluationMode.SPEC_NO_REPAIR, true, true, true, "digest-1", 0,
+                        1_500L, 200L, 1_700L),
+                detailedResult(ChangeSpecEvaluationMode.SPEC_WITH_REPAIR, true, true, true, "digest-1", 0,
+                        1_700L, 200L, 1_900L));
+
+        String report = ChangeSpecEvaluationReport.toMarkdown(
+                results, "stub", "stub-model", 7L, 1, 60_000L, false, "USD");
+
+        assertTrue(report.contains("任务成功率非劣"), report);
+        assertTrue(report.contains("基线接近天花板"), report);
+        assertTrue(report.contains("A/C 声明内虚假率均为 0%"), report);
+        assertTrue(report.contains("repair_eligible_count=0"), report);
+        assertTrue(report.contains("| 完整人工投入 | NOT_MEASURED |"), report);
+        assertTrue(report.contains("100.00% [20.65%, 100.00%]"), report);
+    }
+
+    @Test
+    void reportSeparatesAbBcAcContrastsAndObservedFailureTime() {
+        List<ChangeSpecEvaluationResult> results = List.of(
+                detailedResult(ChangeSpecEvaluationMode.REACT, false, false, true, "", 0,
+                        1_000L, 200L, 60_000L),
+                detailedResult(ChangeSpecEvaluationMode.SPEC_NO_REPAIR, false, false, false, "digest-1", 0,
+                        1_500L, 300L, 60_000L),
+                detailedResult(ChangeSpecEvaluationMode.SPEC_WITH_REPAIR, true, false, true, "digest-1", 1,
+                        2_000L, 300L, 2_300L));
+
+        String report = ChangeSpecEvaluationReport.toMarkdown(
+                results, "stub", "stub-model", 7L, 1, 60_000L, false, "USD");
+
+        assertTrue(report.contains("A→B"), report);
+        assertTrue(report.contains("B→C"), report);
+        assertTrue(report.contains("A→C"), report);
+        assertTrue(report.contains("repair_eligible_count=1"), report);
+        assertTrue(report.contains("条件成功率=100.00%"), report);
+        assertTrue(report.contains("1.20s"), report);
+        assertTrue(report.contains("失败实际耗时 P50"), report);
+        assertTrue(report.contains("不是实际失败耗时"), report);
     }
 
     @Test
@@ -160,6 +209,38 @@ class ChangeSpecEvaluationInfrastructureTest {
         assertEquals(55_000L, ChangeSpecEvaluationRunner.totalProductDuration(15_000L, 40_000L));
         assertEquals(Long.MAX_VALUE,
                 ChangeSpecEvaluationRunner.totalProductDuration(Long.MAX_VALUE - 5, 10));
+    }
+
+    @Test
+    void evaluationLlmClientMeasuresRequestWallClock() throws Exception {
+        Queue<Long> ticks = new ArrayDeque<>(List.of(1_000_000L, 4_000_000L));
+        ChangeSpecEvaluationLlmClient client = new ChangeSpecEvaluationLlmClient(
+                new StubLlmClient("ok"), ticks::remove);
+
+        client.chat(List.of(), List.of());
+
+        assertEquals(3L, client.requestDurationMs());
+    }
+
+    @Test
+    void evaluationLlmClientAlsoMeasuresFailedRequests() {
+        Queue<Long> ticks = new ArrayDeque<>(List.of(3_000_000L, 9_000_000L));
+        ChangeSpecEvaluationLlmClient client = new ChangeSpecEvaluationLlmClient(
+                new StubLlmClient(), ticks::remove);
+
+        assertThrows(RuntimeException.class, () -> client.chat(List.of(), List.of()));
+        assertEquals(6L, client.requestDurationMs());
+    }
+
+    @Test
+    void evaluationToolRegistryMeasuresBatchWallClock() {
+        Queue<Long> ticks = new ArrayDeque<>(List.of(2_000_000L, 7_000_000L));
+        ChangeSpecEvaluationToolRegistry registry = new ChangeSpecEvaluationToolRegistry(ticks::remove);
+
+        registry.executeTools(List.of(new ToolRegistry.ToolInvocation(
+                "call-1", "unknown_tool", "{}")));
+
+        assertEquals(5L, registry.batchDurationMs());
     }
 
     @Test
@@ -236,7 +317,7 @@ class ChangeSpecEvaluationInfrastructureTest {
                 "NO_CHANGE_COMPLETION");
         String report = ChangeSpecEvaluationReport.toMarkdown(
                 List.of(classified), "stub", "stub-model", 7L, 1, 60_000L, false, "USD");
-        assertTrue(report.contains("| FAILED | NO_CHANGE_COMPLETION | 1 |"), report);
+        assertTrue(report.contains("| FAILED | NO_CHANGE_COMPLETION | YES | 1 |"), report);
     }
 
     @Test
@@ -319,27 +400,74 @@ class ChangeSpecEvaluationInfrastructureTest {
             Path draftDiagnostic,
             String diagnosticClassification
     ) {
+        return detailedResult(
+                mode,
+                success,
+                success,
+                completed,
+                digest,
+                mode == ChangeSpecEvaluationMode.SPEC_WITH_REPAIR ? 1 : 0,
+                100L,
+                20L,
+                success ? 120L : 60_000L,
+                draftDiagnostic,
+                diagnosticClassification);
+    }
+
+    private static ChangeSpecEvaluationResult detailedResult(
+            ChangeSpecEvaluationMode mode,
+            boolean success,
+            boolean firstPassSuccess,
+            boolean completed,
+            String digest,
+            int repairCount,
+            long productDurationMs,
+            long oracleDurationMs,
+            long penalizedTtaMs
+    ) {
+        return detailedResult(mode, success, firstPassSuccess, completed, digest, repairCount,
+                productDurationMs, oracleDurationMs, penalizedTtaMs, null, "");
+    }
+
+    private static ChangeSpecEvaluationResult detailedResult(
+            ChangeSpecEvaluationMode mode,
+            boolean success,
+            boolean firstPassSuccess,
+            boolean completed,
+            String digest,
+            int repairCount,
+            long productDurationMs,
+            long oracleDurationMs,
+            long penalizedTtaMs,
+            Path draftDiagnostic,
+            String diagnosticClassification
+    ) {
         return new ChangeSpecEvaluationResult(
                 "case",
                 ChangeSpecEvaluationTier.MEDIUM,
                 mode,
                 1,
                 success,
-                success,
+                firstPassSuccess,
                 completed,
                 mode.usesChangeSpec(),
                 mode.usesChangeSpec() && completed,
                 false,
                 completed ? "PASSED" : "FAILED",
                 diagnosticClassification,
-                mode == ChangeSpecEvaluationMode.SPEC_WITH_REPAIR ? 1 : 0,
+                repairCount,
                 2,
                 20,
                 10,
                 0,
-                100,
-                20,
-                success ? 120 : 60_000,
+                productDurationMs,
+                mode.usesChangeSpec() ? 10L : 0L,
+                Math.max(0L, productDurationMs - (mode.usesChangeSpec() ? 20L : 0L)),
+                30L,
+                40L,
+                mode.usesChangeSpec() ? 10L : 0L,
+                oracleDurationMs,
+                penalizedTtaMs,
                 0,
                 digest,
                 "detail",

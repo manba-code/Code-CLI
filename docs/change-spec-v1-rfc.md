@@ -2,7 +2,7 @@
 
 > 状态：Accepted  
 > 目标版本：V1  
-> 实现进度：前六条产品切片已完成；第七条框架、Pilot 修复、代表性小样和同模型 36 次复跑均已完成；复跑消除了 Draft/循环长尾/评测口径污染，但仍未显示 ChangeSpec 提效
+> 实现进度：前六条产品切片已完成；第七条框架、Pilot 修复、代表性小样和同模型 36 次复跑均已完成。GLM 完整复跑未满足当时的首轮门槛；DeepSeek 代表性小样 A/B/C 均为 100%，出现成功率天花板，证明模型/API 组合影响显著，但不能据此判定 ChangeSpec 的增量质量或修复价值。评测报告已改为分维度四态结论，可信验收、人力节省和正式统计结论仍待专门实验
 > 核心目标：缩短从需求提出到代码被可信验收的时间，而不是增加一套需求管理流程。
 
 ## 1. 决策摘要
@@ -50,8 +50,11 @@ ChangeSpec V1 要解决的不是代码生成能力，而是下面三段浪费：
 
 ### 3.1 核心效率指标
 
-- `time_to_accepted_change`：从提交需求到第一次得到可信 `PASSED` 的墙钟时间；ChangeSpec 组必须包含 Draft 生成，未通过的运行按实验时限截断。报告必须同时给出仅成功样本 P50、包含失败截断值的 P50 和截断数，不能把截断值解释成真实执行时长。
-- `human_intervention_time`：用户实际用于确认 Spec、处理审批和人工验收的时间，不包含等待模型和命令执行的时间。
+- `time_to_objectively_correct_candidate`：仅对最终通过隐藏 Oracle 与 Scope 的候选，记录产品运行总耗时加隐藏 Oracle 耗时。它回答“多久得到客观正确代码”，不冒充产品已经向用户提供可信判断。
+- `time_to_trusted_product_decision`：从提交需求到产品给出可信接受决定的墙钟时间。B/C 由结构化 `Verdict=PASSED` 提供该信号；A 没有等价产品 Verdict，自动 Pilot 必须报告 `N/A`，除非另行计入人工复核或外部验证流程。
+- `observed_failure_time`：失败运行实际观察到的产品耗时加隐藏 Oracle 耗时。
+- `penalized_tta`：为了与历史快速试验对照，可把未成功运行替换为统一惩罚值；它不是实际失败耗时，也不是严格统计意义上的删失时间。报告必须与成功 TTA、失败实际耗时和失败数分列。
+- `total_human_effort`：用户实际用于 Spec 确认、HITL、结果复核、返工、沟通和重跑的总人时，不包含等待模型和命令执行的时间。不能只用 Spec 确认时间代表完整人工效率。
 
 ### 3.2 质量与成本护栏
 
@@ -64,21 +67,27 @@ ChangeSpec V1 要解决的不是代码生成能力，而是下面三段浪费：
 - `spec_confirmation_ms`
 - `verification_ms`
 - `repair_count`
+- `repair_eligible_count`、`repair_attempt_rate`、`conditional_repair_success_rate`
 - LLM 调用次数、输入/输出 Token、估算成本
+- 单位成功结果成本
 - `FAILED / INCOMPLETE / NEEDS_HUMAN` 分布
+- 结论状态：`PASS / FAIL / NOT_EVALUABLE / NOT_MEASURED`
 
 ### 3.3 首轮价值门槛
 
 先做 6 个分层任务、每组至少重复 2 次的快速试验；运行稳定后扩展到 12～15 个任务、每组重复 3 次。任务必须区分小任务、中等任务和高风险任务。
 
-对中等和高风险任务，ChangeSpec V1 只有满足以下条件才可以宣称有开发效率价值：
+对中等和高风险任务，报告必须分维度判断，不能再汇总成单一“有价值/无价值”总分：
 
-- 相比普通 ReAct，任务成功率至少提高 10 个百分点，或虚假完成率相对下降至少 30%；
-- 包含失败截断值的 `time_to_accepted_change` P50 不得恶化超过 15%，并同步审阅成功样本 P50 与截断数；
-- `human_intervention_time` 不得增加；
-- Spec 生成与确认开销必须单独报告，不能隐藏在总耗时中。
+1. **质量非劣护栏**：C 相比 A 的任务成功率暂定不得下降超过 5 个百分点，Scope 和虚假完成不得回退；
+2. **增量质量**：有足够改善空间时，任务成功率暂定至少提高 10 个百分点，或虚假完成率相对下降至少 30%；A 已接近 100% 或虚假完成率为 0 时，分别标记成功率天花板或缺陷率下限，结论为 `NOT_EVALUABLE`，不能写成未达到或没有价值；
+3. **机制拆分**：A→B 判断契约与公开 Evidence Gate，B→C 判断一次 Evidence 修复，A→C 只代表完整产品路径；
+4. **修复机会**：没有运行进入 Evidence 修复时，修复价值为 `NOT_EVALUABLE_NO_OPPORTUNITY`；有机会时才报告条件修复成功率；
+5. **自动时间**：成功 TTA、失败实际耗时、惩罚 TTA 和失败数分列。历史惩罚 TTA 暂定不得恶化超过 15%，但该阈值只是工程假设，必须结合错误成本与业务 SLA 审阅；
+6. **人工效率**：比较完整 `total_human_effort`，允许高风险任务用可解释的少量确认成本换取错误风险、复核和返工下降；自动 Pilot 未测量时为 `NOT_MEASURED`；
+7. **统计边界**：成功率报告 95% 区间和配对胜/负/平；快速样本只形成描述性工程判断。
 
-这些是首轮产品决策门槛，不是统计学上的普遍结论。
+Spec 生成、确认、ReAct、公开 Verifier 和隐藏 Oracle 开销必须单独报告，不能隐藏在总耗时中。ReAct 还应分列 LLM 请求等待墙钟与工具批次墙钟；并行工具按 Agent 实际等待的整批时间统计，不能把单项耗时相加。LLM 请求墙钟不再与工具耗时混合，但仍包含服务端推理、网络传输和流式接收。+10%、-30%、-5% 和 +15% 均是待真实用户错误成本、SLA 与人力数据校准的暂定工程阈值，不是统计学上的普遍结论。
 
 ## 4. 何时使用 ChangeSpec
 
@@ -184,7 +193,7 @@ Draft Generator 应优先生成可确定性验证的 Criterion，只有产品取
 
 V1 的 Criterion 没有到具体 diff hunk 的映射，因此 CLI 在第一条 Human Criterion 前统一展示最终 changed files 和 final diff，不扩展 ChangeSpec schema。
 
-该交互耗时计入 `human_intervention_time`。
+该交互耗时是 `total_human_effort` 的一个组成部分；完整人工投入还必须包含 HITL、结果复核、返工、沟通和重跑。
 
 ### 6.4 锁定与执行
 
@@ -317,7 +326,7 @@ V1 只采集：
 - 全量 read/grep 工具历史；
 - 与 Acceptance 无关的终端日志。
 
-当前运行结果分别记录 `specGenerationMs`、`specConfirmationMs`、`reactExecutionMs`、`verificationMs`、`humanCriterionMs`、`totalMs`，以及 Draft/ReAct 各自和合计的 LLM calls/input/output/cached tokens。`humanCriterionMs` 只表示 Human Criterion 交互；在 HITL 等待时间建立独立采集接口之前，不把它冒充完整的 `human_intervention_time`。
+当前运行结果分别记录 `specGenerationMs`、`specConfirmationMs`、`reactExecutionMs`、`verificationMs`、`humanCriterionMs`、`totalMs`，以及 Draft/ReAct 各自和合计的 LLM calls/input/output/cached tokens。`specConfirmationMs` 与 `humanCriterionMs` 都只是局部交互指标；在 HITL、结果复核、返工和沟通建立独立采集接口之前，不把它们冒充完整的 `total_human_effort`。
 
 ### 8.2 Verifier Result
 
@@ -486,9 +495,11 @@ spec/
 
 - 每个“任务 × 重复轮次”只生成一份配对 ChangeSpec，B/C 锁定后的 digest 必须一致；
 - B 保留公开 Verifier、Criterion 和 Verdict，只关闭自动修复；C 只比 B 多一次 Evidence 驱动修复机会；
+- 报告同时给出 A→B（契约与公开验收层）、B→C（Evidence 修复）和 A→C（完整产品路径），不能只用 C→A 归因全部机制；
 - `first_pass_success_rate` 使用首次公开验证后、修复前保存的候选快照运行隐藏 Oracle，不能用最终结果反推；
 - A 的完成信号是 ReAct 正常结束，B/C 的完成信号是 `Verdict=PASSED`；完成信号存在但隐藏 Oracle/Scope 失败时记为虚假完成；
-- 自动 Pilot 不存在真人确认、HITL 或 Human Criterion 时间，`human_intervention_time` 报告为 `N/A` 而不是 0；因此自动 Pilot 不能单独证明满足完整效率价值门槛。
+- 自动 Pilot 不存在真人确认、HITL、结果复核或返工时间，`total_human_effort` 报告为 `NOT_MEASURED` 而不是 0；这只限制人工效率结论，不得抹去已经测得的技术质量或自动时间结论；
+- 天花板、零缺陷下限、没有修复机会和未采集维度分别使用 `NOT_EVALUABLE / NOT_MEASURED`，不能与 `FAIL` 混用；
 - 自动付费评测可设置独立的 ReAct Token/迭代安全预算和工具周期停滞检测以限制异常长尾，但必须保持三组一致，并与生产默认预算分开记录。
 
 任务、指标公式、运行参数和报告边界见 [ChangeSpec V1 A/B/C 评测协议](change-spec-abc-evaluation.md)。
@@ -503,7 +514,7 @@ spec/
 4. ✅ Workspace baseline、Scope 和 command/JUnit 验证；
 5. ✅ Criterion Result、Verdict 和紧凑持久化；
 6. ✅ 一次证据驱动修复；
-7. 🟡 A/B/C 评测与指标报告：框架、任务集、首次 Pilot 修复和同模型 36 次复跑已完成；Draft/digest 达到 12/12 且 C 虚假完成率降为 0%，但 A/B/C 成功率 58.33%/41.67%/41.67% 仍未显示提效；后续可冻结实验条件进行跨模型对照，并补真人效率验证。
+7. 🟡 A/B/C 评测与指标报告：框架、任务集、首次 Pilot 修复和 GLM 同模型 36 次复跑已完成；DeepSeek 代表性小样三组均为 100%，暴露成功率天花板。报告已改为四态分维度结论、A→B/B→C/A→C 配对作用拆分、95% 区间、修复机会分母，以及客观正确/可信决策/失败实际/惩罚 TTA 分列；后续仍需扩展任务、校准 Verifier 证据覆盖并补真人效率验证。
 
 每一步都为同一条端到端链路服务，不先建设 Reviewer、通用 Verifier 平台或多执行模式。
 

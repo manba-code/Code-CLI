@@ -153,7 +153,7 @@ final class ChangeSpecEvaluationRunner {
         boolean firstPassSuccess = firstValidation != null && firstValidation.passed();
         long oracleDurationMs = finalValidation.oracleDurationMs();
         long timeToAccepted = taskSuccess
-                ? product.durationMs() + oracleDurationMs
+                ? totalProductDuration(product.durationMs(), oracleDurationMs)
                 : censoredDurationMs;
         SpecRunResult.LlmUsage usage = product.usage();
         double cost = usage.inputTokens() * inputCostPerMillion / 1_000_000d
@@ -182,6 +182,11 @@ final class ChangeSpecEvaluationRunner {
                 usage.outputTokens(),
                 usage.cachedInputTokens(),
                 product.durationMs(),
+                product.draftDurationMs(),
+                product.reactExecutionMs(),
+                product.reactLlmRequestMs(),
+                product.reactToolExecutionMs(),
+                product.publicVerificationMs(),
                 oracleDurationMs,
                 timeToAccepted,
                 cost,
@@ -199,7 +204,7 @@ final class ChangeSpecEvaluationRunner {
             PrintStream out
     ) throws IOException {
         ChangeSpecEvaluationLlmClient client = new ChangeSpecEvaluationLlmClient(clientFactory.get());
-        ToolRegistry registry = registry(workspace);
+        ChangeSpecEvaluationToolRegistry registry = registry(workspace);
         Agent agent = agent(client, registry, out);
         long startedAt = System.nanoTime();
         Agent.RunResult result = agent.runDetailed(evaluationCase.task(), newEvaluationBudget());
@@ -215,6 +220,11 @@ final class ChangeSpecEvaluationRunner {
                 0,
                 usage(result),
                 durationMs,
+                0L,
+                durationMs,
+                client.requestDurationMs(),
+                registry.batchDurationMs(),
+                0L,
                 "",
                 snapshotError,
                 completed ? "" : result.response());
@@ -242,13 +252,18 @@ final class ChangeSpecEvaluationRunner {
                     0,
                     draftUsage,
                     pairedDraft == null ? 0L : pairedDraft.durationMs(),
+                    pairedDraft == null ? 0L : pairedDraft.durationMs(),
+                    0L,
+                    0L,
+                    0L,
+                    0L,
                     "",
                     snapshotError,
                     pairedDraft == null ? "配对 Draft 缺失" : pairedDraft.error());
         }
 
         ChangeSpecEvaluationLlmClient client = new ChangeSpecEvaluationLlmClient(clientFactory.get());
-        ToolRegistry registry = registry(workspace);
+        ChangeSpecEvaluationToolRegistry registry = registry(workspace);
         Agent agent = agent(client, registry, out);
         AtomicReference<String> snapshotError = new AtomicReference<>("");
         SpecDraftSession session = new SpecDraftSession(
@@ -295,6 +310,11 @@ final class ChangeSpecEvaluationRunner {
                 metrics.repairCount(),
                 metrics.totalLlmUsage(),
                 totalProductDuration(metrics.totalMs(), pairedDraft.durationMs()),
+                pairedDraft.durationMs(),
+                metrics.reactExecutionMs(),
+                client.requestDurationMs(),
+                registry.batchDurationMs(),
+                metrics.verificationMs(),
                 result.identity() == null ? "" : result.identity().specDigest(),
                 snapshotError.get(),
                 result.detail());
@@ -333,8 +353,8 @@ final class ChangeSpecEvaluationRunner {
         return agent;
     }
 
-    private static ToolRegistry registry(Path workspace) {
-        ToolRegistry registry = new ToolRegistry();
+    private static ChangeSpecEvaluationToolRegistry registry(Path workspace) {
+        ChangeSpecEvaluationToolRegistry registry = new ChangeSpecEvaluationToolRegistry();
         registry.setProjectPath(workspace.toAbsolutePath().normalize().toString());
         return registry;
     }
@@ -436,6 +456,11 @@ final class ChangeSpecEvaluationRunner {
             int repairCount,
             SpecRunResult.LlmUsage usage,
             long durationMs,
+            long draftDurationMs,
+            long reactExecutionMs,
+            long reactLlmRequestMs,
+            long reactToolExecutionMs,
+            long publicVerificationMs,
             String specDigest,
             String snapshotError,
             String error
@@ -444,6 +469,11 @@ final class ChangeSpecEvaluationRunner {
             publicVerdict = publicVerdict == null ? "" : publicVerdict;
             usage = usage == null ? SpecRunResult.LlmUsage.empty() : usage;
             durationMs = Math.max(0L, durationMs);
+            draftDurationMs = Math.max(0L, draftDurationMs);
+            reactExecutionMs = Math.max(0L, reactExecutionMs);
+            reactLlmRequestMs = Math.max(0L, reactLlmRequestMs);
+            reactToolExecutionMs = Math.max(0L, reactToolExecutionMs);
+            publicVerificationMs = Math.max(0L, publicVerificationMs);
             specDigest = specDigest == null ? "" : specDigest;
             snapshotError = snapshotError == null ? "" : snapshotError;
             error = error == null ? "" : error;
@@ -451,7 +481,7 @@ final class ChangeSpecEvaluationRunner {
 
         static ProductExecution failed(SpecRunResult.LlmUsage usage, long durationMs, String error) {
             return new ProductExecution(false, false, "ERROR", false, false,
-                    0, usage, durationMs, "", "", error);
+                    0, usage, durationMs, 0L, durationMs, 0L, 0L, 0L, "", "", error);
         }
     }
 }

@@ -34,8 +34,12 @@ mvn test -DskipTests=false
 
 `change-spec-eval` 独立比较 A=普通 ReAct、B=ChangeSpec 但关闭修复、C=ChangeSpec + 一次修复。
 同一任务/轮次的 B/C 共用锁定 Spec digest，六个分层 fixture 使用公开 Verifier 与隐藏 Oracle，
-报告任务成功、首次成功、误放行、Scope、产品耗时、成功/截断 TTA、截断数、Token 和带币种成本。
-B/C 产品耗时包含配对 Draft；自动 Pilot 的人工介入时间记为 `N/A`，不会把自动确认冒充真人耗时。
+报告使用 `PASS / FAIL / NOT_EVALUABLE / NOT_MEASURED` 分维度判断，区分成功率天花板、零缺陷下限、
+无修复机会和未采集人工时间；同时显示成功率 95% Wilson 区间、A→B/B→C/A→C 配对胜负、完成声明
+覆盖率、声明内/全运行虚假率、Scope、修复机会/条件成功率，以及客观正确候选、可信产品决策、
+失败实际耗时和惩罚 TTA。固定失败值只作为历史惩罚评分，不代表实际失败耗时或严格统计删失。
+B/C 产品耗时包含配对 Draft；自动 Pilot 的人工总投入记为 `NOT_MEASURED`，不会把自动确认冒充真人耗时。
+ReAct 耗时另行拆出 LLM 请求等待墙钟和工具批次墙钟；并行工具按整批等待时间统计，公开 Verifier 继续单列。
 自动评测默认给每个 ReAct 阶段 15 次迭代和 250k Token 的安全预算，并检测重复两步工具周期，
 但生产 CLI 默认预算不变。YAML 类型错误会报告具体字段路径；配对 Draft 的结构或评测语义资格失败
 共用最多两次生成的纠错链路，最终仍失败时保存脱敏、单次最多 8 KiB 的 Draft 诊断并在报告中链接。
@@ -47,9 +51,11 @@ Verifier 进入唯一一次修复时还会注入首次 changed-files 数量；�
 [`docs/change-spec-abc-evaluation.md`](docs/change-spec-abc-evaluation.md)；首次 Pilot 的修复与复跑顺序见
 [`docs/change-spec-pilot-remediation-checklist.md`](docs/change-spec-pilot-remediation-checklist.md)。
 
-2026-08-23 的同模型完整复跑已归档：`glm-4.6v-flashx` 下 A/B/C 成功率为
-58.33%/41.67%/41.67%，配对 Draft/digest 12/12，C 虚假完成率为 0%。评测链路修复有效，
-但 B/C 成功率仍低于 A，不能据此宣称 ChangeSpec 已提效。
+2026-08-23 的 GLM 同模型完整复跑已归档：`glm-4.6v-flashx` 下 A/B/C 成功率为
+58.33%/41.67%/41.67%，配对 Draft/digest 12/12，C 虚假完成率为 0%。随后冻结三个代表任务运行
+`deepseek-v4-pro-0813` 小样，A/B/C 均为 100%，说明模型/API 组合影响显著，但成功率天花板、零虚假完成
+下限和零修复机会使增量质量与修复价值不可判定。DeepSeek 36 次完整复跑尚未执行；不能把任一小样
+概括为“ChangeSpec 无价值”或“ChangeSpec 已提效”。
 
 ## 演进历程
 

@@ -7,7 +7,7 @@
 ## 1. 已立即生效
 
 - [x] B/C 的产品耗时和成功 TTA 计入配对 Draft 生成耗时，不再只统计 ReAct、验证与修复。
-- [x] 报告同时展示产品耗时 P50、仅成功样本 TTA P50、失败截断 TTA P50和截断数，避免把大量 `600s` 截断误读为真实执行时长。
+- [x] 报告同时展示产品耗时、客观正确候选 TTA、可信产品决策 TTA、失败实际耗时、惩罚 TTA 和失败数；固定 `600s` 只作为历史惩罚评分，不再称为真实执行时长或严格统计删失。
 - [x] 成本增加显式币种；本项目当前价格参数应使用 `CNY`，不再默认显示美元符号。
 - [x] Windows 隐藏 Oracle 日志按严格 UTF-8、宿主默认编码、GB18030 顺序容错解码；非零退出仍判失败，但原生编码字节不再升级成 `Input length=1` 的评测异常。
 - [x] Agent 停滞检测覆盖重复两步工具周期，例如 `write_file → execute_command` 循环。
@@ -18,19 +18,19 @@
 
 ## 2. 免费验证
 
-- [x] ChangeSpec/预算/报告回归全部通过（最终 35 tests，0 failure，0 error，2 个 fixture 预检按开关跳过）：
+- [x] ChangeSpec/预算/报告回归全部通过；四态结论、新时间口径和 ReAct LLM/工具墙钟拆分落地后的最新结果为 40 tests、0 failure、0 error、2 个 fixture 预检按开关跳过：
 
 ```powershell
 mvn test '-Dtest=AgentBudgetTest,SpecDraftGeneratorTest,ChangeSpecEvaluationInfrastructureTest' -DskipTests=false
 ```
 
-- [x] 六个 fixture 通过公开与隐藏 Oracle，并验证生产命令执行路径（15/15，0 failure，0 error）：
+- [x] 六个 fixture 通过公开与隐藏 Oracle，并验证生产命令执行路径（含新增计时回归，最新 20/20，0 failure，0 error）：
 
 ```powershell
 mvn test -Dtest=ChangeSpecEvaluationInfrastructureTest '-Dpaicli.changeSpecEval.validateFixtures=true' -DskipTests=false
 ```
 
-- [x] 扩大免费回归：`mvn test '-Dtest=Spec*Test,ChangeSpec*Test' -DskipTests=false`，最终 77 tests、0 failure、0 error、3 个显式评测项按预期跳过。不要把仓库既有 Quick 红灯混成这批修复的回归。
+- [x] 扩大免费回归：`mvn test '-Dtest=Spec*Test,ChangeSpec*Test' -DskipTests=false`，最新 82 tests、0 failure、0 error、3 个显式评测项按预期跳过。不要把仓库既有 Quick 红灯混成这批修复的回归。
 
 ## 3. 同模型代表性小样本（已完成，9 次产品运行）
 
@@ -58,25 +58,30 @@ mvn test -Pchange-spec-eval '-Dpaicli.changeSpecEval.provider=glm' '-Dpaicli.cha
 mvn test -Pchange-spec-eval '-Dpaicli.changeSpecEval.provider=glm' '-Dpaicli.changeSpecEval.model=glm-4.6v-flashx' '-Dpaicli.changeSpecEval.repetitions=2' '-Dpaicli.changeSpecEval.seed=20260820' '-Dpaicli.changeSpecEval.inputCostPerMillion=0.15' '-Dpaicli.changeSpecEval.outputCostPerMillion=1.5' '-Dpaicli.changeSpecEval.costCurrency=CNY'
 ```
 
-这一轮用于隔离“架构/评测修复”的效果。和旧报告比较：Draft 有效率、A/B/C 成功率、C 修复增益、虚假完成率、成功 TTA、截断数、平均调用与 Token。不要只比较新的截断 TTA P50。
+这一轮用于隔离“架构/评测修复”的效果。和旧报告比较：Draft 有效率、A/B/C 成功率、C 修复增益、虚假完成率、成功 TTA、固定失败惩罚数、平均调用与 Token。旧报告的惩罚 TTA P50 不能解释为实际失败耗时。
 
 完成结果：`target/change-spec-eval/2026-08-23T04-59-57.745377400Z-20260820/report.md`，SHA-256 `887d3a2bfa17296f7992a1cbfe8ba996a15de3ea4bf44baa281c9f0845ba6e55`。
 
 - 配对 Draft/digest 从 `8/12` 提升到 `12/12`，无 `DRAFT_INVALID` 和 `Input length=1`；最长 ReAct 阶段从旧 Pilot 的 50 次压到 15 次。
 - A/B/C 成功率从 50.00%/41.67%/33.33% 变为 58.33%/41.67%/41.67%；C 首次成功率 33.33%、最终成功率 41.67%，一次修复净增 1/12。
 - C 虚假完成率从 20.00% 降到 0%，但 B/C 成功率仍低于 A；中型 + 高风险任务中 C 比 A 低 25 个百分点，不能宣称 ChangeSpec 已提效。
-- 成功 TTA P50 为 A/B/C 29.29s/46.18s/63.02s，失败截断数 5/12、7/12、7/12；自动 Pilot 的人工介入时间仍为 `N/A`。
+- 成功 TTA P50 为 A/B/C 29.29s/46.18s/63.02s，失败惩罚数 5/12、7/12、7/12；自动 Pilot 的完整人工总投入仍为 `NOT_MEASURED`。
 - 按实际 API 调用去除 B/C 报告中重复计入的配对 Draft 后，本轮约 1,108,295 输入 Token、99,509 输出 Token，按本次参数估算约 CNY 0.3155。
 
 ## 5. 仍需进一步验证或设计
 
-- [ ] 增加按 LLM 请求、工具执行、公开 Verifier、隐藏 Oracle 分段的延迟明细，才能进一步拆分模型推理、网络和本地 Maven 的耗时。
+- [x] 报告不再把天花板、零缺陷下限、无修复机会或未采集维度混成普通失败；统一使用 `PASS / FAIL / NOT_EVALUABLE / NOT_MEASURED`，且不输出单一“有价值/无价值”总分。
+- [x] 报告拆分 A→B（契约与公开 Evidence Gate）、B→C（Evidence 修复）和 A→C（完整产品路径），并显示按任务/重复轮次配对的候选胜/负/平。
+- [x] 增加 `repair_eligible_count`、修复尝试率和条件修复成功率；没有修复机会时明确为 `NOT_EVALUABLE`。
+- [x] 时间指标分为客观正确候选 TTA、可信产品决策 TTA、失败实际耗时和惩罚 TTA；固定 `600s` 明确只是历史失败惩罚，不再称为实际失败耗时或严格删失时间。
+- [x] 报告增加 Draft、ReAct、公开 Verifier、隐藏 Oracle 分段 P50、成功率 95% Wilson 区间和单位成功成本。
+- [x] ReAct 内增加 LLM 请求与工具批次各自的墙钟采集；失败模型请求仍计时，并行工具按整批等待时间统计，公开 Verifier 继续单列。LLM 请求内部的服务端推理、网络和流式接收仍无法再拆分。
 - [ ] 审计公开 Verifier 对每条 Criterion 的证据覆盖强度；“一个宽泛 Maven 命令证明全部语义”仍可能造成公开验收过浅。
-- [ ] 扩大到 12～15 个任务、每组至少 3 次，并报告置信区间；当前 12 次/组只能作工程判断。
-- [ ] 设计真人参与的 Spec 确认、HITL、Human Criterion 计时；自动 Pilot 的人工介入时间继续是 `N/A`。
+- [ ] 扩大到 12～15 个任务、每组至少 3 次；新增歧义需求、非目标、跨文件约束、兼容性决策和确定性错误候选/变异测试。当前报告已有置信区间，但现有 12 次/组仍只能作工程判断。
+- [ ] 设计真人参与的 Spec 确认、HITL、结果复核、返工与沟通总人时；自动 Pilot 的 `total_human_effort` 继续是 `NOT_MEASURED`。
 - [ ] 单独归因仓库 Quick 的历史失败，避免简历材料声称“全量测试绿色”。
 
-## 6. 最后换模型
+## 6. 跨模型对照（DeepSeek 小样已完成，完整复跑未执行）
 
 同模型全量结果归档后，再固定代码、任务、seed、重复次数和评测预算，只改 provider/model。先跑第 3 节的 9 次小样本，稳定后再跑 36 次。示例：
 
@@ -85,3 +90,11 @@ mvn test -Pchange-spec-eval '-Dpaicli.changeSpecEval.provider=deepseek' '-Dpaicl
 ```
 
 模型对照重点看：Draft 首次/最终有效率、可见测试一次做对率、隐藏 Oracle 成功率、循环/预算止损次数、成功 TTA 和单位成功成本。若只换模型后明显改善，才能把差值主要归到模型能力；在此之前不能给“纯模型原因占比”一个可信百分比。
+
+2026-08-23 已按冻结的三个代表任务、seed、单次重复和预算运行 `deepseek / deepseek-v4-pro-0813` 小样，报告位于 `target/change-spec-eval/2026-08-23T06-23-26.095442900Z-20260820/report.md`，SHA-256 为 `BC027951BE2DDA53E31727DBC071751F66CB025700F3649731FB8A6617721184`：
+
+- A/B/C 均为 100%，B/C digest `3/3`，Scope 越界和虚假完成均为 0；
+- C 全部首次通过、修复机会为 0，因此增量成功率和修复价值分别属于成功率天花板与无机会，不能解释为“没有价值”；
+- 中型 + 高风险的 C 相对 A 自动耗时明显增加，说明当前产品路径存在自动流程开销；
+- 本轮未配置模型单价，不能比较单位成功成本；每任务只重复一次，也不能形成统计学上的跨模型结论；
+- 后续 36 次 DeepSeek 完整复跑未启动，必须由用户审核本轮报告后单独批准。
