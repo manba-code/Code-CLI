@@ -14,6 +14,7 @@
 - 定位：面向商业使用的 Java Agent CLI 产品，对标 Claude Code
 - 已交付 23 期（ReAct → Plan+DAG → Memory → RAG → Multi-Agent → HITL → 并行工具 → 多模型 → 联网 → MCP 核心 → MCP 高级 → 长上下文 → Chrome DevTools → CDP 会话复用 → Skill → TUI → LSP 诊断 → Side-Git 快照 → Prompt 分层 → Runtime API → 图片输入 → 微信 iLink 通道文本 MVP）
 - ChangeSpec V1 已完成前六条产品切片、首次 Pilot 修复和 GLM 同模型复跑。2026-08-23 的 `glm-4.6v-flashx` 完整 36 次复跑中 A/B/C 成功率为 58.33%/41.67%/41.67%，配对 Draft/digest 12/12，C 虚假完成率 0%；随后冻结三个代表任务运行 `deepseek-v4-pro-0813` 小样，A/B/C 均为 100%，出现成功率天花板且 C 没有修复机会。不能把前者概括为 ChangeSpec 无价值，也不能把后者概括为已提效。评测修复已落地：结构或语义资格失败共用 Draft Generator 的最多两次纠错链路；B/C 产品耗时包含配对 Draft；报告使用 `PASS / FAIL / NOT_EVALUABLE / NOT_MEASURED`，显示 A→B/B→C/A→C 配对作用、95% 区间、修复机会/条件成功率、客观正确候选/可信产品决策/失败实际/惩罚 TTA、分段耗时和单位成功成本；ReAct 内进一步分列 LLM 请求等待墙钟与工具批次墙钟，并行工具按整批等待时间统计；评测目录已扩展到 12 个 fixture（每层 4 个），逐项声明公开证据契约，Draft 的 command、JUnit glob、最低测试数和 Criterion 引用在锁定前校验，并为每个 fixture 提供一个应被公开 Verifier 杀死的确定性单点突变；固定失败值只是历史惩罚，不是实际失败耗时或严格统计删失；Windows Oracle 日志容错解码；Agent 停滞检测覆盖重复两步工具周期；自动评测默认限制每个 ReAct 阶段 15 轮/250k Token，生产默认行为不变。B/C 继续共用锁定 Spec/digest，B 只关闭修复，C 最多一次 Evidence 修复；`NO_CHANGE_COMPLETION` 和隐藏 Oracle 继续负责识别公开误放行。任务目录、公开测试与资格契约均在历史 Pilot 后增强，后续真实结果必须建立新版基线，不能与旧报告直接归因为模型差异。任何新的完整付费复跑均未获授权，不得自动运行。`mvn test -Pchange-spec-eval` 现在默认产生 72 次产品运行并产生费用；自动 Pilot 的完整人工总投入必须为 `NOT_MEASURED`。详见 `docs/change-spec-pilot-remediation-checklist.md`。
+- 2026-08-23 已完成 Quick 历史失败归因与跨平台修复：`-Pquick` 为 846 tests，0 failures，0 errors，5 skipped；随后不带付费 Profile 的全量回归为 892 tests，0 failures，0 errors，11 个平台/显式评测项按预期 skipped。
 - `PAI.md` 是 PaiCLI 的项目级记忆文件：启动时自动注入 system prompt，适合团队共享的长期稳定规则；个人/会变化的经验继续用 `/save` 长期记忆。
 - 下一步：OAuth / sampling / recovery 作为后续 MCP 增强
 - Banner 版本：`v16.1.0`，Maven 产物：`paicli-1.0-SNAPSHOT.jar`（两者不一致是正常状态）
@@ -60,7 +61,7 @@ ChangeSpec 是现有执行路径之上的可选契约层。当前 `/spec <需求
 
 `execute_command` 按宿主平台使用原生命令壳：Windows 为 `cmd.exe`，Linux/macOS 为 POSIX `sh`，不把 Bash/WSL 作为额外运行前提；命令超时或取消时必须清理子进程树。`glob_files` / `grep_code` 面向模型返回的项目相对路径统一使用 `/`，不能泄漏 Windows `\` 分隔符。
 
-代码库理解默认走 Claude Code 式实时探索：`glob_files` 找候选文件、`grep_code` 精确定位符号或字符串、`read_file` 按需读取具体行段。`grep_code` 优先使用本机 `ripgrep`，不可用时回退到 Java 扫描；结果受 `max_results` / `head_limit` / `max_chars` 预算约束，返回 `partial: true` 或 `suggested_reads` 时应继续缩小搜索范围或按建议读取行段。`search_code` 是 RAG 语义辅助，适合模糊自然语言、关键词不明确、常规搜索无果、巨型/跨知识检索场景，不作为精确代码定位的首选。
+代码库理解默认走 Claude Code 式实时探索：`glob_files` 找候选文件、`grep_code` 精确定位符号或字符串、`read_file` 按需读取具体行段。`grep_code` 优先使用本机 `ripgrep`，不可用时回退到 Java 扫描；结果受 `max_results` / `head_limit` / `max_chars` 预算约束，返回 `partial: true` 或 `suggested_reads` 时应继续缩小搜索范围或按建议读取行段。`search_code` 是 RAG 语义辅助，适合模糊自然语言、关键词不明确、常规搜索无果、巨型/跨知识检索场景，不作为精确代码定位的首选。`VectorStore` 会把 project path 规范化为宿主绝对路径；RAG 单元测试必须注入本地 stub Embedding，不能依赖 Ollama 或远程 API 是否在线。
 
 MCP 动态工具：`mcp__{server}__{tool}`（+ resources 虚拟工具）
 
@@ -117,6 +118,7 @@ src/main/java/com/paicli/
 - `LineReader` 使用 `PaiCliHighlighter` 做输入实时高亮：slash 命令、`@` 引用、`@image:`、`@clipboard`、敏感词和明显危险 shell 片段会在编辑阶段被标记；不要把这类视觉提示混入最终提交文本。
 - `LineReader` 使用 `PaiCliCompleter` 做上下文补全：`/model` provider、`/mcp` 子命令与 server、`/skill` 子命令与 skill name、`/task` / `/browser` / `/snapshot` 子命令、`@image:` 本地路径、本地 `@path` 和 MCP resource `@server:uri` 引用都应从同一个 completer 出口维护。
 - 普通用户输入进入 Agent 前会先展开 MCP resource mention，再由 `LocalPathMentionExpander` 展开本地 `@path`：文件会内联为 `<file>` 块，目录会内联为 `<directory>` 列表；绝对路径或符号链接逃逸项目根时保持原文不展开。
+- `@image:file://...` 在 Windows 同时接受标准 `file:///C:/...` 和常见的 `file://C:\...`，并宽容处理未编码空格、非 ASCII 和合法 `%XX`；驱动器路径不能被误转成当前盘根下的 `/C:` 路径。
 - `LineReader` 使用 `PaiCliHistory` 持久化输入历史到 `~/.paicli/history/input.history`；如果 `paicli.history.file` / `PAICLI_HISTORY_FILE` 指向目录，也会自动使用该目录下的 `input.history`，避免把目录当文件读；默认忽略空白、重复、明显密钥/Bearer、base64 图片和超长输入，用户可用 `/history clear` 清空本机输入历史。
 - 启动期会加载 `~/.paicli/PAI.md`、项目根 `PAI.md`、项目根 `.paicli/PAI.md`、`PAI.local.md`、`.paicli/PAI.local.md`，按此顺序注入 Project Context；`@relative/path.md` 可导入项目根内文件，总注入内容有字符预算，避免项目记忆变成 token 噪音。
 - `/init` 会根据当前项目生成短 `PAI.md`，只放 commands / project positioning / architecture / pitfalls / don'ts；默认不覆盖已有文件。

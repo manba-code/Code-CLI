@@ -93,8 +93,15 @@ public class PromptAssembler {
     }
 
     private static String stripToolSections(String base) {
-        String withoutTools = base.replaceFirst("(?s)\\n## Tools\\n.*?(?=\\n## Browser Policy\\n)", "\n");
-        return withoutTools.replaceFirst("(?s)\\n## Tool Policy\\n.*?(?=\\n## Browser Policy\\n)", "\n");
+        String lineBreak = "(?:\\r\\n|\\r|\\n)";
+        String withoutTools = base.replaceFirst(
+                "(?s)" + lineBreak + "## Tools" + lineBreak
+                        + ".*?(?=" + lineBreak + "## Browser Policy" + lineBreak + ")",
+                "\n");
+        return withoutTools.replaceFirst(
+                "(?s)" + lineBreak + "## Tool Policy" + lineBreak
+                        + ".*?(?=" + lineBreak + "## Browser Policy" + lineBreak + ")",
+                "\n");
     }
 
     private static String noToolsSection() {

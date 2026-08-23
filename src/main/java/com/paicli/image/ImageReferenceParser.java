@@ -162,7 +162,16 @@ public class ImageReferenceParser {
             int slashIdx = afterScheme.indexOf('/');
             pathPart = slashIdx < 0 ? "/" + afterScheme : afterScheme.substring(slashIdx);
         }
-        return percentDecodeUtf8(pathPart);
+        String decoded = percentDecodeUtf8(pathPart);
+        if (java.io.File.separatorChar == '\\'
+                && decoded.length() >= 4
+                && decoded.charAt(0) == '/'
+                && Character.isLetter(decoded.charAt(1))
+                && decoded.charAt(2) == ':'
+                && (decoded.charAt(3) == '/' || decoded.charAt(3) == '\\')) {
+            return decoded.substring(1);
+        }
+        return decoded;
     }
 
     private static String percentDecodeUtf8(String s) {

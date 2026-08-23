@@ -136,11 +136,14 @@ PaiCLI 的 ChangeSpec 是可选的 Spec-Driven Code Change 契约层：把自然
 - 本次目录扩展新增 `email-canonicalizer`、`inclusive-clamp`、`feature-flag-precedence`、`order-state-machine`、`secret-redactor` 和 `token-expiry-cross-file`，覆盖显式非目标、非法输入、兼容优先级、状态转换、安全脱敏和跨文件约束。默认完整评测规模因此变为 12×3×2=72 次产品运行；未运行任何真实模型。
 - 去除 B/C 产品行重复计入的配对 Draft 后，本轮实际 API 用量约 1,108,295 输入 Token、99,509 输出 Token，按本次 CNY 单价估算约 0.3155 元。最长 ReAct 阶段为 15 次；没有旧 Pilot 的 50 次循环长尾。
 
-### Quick 已知基线
+### Quick 当前基线
 
-- `mvn test -Pquick`：817 tests，10 failures，0 errors，3 skipped，`BUILD FAILURE`。
-- 此前失败类和方法与第四条切片的 10 项基线完全一致：`ImageReferenceParserTest` 3 项，`MemoryManagerTest` 1 项，`PromptAssemblerTest` 1 项，`CodeIndexTest` 2 项，`CodeRetrieverTest` 1 项，`InlineRendererTest` 1 项，`CodeSearchGoldenSetTest` 1 项；本次 Windows ToolRegistry 修复后未重跑 Quick，针对性回归与评测 fixture 预检均通过。
-- 已归因并修复 `ToolRegistryTest` 的 Windows 跨平台问题：`execute_command` 改用原生 `cmd.exe`，项目相对路径统一输出 `/`，超时清理子进程树；20 tests 全部通过。相关 `CommandGuardTest`、`ApprovalPolicyTest` 和 `SpecVerifierTest` 也通过。
+- 修复前刷新结果：`mvn test -Pquick` 共 845 tests、9 failures、0 errors、5 skipped；历史第 10 项 `CodeSearchGoldenSetTest` 已自行恢复绿色，其余 9 项可稳定复现。
+- 9 项已完成归因：`ImageReferenceParserTest` 3 项是 Windows 驱动器 `file://` 解析；`PromptAssemblerTest` 1 项是 CRLF section 匹配；`InlineRendererTest` 1 项和 `MemoryManagerTest` 1 项是测试只接受 LF/`/`；`CodeIndexTest` 2 项是单元测试误依赖外部 Embedding；`CodeRetrieverTest` 1 项是 `VectorStore` 与 Retriever 的 project path 规范化不一致。
+- 最小修复后 6 个失败类定向回归 38/38 通过；`CodeIndexTest` 注入 stub Embedding 并使用隔离存储，`VectorStore` 统一规范化宿主绝对路径，图片/Prompt 兼容 Windows 路径与 CRLF，平台相关断言改用 JDK 路径/换行语义。
+- 最终 `mvn test -Pquick '-Dmaven.compiler.useIncrementalCompilation=false'`：846 tests、0 failures、0 errors、5 个显式慢/付费项按预期 skipped，`BUILD SUCCESS`。
+- 随后 `mvn test -DskipTests=false '-Dmaven.compiler.useIncrementalCompilation=false'`：892 tests、0 failures、0 errors、11 个 Windows 不适用/显式真实评测项按预期 skipped，`BUILD SUCCESS`；没有启用 `agent-eval` 或 `change-spec-eval` 付费 Profile。
+- 先前已归因并修复 `ToolRegistryTest` 的 Windows 跨平台问题：`execute_command` 改用原生 `cmd.exe`，项目相对路径统一输出 `/`，超时清理子进程树；20 tests 全部通过。相关 `CommandGuardTest`、`ApprovalPolicyTest` 和 `SpecVerifierTest` 也通过。
 
 ## 5. 未解决问题
 
@@ -151,7 +154,6 @@ PaiCLI 的 ChangeSpec 是可选的 Spec-Driven Code Change 契约层：把自然
 - LLM 请求墙钟仍把服务端推理、网络传输和流式接收合并在一起，不能进一步归因到 provider 内部阶段；
 - 完整 `total_human_effort` 尚未采集 Spec 确认、HITL、结果复核、返工和沟通时间；
 - V1 仍只支持 revision 1，不支持运行中修改锁定需求或恢复/重跑既有 Spec；
-- Quick 历史基线不是绿色状态，10 项既有失败归因仍未完成；
 
 ### 明确不在当前切片
 
@@ -161,7 +163,7 @@ PaiCLI 的 ChangeSpec 是可选的 Spec-Driven Code Change 契约层：把自然
 
 ## 6. 下一阶段任务
 
-历史免费回归 → 原模型 3 个代表任务 × 1 次 → 原模型完整 36 次 → DeepSeek 冻结代表性 9 次小样均已完成并归档；此后 12 任务目录、公开证据契约和确定性突变的免费验证也已完成。下一阶段仅继续 Quick 历史失败归因和真人总人时实验设计；12×3×2 的新版基线或 12×3×3 的正式研究均未获授权，不得自动启动。详细边界见 [`docs/change-spec-pilot-remediation-checklist.md`](docs/change-spec-pilot-remediation-checklist.md)。
+历史免费回归 → 原模型 3 个代表任务 × 1 次 → 原模型完整 36 次 → DeepSeek 冻结代表性 9 次小样均已完成并归档；此后 12 任务目录、公开证据契约、确定性突变和 Quick 历史失败修复也已完成。下一阶段只剩专门的歧义澄清任务与真人总人时实验设计可免费推进；12×3×2 的新版基线或 12×3×3 的正式研究均未获授权，不得自动启动。详细边界见 [`docs/change-spec-pilot-remediation-checklist.md`](docs/change-spec-pilot-remediation-checklist.md)。
 
 同模型代表性小样的完成证据：
 

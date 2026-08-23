@@ -87,6 +87,7 @@ Verifier 进入唯一一次修复时还会注入首次 changed-files 数量；�
 
 - 代码向量化（Embedding），支持本地 Ollama 和远程 API
 - SQLite 持久化 + 余弦相似度语义检索
+- project path 入库前统一规范化为宿主绝对路径；确定性测试注入 stub Embedding，不依赖本地 Ollama 或远程 API
 - 代码分块（文件/类/方法粒度）与 AST 解析
 - 代码关系图谱（extends/implements/imports/calls/contains）
 - 新增 `/index`、`/search`、`/graph` CLI 命令
@@ -258,7 +259,7 @@ v16.1 抽出 `Renderer` 接口 + 三个实现：
 - `LlmClient` 公共接口用 `supportsImageInput()` 声明图片能力；DeepSeek 等文本 provider 会把图片块替换成文本提示，避免 `image_url` 进入不支持多模态的 API 请求体
 - GLM 套餐用户可通过 `/model glm-5v-turbo` 切换到 GLM-5V-Turbo 多模态模型，再用 Ctrl+V 或 `@image:` 输入图片；本地 base64 图片会按智谱格式写入 `image_url.url`
 - MCP `image` content 会保留 base64 与 `mimeType`，在 ReAct / Plan / SubAgent 工具结果后作为图片 user message 回灌；当前 provider 不支持图片输入时，请求序列化层会自动省略图片 payload 并保留文本提示
-- 用户可通过 `@image:file:///abs/path.png`、`@image:/abs/path.png` 或 `@image:relative/path.png` 引用本地图片
+- 用户可通过 `@image:file:///abs/path.png`、`@image:/abs/path.png` 或 `@image:relative/path.png` 引用本地图片；Windows 也兼容常见的 `file://C:\path\image.png`，并支持未编码空格、非 ASCII 与 `%20`
 - 本地图片和 MCP 图片都会按 Claude Code 同类策略预处理：不是 OCR 成文本，而是压缩 / 缩放后作为图片块发送；带 alpha 的 PNG 会铺白底重编码；额外注入来源、尺寸和坐标映射元信息
 - 本地 `@image:` 消息会要求模型优先分析本轮图片；除非用户明确要求结合历史，历史对话和历史工具结果不能替代当前图片内容
 - 新一轮 ReAct / SubAgent 任务开始前会省略历史 image payload，仅保留文本元信息，避免旧截图反复进入上下文；模型 `reasoning_content` 默认只写日志 / 展示，DeepSeek V4 / Kimi thinking tool-call 续轮会按 provider 协议带回上一轮 assistant reasoning

@@ -3,7 +3,9 @@ package com.paicli.rag;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -11,13 +13,18 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class CodeRetrieverTest {
 
-    private static final String TEST_PROJECT = "/tmp/paicli-code-retriever";
+    @TempDir
+    Path tempDir;
     private VectorStore store;
+    private String projectPath;
+    private String originalRagDir;
 
     @BeforeEach
     void setUp() throws Exception {
-        System.setProperty("paicli.rag.dir", "/tmp/paicli-test-rag-retriever");
-        store = new VectorStore(TEST_PROJECT);
+        originalRagDir = System.getProperty("paicli.rag.dir");
+        System.setProperty("paicli.rag.dir", tempDir.resolve("rag-store").toString());
+        projectPath = tempDir.resolve("project").resolve("..").resolve("project").toString();
+        store = new VectorStore(projectPath);
         store.clearProject();
     }
 
@@ -25,6 +32,11 @@ class CodeRetrieverTest {
     void tearDown() throws Exception {
         if (store != null) {
             store.close();
+        }
+        if (originalRagDir == null) {
+            System.clearProperty("paicli.rag.dir");
+        } else {
+            System.setProperty("paicli.rag.dir", originalRagDir);
         }
     }
 
@@ -55,7 +67,7 @@ class CodeRetrieverTest {
             }
         };
 
-        try (CodeRetriever retriever = new CodeRetriever(TEST_PROJECT, stubClient)) {
+        try (CodeRetriever retriever = new CodeRetriever(projectPath, stubClient)) {
             List<VectorStore.SearchResult> results = retriever.hybridSearch("Agent的ReAct循环是怎么实现的", 5);
 
             assertFalse(results.isEmpty());

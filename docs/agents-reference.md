@@ -217,6 +217,7 @@ scheme 白名单(http/https) / 主机黑名单(localhost/loopback/link-local/sit
 - project_context 顺序：`PAI.md` 项目记忆 → 相关长期记忆 → MCP resources 索引
 - 覆盖优先级：jar 内置 < 用户级 ~/.paicli/prompts/ < 项目级 .paicli/prompts/
 - 必要校验：base.md 和最终 prompt 必须包含 `## Language`
+- 禁用 tools 时按 Markdown section 移除 `## Tools` / `## Tool Policy`，解析必须同时兼容 LF 与 CRLF
 
 ### Async Tasks + Runtime API (Phase 20)
 
@@ -228,7 +229,7 @@ scheme 白名单(http/https) / 主机黑名单(localhost/loopback/link-local/sit
 
 - ContentPart 支持图片 block（base64 + mimeType）
 - ImageProcessor：铺白底/缩放 2000x2000/压缩 5MB
-- 输入：`@image:file:///path.png` / `@image:/path.png` / `@image:relative.png`
+- 输入：`@image:file:///path.png` / `@image:/path.png` / `@image:relative.png`；Windows 兼容 `file://C:\path\image.png`，宽容处理空格、非 ASCII 与 `%XX`
 - GLM-5V-Turbo 通过 `/model glm-5v-turbo` 切换
 - Provider 通过 `supportsImageInput()` 声明是否接收图片；不支持时保留文字上下文并省略图片 payload
 - 历史 image payload 替换为文本占位，避免旧截图消耗上下文
@@ -326,6 +327,6 @@ EMBEDDING_BASE_URL=http://localhost:11434
 
 测试覆盖偏向：解析、计划结构、RAG 核心、Multi-Agent 编排、HITL 策略、策略层拦截、MCP 协议、资源输入层、长上下文策略与 Skill 加载。
 
-不覆盖：真实 LLM 联调、真实 Embedding API、真实 MCP server 联调、终端完整手工体验。
+不覆盖：真实 LLM 联调、真实 Embedding API、真实 MCP server 联调、终端完整手工体验。2026-08-23 的本地全量回归为 892 tests、0 failures、0 errors、11 skipped；RAG 测试使用 stub Embedding，不把外部服务在线状态混入单元测试。
 
 完整测试类列表：CliCommandParserTest / MainBrowserCommandTest / PlanReviewInputParserTest / MainInputNormalizationTest / ExecutionPlanTest / MemoryEntryTest / ConversationMemoryTest / LongTermMemoryTest / MemoryRetrieverTest / MemoryManagerTest / ExplicitMemoryHintsTest / ContextProfileTest / PlanExecuteAgentTest / AgentMemoryHintTest / AgentRoleTest / AgentMessageTest / AgentOrchestratorTest / EmbeddingClientTest / SearchResultTest / NetworkPolicyTest / HtmlExtractorTest / WebFetcherTest / SearchProviderFactoryTest / ZhipuSearchProviderTest / VectorStoreTest / CodeChunkerTest / CodeAnalyzerTest / CodeIndexTest / ApprovalPolicyTest / ApprovalResultTest / HitlToolRegistryTest / TerminalHitlHandlerTest / ToolRegistryTest / BrowserSessionTest / BrowserConnectivityCheckTest / SensitivePagePolicyTest / BrowserGuardTest / McpSchemaSanitizerTest / McpConfigLoaderTest / JsonRpcClientTest / McpToolBridgeTest / McpResourceCacheTest / AtMentionParserTest / AtMentionExpanderTest / AtMentionCompleterTest / NotificationRouterTest / PathGuardTest / CommandGuardTest / AuditLogTest / SkillFrontmatterParserTest / SkillRegistryTest / SkillStateStoreTest / SkillBuiltinExtractorTest / SkillContextBufferTest / SkillIndexFormatterTest / LoadSkillToolTest / SkillCommandHandlerTest

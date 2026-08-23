@@ -76,6 +76,26 @@ class PromptAssemblerTest {
     }
 
     @Test
+    void omitsToolSectionsFromCrLfBaseOverride() throws Exception {
+        Path projectPrompts = tempDir.resolve("project-crlf");
+        Files.createDirectories(projectPrompts);
+        Files.writeString(projectPrompts.resolve("base.md"), String.join("\r\n",
+                "## Identity", "", "test", "", "## Language", "", "中文", "",
+                "## Tools", "", "SHOULD_BE_REMOVED", "", "## Tool Policy", "",
+                "REMOVE_THIS_TOO", "", "## Browser Policy", "", "keep"));
+        PromptAssembler assembler = new PromptAssembler(new PromptRepository(
+                tempDir.resolve("user-crlf"), projectPrompts));
+
+        String prompt = assembler.assemble(PromptMode.AGENT, PromptContext.builder()
+                .toolsEnabled(false)
+                .build());
+
+        assertFalse(prompt.contains("SHOULD_BE_REMOVED"));
+        assertFalse(prompt.contains("REMOVE_THIS_TOO"));
+        assertTrue(prompt.contains("## Browser Policy"));
+    }
+
+    @Test
     void baseOverrideMustKeepLanguageSection() throws Exception {
         Path projectPrompts = tempDir.resolve("project");
         Files.createDirectories(projectPrompts);

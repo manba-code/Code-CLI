@@ -80,7 +80,7 @@ mvn test -Pchange-spec-eval '-Dpaicli.changeSpecEval.provider=glm' '-Dpaicli.cha
 - [x] 任务目录达到 12～15 个的数量下限，新增显式非目标、跨文件约束、兼容性决策、安全脱敏和状态转换；每个 fixture 都有一个基于参考实现的确定性单点错误突变，免费预检必须证明公开 Verifier 能杀死它。
 - [ ] 新版真实评测每组至少重复 3 次，并继续补充专门的歧义澄清任务。12 任务 × 3 组 × 3 次将产生 108 次产品运行；当前未获授权，不得自动启动。
 - [ ] 设计真人参与的 Spec 确认、HITL、结果复核、返工与沟通总人时；自动 Pilot 的 `total_human_effort` 继续是 `NOT_MEASURED`。
-- [ ] 单独归因仓库 Quick 的历史失败，避免简历材料声称“全量测试绿色”。
+- [x] 单独归因并修复仓库 Quick 的历史失败：刷新后 9 个失败均来自 Windows 路径/CRLF 假设、RAG 测试外部依赖或 project path 规范化不一致；修复后 `-Pquick` 为 846 tests、0 failure、0 error、5 skipped，不带付费 Profile 的全量回归为 892 tests、0 failure、0 error、11 skipped。
 
 > 第 79 项增强了 fixture 公开测试和 Draft 资格契约，发生在已归档的 GLM/DeepSeek Pilot 之后。旧报告继续作为历史证据，但未来付费结果必须先建立新版 A/B/C 基线，不能把与旧报告的变化直接归因给模型。
 
