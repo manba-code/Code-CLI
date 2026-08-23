@@ -277,7 +277,7 @@ public final class SpecRunCoordinator {
                     SpecRunResult.Verdict.INCOMPLETE,
                     metrics(review, reactMs, 0L, 0L, 0, runStartedAt, reactUsage),
                     SpecRunResult.Artifacts.notApplicable(),
-                    capture.error());
+                    joinDetails(execution.response(), capture.error()));
             return persist(result);
         }
 
@@ -366,7 +366,7 @@ public final class SpecRunCoordinator {
                         SpecRunResult.Verdict.INCOMPLETE,
                         metrics(review, reactMs, verificationMs, 0L, repairCount, runStartedAt, reactUsage),
                         SpecRunResult.Artifacts.notApplicable(),
-                        capture.error());
+                        joinDetails(repairExecution.response(), capture.error()));
                 return persist(result);
             }
 
@@ -828,6 +828,7 @@ public final class SpecRunCoordinator {
                 </locked_change_spec>
 
                 使用现有 ReAct 能力完成代码修改，并遵守当前 HITL、PathGuard 和 CommandGuard。
+                每次测试失败后先读取并分析最新错误，再针对该错误改变实现；不得原样重复相同的文件写入与测试命令周期。若同一测试再次失败，必须重新检查当前文件与失败断言，确认新改动确实不同且直接处理失败原因。
                 你可以把测试作为实现工作的一部分运行。ReAct 正常结束后系统会运行锁定 Spec 中的确定性 Verifier；你的最终回答不是验收 Verdict，不得把自述称为验收通过，也不得生成 PASSED Verdict。
                 """.formatted(
                 confirmedRequest,

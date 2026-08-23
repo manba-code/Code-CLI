@@ -1,6 +1,6 @@
 # ChangeSpec V1 A/B/C 评测协议
 
-> 状态：评测框架已实现，真实 LLM 快速试验尚未运行。  
+> 状态：评测框架、修复后的代表性小样和同模型 36 次真实 LLM Pilot 均已完成；复跑结果仍未显示 ChangeSpec 提效。
 > 运行入口：`mvn test -Pchange-spec-eval`（会产生网络请求和 Token 费用）。
 
 ## 1. 要回答的问题
@@ -50,7 +50,7 @@
 
 ## 4. 自动交互策略
 
-- 第一个同时通过结构和语义资格检查的配对 Draft 自动确认；结构纠错仍遵循生产 Draft Generator 最多两次生成的规则；语义资格要求至少声明一个任务允许的完整 command，且每条非 scope deterministic Criterion 都引用至少一个允许的 command；
+- 第一个同时通过结构和语义资格检查的配对 Draft 自动确认；结构或语义资格失败都进入 Draft Generator 最多两次生成的同一纠错链路；语义资格要求至少声明一个任务允许的完整 command，且每条非 scope deterministic Criterion 都引用至少一个允许的 command；
 - 公开 Verifier 只有命令完全等于任务预声明命令时才执行，其他命令记为 `HITL_DENIED`；
 - fixture 位于隔离 workspace，Agent 继续受 PathGuard 和 CommandGuard 约束；
 - 自动评测不替代 Human Criterion：若 Draft 生成 Human Criterion，评测器选择 `SKIPPED`，最终通常为 `NEEDS_HUMAN`；
@@ -95,11 +95,13 @@ A/B 没有自动修复，因此首次候选通常就是最终候选；C 必须�
 产品运行总耗时 + 最终隐藏 Oracle 耗时
 ```
 
-失败运行按统一 `censorMinutes` 截断。报告同时单列产品耗时和隐藏 Oracle 耗时。默认截断值为 10 分钟；这是指标截断口径，Agent 自身仍使用相同的产品默认轮数预算和命令超时。
+失败运行按统一 `censorMinutes` 截断。报告同时展示产品耗时 P50、仅成功样本的 TTA P50、包含失败截断值的 TTA P50、截断数和隐藏 Oracle 耗时，不能把 `600s` 截断中位数解释成真实执行时长。B/C 的产品运行总耗时包含配对 Draft 生成耗时；Draft 耗时仍可由单次运行指标单独审计。
+
+默认截断值为 10 分钟；这是统计口径，不是执行超时。为防止付费评测被异常 Agent 长尾支配，自动评测默认给每个 ReAct 阶段 15 次迭代和 250,000 Token 的独立安全预算，并检测重复单步/两步工具周期；这些限制不改变生产 CLI 的默认预算。
 
 ### Token 与成本
 
-记录 Draft + ReAct 的 calls、input/output/cached tokens。成本只有显式提供每百万 Token 单价时才估算，报告不内置可能变化的模型价格。
+记录 Draft + ReAct 的 calls、input/output/cached tokens。成本只有显式提供每百万 Token 单价时才估算，报告不内置可能变化的模型价格；`costCurrency` 只控制报告币种标签，不执行汇率换算。
 
 ## 6. 公平性与随机性
 
@@ -133,16 +135,20 @@ mvn test -Pchange-spec-eval
 # 指定 provider
 mvn test -Pchange-spec-eval '-Dpaicli.changeSpecEval.provider=deepseek'
 
+# 仅在本次评测 JVM 内覆盖模型，不修改持久配置
+mvn test -Pchange-spec-eval '-Dpaicli.changeSpecEval.provider=glm' '-Dpaicli.changeSpecEval.model=glm-4.6v-flashx'
+
 # 只跑一个任务、一次重复，用于付费运行前 smoke
 mvn test -Pchange-spec-eval \
   '-Dpaicli.changeSpecEval.cases=safe-divider' \
   '-Dpaicli.changeSpecEval.repetitions=1'
 
-# 固定顺序并配置美元单价
+# 固定顺序并配置人民币单价
 mvn test -Pchange-spec-eval \
   '-Dpaicli.changeSpecEval.seed=20260820' \
-  '-Dpaicli.changeSpecEval.inputCostPerMillion=0.50' \
-  '-Dpaicli.changeSpecEval.outputCostPerMillion=2.00'
+  '-Dpaicli.changeSpecEval.inputCostPerMillion=0.15' \
+  '-Dpaicli.changeSpecEval.outputCostPerMillion=1.50' \
+  '-Dpaicli.changeSpecEval.costCurrency=CNY'
 ```
 
 配置项：
@@ -150,12 +156,16 @@ mvn test -Pchange-spec-eval \
 | 属性 | 默认值 | 说明 |
 |---|---:|---|
 | `paicli.changeSpecEval.provider` | PaiCLI 默认 provider | 指定本次使用的 provider |
+| `paicli.changeSpecEval.model` | provider 当前配置 | 只在评测 JVM 内覆盖模型 ID |
 | `paicli.changeSpecEval.repetitions` | `2` | 每任务/组重复次数，1～20 |
 | `paicli.changeSpecEval.seed` | `20260820` | 三组运行顺序 seed |
 | `paicli.changeSpecEval.cases` | 全部 | 逗号分隔任务 ID |
 | `paicli.changeSpecEval.censorMinutes` | `10` | 失败 TTA 截断分钟数，1～60 |
 | `paicli.changeSpecEval.inputCostPerMillion` | `0` | 输入 Token 单价；0 表示不估价 |
 | `paicli.changeSpecEval.outputCostPerMillion` | `0` | 输出 Token 单价；0 表示不估价 |
+| `paicli.changeSpecEval.costCurrency` | `USD` | 三字母报告币种标签，不换算汇率 |
+| `paicli.changeSpecEval.reactTokenBudget` | `250000` | 每个 ReAct 阶段的评测 Token 安全预算 |
+| `paicli.changeSpecEval.reactMaxIterations` | `15` | 每个 ReAct 阶段的评测最大迭代数，1～50 |
 
 产物位于：
 
@@ -167,8 +177,8 @@ target/change-spec-eval/<run-id>/
 └── first-pass/
 ```
 
-若两次 Draft 都未通过结构校验，Codec 错误会指出 Jackson 能定位到的具体字段路径；结构通过但未满足
-任务命令白名单或 Criterion 引用规则时，评测器同样按 `DRAFT_INVALID` 拒绝，不进入 B/C，也不产生配对 digest。
+若两次 Draft 都未通过结构或评测语义资格校验，Codec 错误会指出 Jackson 能定位到的具体字段路径；结构通过但未满足
+任务命令白名单或 Criterion 引用规则时，错误也会反馈给第二次 Draft 纠错，最终仍不合格才按 `DRAFT_INVALID` 拒绝，不进入 B/C，也不产生配对 digest。
 `draft-attempts/<case>-r<repetition>.md` 保存每次校验错误和脱敏后的模型输出，单次输出最多
 保留 8 KiB，且不保存 system prompt、reasoning 或 API Key。`report.md` 会链接该诊断文件。
 
@@ -183,11 +193,13 @@ target/change-spec-eval/<run-id>/
 报告按全部任务和三个层级分别显示成功率，并对中型 + 高风险任务计算 RFC 门槛：
 
 - C 相比 A 成功率是否提高至少 10 个百分点，或虚假完成率是否相对下降至少 30%；
-- C 的 TTA P50 是否恶化不超过 15%；
+- C 的失败截断 TTA P50 是否恶化不超过 15%，并同时审阅成功 TTA P50 与截断数；
 - `human_intervention_time` 是否不增加。
 
 自动 Pilot 无法测量最后一项，所以即使前两项满足，也只能说明“出现自动化质量/耗时正向信号”，不能宣称已经满足完整开发效率价值门槛。需要真实用户参与的确认、HITL 和 Human Criterion 计时试验才能补齐该结论。
 
 配对 Draft 采用双层约束：产品 Codec 拒绝让非 scope deterministic Criterion 只引用 `path_scope`；
 评测资格检查再要求 command 精确命中任务允许列表，并校验每条非 scope deterministic Criterion 引用的
-至少一个 command 来自该允许列表。资格失败只保存诊断，不额外触发 LLM 调用。
+至少一个 command 来自该允许列表。首次资格失败复用 Draft Generator 的唯一一次纠错机会；第二次仍失败才保存诊断。
+
+首次完整 Pilot、修复后的复跑结果与后续跨模型边界见 [ChangeSpec Pilot 修复与复跑清单](change-spec-pilot-remediation-checklist.md)。

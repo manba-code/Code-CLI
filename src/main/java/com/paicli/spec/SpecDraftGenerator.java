@@ -69,8 +69,18 @@ public final class SpecDraftGenerator {
             String projectContext,
             String referencedContext
     ) throws IOException {
+        return generateWithMetrics(request, projectContext, referencedContext, DraftValidator.NO_OP);
+    }
+
+    public SpecDraftSession.DraftGeneration generateWithMetrics(
+            String request,
+            String projectContext,
+            String referencedContext,
+            DraftValidator validator
+    ) throws IOException {
         long startedAt = System.nanoTime();
         String normalizedRequest = requireText(request, "request");
+        DraftValidator effectiveValidator = Objects.requireNonNull(validator, "validator");
         List<LlmClient.Message> messages = new ArrayList<>();
         messages.add(LlmClient.Message.system(systemPrompt));
         messages.add(LlmClient.Message.user(buildUserPrompt(
@@ -91,8 +101,13 @@ public final class SpecDraftGenerator {
             }
             String rawDraft = response == null ? "" : response.content();
             try {
+                ChangeSpecDocument document = decodeDraft(rawDraft);
+                List<String> validationErrors = effectiveValidator.validate(document);
+                if (validationErrors != null && !validationErrors.isEmpty()) {
+                    throw new ChangeSpecValidationException(validationErrors);
+                }
                 return new SpecDraftSession.DraftGeneration(
-                        decodeDraft(rawDraft),
+                        document,
                         usage,
                         elapsedMillis(startedAt));
             } catch (ChangeSpecValidationException e) {
@@ -156,7 +171,7 @@ public final class SpecDraftGenerator {
     }
 
     private static String buildCorrectionPrompt(List<String> errors) {
-        StringBuilder prompt = new StringBuilder("上一份 Draft 未通过结构校验，请修正后重新输出完整文档。不要解释。\n\n校验错误：\n");
+        StringBuilder prompt = new StringBuilder("上一份 Draft 未通过结构或运行资格校验，请修正后重新输出完整文档。不要解释。\n\n校验错误：\n");
         for (String error : errors) {
             prompt.append("- ").append(error).append('\n');
         }
@@ -166,7 +181,12 @@ public final class SpecDraftGenerator {
                 expect:
                   exit_code: 0
 
+                path_scope Verifier 只能包含 id 和 type，删除 path 字段以及其他附加字段。修改路径只能写在 scope.include / scope.exclude，不能写进 path_scope Verifier。
+
                 非 scope 的 deterministic Criterion 必须至少引用一个 command Verifier；path_scope 只能证明修改范围。
+                kind: scope 的 Criterion 必须且只能引用唯一的 path_scope Verifier。修正 behavior Criterion 时不得改动 scope Criterion 的 Verifier 引用；command Verifier 不能替代 path_scope Verifier。
+
+                修正 Verifier 引用时，优先复用已经声明的 command Verifier ID；同一个 command Verifier 可以被多条 deterministic Criterion 共同引用。不要为每条 Criterion 复制相同命令的 Verifier。每个声明的 Verifier 都必须至少被一个 deterministic Criterion 引用；删除未引用的 Verifier。输出前逐项检查 acceptance 中的引用与 verifiers 声明双向一致，不能遗留未引用的 Verifier。
 
                 修正后必须重新输出完整文档，首行必须是 ---，并包含结束的 ---、完整 acceptance 和 verifiers；不能只输出局部字段、补丁或解释。
                 """);
@@ -232,5 +252,13 @@ public final class SpecDraftGenerator {
         DraftAttemptListener NO_OP = (attempt, rawDraft, errors) -> { };
 
         void onRejected(int attempt, String rawDraft, List<String> errors);
+    }
+
+    /** 在 Codec 校验后追加调用场景自己的资格校验；错误会进入同一条最多两次的纠错链路。 */
+    @FunctionalInterface
+    public interface DraftValidator {
+        DraftValidator NO_OP = document -> List.of();
+
+        List<String> validate(ChangeSpecDocument document);
     }
 }

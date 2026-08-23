@@ -23,7 +23,7 @@ record ChangeSpecEvaluationResult(
         long productDurationMs,
         long hiddenOracleDurationMs,
         long timeToAcceptedChangeMs,
-        double estimatedCostUsd,
+        double estimatedCost,
         String specDigest,
         String detail,
         String error,

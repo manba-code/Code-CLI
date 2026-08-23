@@ -1,9 +1,8 @@
 package com.paicli.spec.eval;
 
 import com.paicli.agent.Agent;
+import com.paicli.agent.AgentBudget;
 import com.paicli.llm.LlmClient;
-import com.paicli.spec.ChangeSpecCodec;
-import com.paicli.spec.ChangeSpecValidationException;
 import com.paicli.spec.SpecDraftGenerator;
 import com.paicli.spec.SpecDraftSession;
 import com.paicli.spec.SpecRunCoordinator;
@@ -25,11 +24,17 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 final class ChangeSpecEvaluationRunner {
+    private static final int DEFAULT_REACT_TOKEN_BUDGET = 250_000;
+    private static final int DEFAULT_REACT_MAX_ITERATIONS = 15;
+    private static final int REACT_STAGNATION_WINDOW = 3;
+
     private final Supplier<LlmClient> clientFactory;
     private final Path runRoot;
     private final double inputCostPerMillion;
     private final double outputCostPerMillion;
     private final long censoredDurationMs;
+    private final int reactTokenBudget;
+    private final int reactMaxIterations;
 
     ChangeSpecEvaluationRunner(
             Supplier<LlmClient> clientFactory,
@@ -38,11 +43,28 @@ final class ChangeSpecEvaluationRunner {
             double outputCostPerMillion,
             long censoredDurationMs
     ) {
+        this(clientFactory, runRoot, inputCostPerMillion, outputCostPerMillion, censoredDurationMs,
+                DEFAULT_REACT_TOKEN_BUDGET, DEFAULT_REACT_MAX_ITERATIONS);
+    }
+
+    ChangeSpecEvaluationRunner(
+            Supplier<LlmClient> clientFactory,
+            Path runRoot,
+            double inputCostPerMillion,
+            double outputCostPerMillion,
+            long censoredDurationMs,
+            int reactTokenBudget,
+            int reactMaxIterations
+    ) {
         this.clientFactory = Objects.requireNonNull(clientFactory, "clientFactory");
         this.runRoot = Objects.requireNonNull(runRoot, "runRoot").toAbsolutePath().normalize();
         this.inputCostPerMillion = inputCostPerMillion;
         this.outputCostPerMillion = outputCostPerMillion;
         this.censoredDurationMs = Math.max(1L, censoredDurationMs);
+        if (reactTokenBudget <= 0) throw new IllegalArgumentException("reactTokenBudget 必须为正数");
+        if (reactMaxIterations <= 0) throw new IllegalArgumentException("reactMaxIterations 必须为正数");
+        this.reactTokenBudget = reactTokenBudget;
+        this.reactMaxIterations = reactMaxIterations;
     }
 
     ChangeSpecPairedDraft preparePairedDraft(ChangeSpecEvaluationCase evaluationCase, int repetition) {
@@ -51,14 +73,11 @@ final class ChangeSpecEvaluationRunner {
         long startedAt = System.nanoTime();
         try {
             SpecDraftSession.DraftGeneration generation = new SpecDraftGenerator(client, diagnostic)
-                    .generateWithMetrics(evaluationCase.task(), evaluationCase.draftContext(), "");
-            List<String> eligibilityErrors = ChangeSpecEvaluationDraftEligibility.validate(
-                    evaluationCase, generation.document());
-            if (!eligibilityErrors.isEmpty()) {
-                String encoded = new ChangeSpecCodec().encode(generation.document());
-                diagnostic.onRejected(client.calls(), encoded, eligibilityErrors);
-                throw new ChangeSpecValidationException(eligibilityErrors);
-            }
+                    .generateWithMetrics(
+                            evaluationCase.task(),
+                            evaluationCase.draftContext(),
+                            "",
+                            document -> ChangeSpecEvaluationDraftEligibility.validate(evaluationCase, document));
             return new ChangeSpecPairedDraft(
                     generation.document(),
                     generation.llmUsage(),
@@ -104,7 +123,9 @@ final class ChangeSpecEvaluationRunner {
             boolean usesDraft = mode.usesChangeSpec() && pairedDraft != null;
             product = ProductExecution.failed(
                     usesDraft ? pairedDraft.usage() : SpecRunResult.LlmUsage.empty(),
-                    Math.max(usesDraft ? pairedDraft.durationMs() : 0L, elapsedMillis(productStartedAt)),
+                    totalProductDuration(
+                            elapsedMillis(productStartedAt),
+                            usesDraft ? pairedDraft.durationMs() : 0L),
                     messageOf(e));
         }
         Files.writeString(workspace.resolve("run.log"), transcript.toString(StandardCharsets.UTF_8));
@@ -181,7 +202,7 @@ final class ChangeSpecEvaluationRunner {
         ToolRegistry registry = registry(workspace);
         Agent agent = agent(client, registry, out);
         long startedAt = System.nanoTime();
-        Agent.RunResult result = agent.runDetailed(evaluationCase.task());
+        Agent.RunResult result = agent.runDetailed(evaluationCase.task(), newEvaluationBudget());
         String snapshotError = copyFirstPass(evaluationCase, workspace, firstPass);
         long durationMs = Math.max(result.elapsedMs(), elapsedMillis(startedAt));
         boolean completed = result.outcome() == Agent.RunOutcome.COMPLETED;
@@ -256,7 +277,7 @@ final class ChangeSpecEvaluationRunner {
                 workspace,
                 session,
                 request -> request,
-                (phase, input, lockedSpec) -> toSpecExecution(agent.runDetailed(input)),
+                (phase, input, lockedSpec) -> toSpecExecution(agent.runDetailed(input, newEvaluationBudget())),
                 verifier,
                 (criterion, changes) -> SpecRunCoordinator.HumanJudgment.skipped(
                         "自动评测不替代人工判断"),
@@ -273,7 +294,7 @@ final class ChangeSpecEvaluationRunner {
                 result.workspaceChanges() != null && !result.workspaceChanges().changedFiles().isEmpty(),
                 metrics.repairCount(),
                 metrics.totalLlmUsage(),
-                metrics.totalMs(),
+                totalProductDuration(metrics.totalMs(), pairedDraft.durationMs()),
                 result.identity() == null ? "" : result.identity().specDigest(),
                 snapshotError.get(),
                 result.detail());
@@ -289,6 +310,16 @@ final class ChangeSpecEvaluationRunner {
                 && !workspaceChanged
                 ? "NO_CHANGE_COMPLETION"
                 : "";
+    }
+
+    static long totalProductDuration(long executionDurationMs, long draftDurationMs) {
+        long execution = Math.max(0L, executionDurationMs);
+        long draft = Math.max(0L, draftDurationMs);
+        return Long.MAX_VALUE - execution < draft ? Long.MAX_VALUE : execution + draft;
+    }
+
+    private AgentBudget newEvaluationBudget() {
+        return new AgentBudget(reactTokenBudget, REACT_STAGNATION_WINDOW, reactMaxIterations);
     }
 
     private static Agent agent(

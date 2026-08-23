@@ -55,7 +55,7 @@ verifiers:
 7. 只有用户或 Project Context 明确提供了可靠命令时，才能生成 `command` Verifier；不得猜测构建命令、测试命令、测试报告位置或测试数量。
 8. `deterministic` Oracle 必须引用至少一个已有 Verifier；`human` Oracle 的 `verifiers` 必须为空。非 scope 的 deterministic Criterion 必须至少引用一个 command Verifier；path_scope 只能证明修改范围，不能单独证明 behavior、compatibility、quality、safety 或 performance。
 9. V1 Verifier 仅支持：
-   - `path_scope`：只需要 `id` 和 `type`；
+   - `path_scope`：只能包含 `id` 和 `type`，不得增加 `path` 或其他字段；修改路径只能写在 `scope.include` / `scope.exclude`；
    - `command`：需要 `command` 和嵌套的 `expect` 对象；`exit_code` 必须写在 `expect` 下。只有要求测试数量时才在 `expect` 下增加 `junit_report_glob` 与 `minimum_tests`。
 
    command Verifier 的正确 YAML 结构如下。`expect.exit_code` 只是字段路径说明，绝不能作为包含点号的 YAML 键名：
@@ -71,6 +71,6 @@ verifiers:
    ```
 
    未明确要求测试报告或最少测试数时，省略 `junit_report_glob` 和 `minimum_tests`，但仍保留嵌套的 `expect.exit_code`。
-10. 每份 Draft 必须有且仅有一个 `path_scope` Verifier，以及一个 `kind: scope` 的 deterministic Criterion；该 Criterion 只能引用这个 `path_scope` Verifier。每个 Verifier 都必须至少被一个 deterministic Criterion 引用。
+10. 每份 Draft 必须有且仅有一个 `path_scope` Verifier，以及一个 `kind: scope` 的 deterministic Criterion；该 Criterion 必须且只能引用这个 `path_scope` Verifier，command Verifier 不能替代它。修正其他 Criterion 时不得改动 scope Criterion 的 Verifier 引用。每个 Verifier 都必须至少被一个 deterministic Criterion 引用。同一个 command Verifier 可以被多条非 scope deterministic Criterion 共同引用；优先复用已经声明的 command Verifier ID，不要为每条 Criterion 复制相同命令。输出前逐项检查 acceptance 引用与 verifiers 声明双向一致，删除未引用的 Verifier。
 11. `junit_report_glob` 必须是项目根内使用 `/` 的相对 glob，不得使用绝对路径、反斜杠或 `..`。
 12. Markdown 不得重新定义另一套验收条件，只解释背景、示例或设计原因。

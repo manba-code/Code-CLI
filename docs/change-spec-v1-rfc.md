@@ -2,7 +2,7 @@
 
 > 状态：Accepted  
 > 目标版本：V1  
-> 实现进度：前六条产品切片已完成；第七条的 A/B/C 评测框架、六个分层任务、配对 Spec、首次候选快照、隐藏 Oracle、指标归约和报告入口已实现，真实 LLM 快速试验尚未运行
+> 实现进度：前六条产品切片已完成；第七条框架、Pilot 修复、代表性小样和同模型 36 次复跑均已完成；复跑消除了 Draft/循环长尾/评测口径污染，但仍未显示 ChangeSpec 提效
 > 核心目标：缩短从需求提出到代码被可信验收的时间，而不是增加一套需求管理流程。
 
 ## 1. 决策摘要
@@ -50,7 +50,7 @@ ChangeSpec V1 要解决的不是代码生成能力，而是下面三段浪费：
 
 ### 3.1 核心效率指标
 
-- `time_to_accepted_change`：从提交需求到第一次得到可信 `PASSED` 的墙钟时间；未通过的运行按实验时限截断。
+- `time_to_accepted_change`：从提交需求到第一次得到可信 `PASSED` 的墙钟时间；ChangeSpec 组必须包含 Draft 生成，未通过的运行按实验时限截断。报告必须同时给出仅成功样本 P50、包含失败截断值的 P50 和截断数，不能把截断值解释成真实执行时长。
 - `human_intervention_time`：用户实际用于确认 Spec、处理审批和人工验收的时间，不包含等待模型和命令执行的时间。
 
 ### 3.2 质量与成本护栏
@@ -74,7 +74,7 @@ ChangeSpec V1 要解决的不是代码生成能力，而是下面三段浪费：
 对中等和高风险任务，ChangeSpec V1 只有满足以下条件才可以宣称有开发效率价值：
 
 - 相比普通 ReAct，任务成功率至少提高 10 个百分点，或虚假完成率相对下降至少 30%；
-- `time_to_accepted_change` 的 P50 不得恶化超过 15%；
+- 包含失败截断值的 `time_to_accepted_change` P50 不得恶化超过 15%，并同步审阅成功样本 P50 与截断数；
 - `human_intervention_time` 不得增加；
 - Spec 生成与确认开销必须单独报告，不能隐藏在总耗时中。
 
@@ -489,6 +489,7 @@ spec/
 - `first_pass_success_rate` 使用首次公开验证后、修复前保存的候选快照运行隐藏 Oracle，不能用最终结果反推；
 - A 的完成信号是 ReAct 正常结束，B/C 的完成信号是 `Verdict=PASSED`；完成信号存在但隐藏 Oracle/Scope 失败时记为虚假完成；
 - 自动 Pilot 不存在真人确认、HITL 或 Human Criterion 时间，`human_intervention_time` 报告为 `N/A` 而不是 0；因此自动 Pilot 不能单独证明满足完整效率价值门槛。
+- 自动付费评测可设置独立的 ReAct Token/迭代安全预算和工具周期停滞检测以限制异常长尾，但必须保持三组一致，并与生产默认预算分开记录。
 
 任务、指标公式、运行参数和报告边界见 [ChangeSpec V1 A/B/C 评测协议](change-spec-abc-evaluation.md)。
 
@@ -502,7 +503,7 @@ spec/
 4. ✅ Workspace baseline、Scope 和 command/JUnit 验证；
 5. ✅ Criterion Result、Verdict 和紧凑持久化；
 6. ✅ 一次证据驱动修复；
-7. 🟡 A/B/C 评测与指标报告：框架与任务集已完成，等待显式运行真实 LLM 快速试验并产出首份报告。
+7. 🟡 A/B/C 评测与指标报告：框架、任务集、首次 Pilot 修复和同模型 36 次复跑已完成；Draft/digest 达到 12/12 且 C 虚假完成率降为 0%，但 A/B/C 成功率 58.33%/41.67%/41.67% 仍未显示提效；后续可冻结实验条件进行跨模型对照，并补真人效率验证。
 
 每一步都为同一条端到端链路服务，不先建设 Reviewer、通用 Verifier 平台或多执行模式。
 

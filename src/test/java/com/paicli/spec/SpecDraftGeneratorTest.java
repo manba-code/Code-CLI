@@ -86,6 +86,46 @@ class SpecDraftGeneratorTest {
     }
 
     @Test
+    void explainsThatPathScopeVerifierMustNotContainAPathField() throws Exception {
+        RecordingClient client = new RecordingClient(
+                pathFieldOnScopeVerifierDocument(),
+                validDocument());
+        SpecDraftGenerator generator = new SpecDraftGenerator(
+                client,
+                new ChangeSpecCodec(),
+                "CHANGE-TEST-001");
+
+        generator.generate("只允许修改 src/Auth.java，测试命令为 mvn test", "", "");
+
+        assertEquals(2, client.requests.size());
+        String correctionPrompt = client.requests.get(1).messages()
+                .get(client.requests.get(1).messages().size() - 1).content();
+        assertTrue(correctionPrompt.contains("path_scope Verifier 只能包含 id 和 type"));
+        assertTrue(correctionPrompt.contains("删除 path 字段"));
+        assertTrue(correctionPrompt.contains("修改路径只能写在 scope.include / scope.exclude"));
+    }
+
+    @Test
+    void explainsThatScopeCriterionMustKeepThePathScopeVerifier() throws Exception {
+        RecordingClient client = new RecordingClient(
+                scopeCriterionReferencesCommandDocument(),
+                validDocument());
+        SpecDraftGenerator generator = new SpecDraftGenerator(
+                client,
+                new ChangeSpecCodec(),
+                "CHANGE-TEST-001");
+
+        generator.generate("加固工作区路径并运行 mvn test", "", "");
+
+        assertEquals(2, client.requests.size());
+        String correctionPrompt = client.requests.get(1).messages()
+                .get(client.requests.get(1).messages().size() - 1).content();
+        assertTrue(correctionPrompt.contains("kind: scope 的 Criterion 必须且只能引用唯一的 path_scope Verifier"));
+        assertTrue(correctionPrompt.contains("修正 behavior Criterion 时不得改动 scope Criterion 的 Verifier 引用"));
+        assertTrue(correctionPrompt.contains("command Verifier 不能替代 path_scope Verifier"));
+    }
+
+    @Test
     void extractsCompleteFrontMatterDocumentAfterModelPreface() throws Exception {
         RecordingClient client = new RecordingClient(
                 "下面是修正后的完整文档：\n```yaml\n" + validDocument() + "\n```");
@@ -113,6 +153,35 @@ class SpecDraftGeneratorTest {
         assertThrows(ChangeSpecValidationException.class,
                 () -> generator.generate("修复问题", "", ""));
         assertEquals(2, client.requests.size());
+    }
+
+    @Test
+    void retriesOnceWhenCallerQualificationRejectsStructurallyValidDraft() throws Exception {
+        RecordingClient client = new RecordingClient(validDocument(), validDocument());
+        SpecDraftGenerator generator = new SpecDraftGenerator(
+                client,
+                new ChangeSpecCodec(),
+                "CHANGE-TEST-001");
+        int[] validations = {0};
+
+        SpecDraftSession.DraftGeneration generation = generator.generateWithMetrics(
+                "修复问题",
+                "",
+                "",
+                document -> ++validations[0] == 1
+                        ? List.of("command 不在评测任务允许列表")
+                        : List.of());
+
+        assertEquals("CHANGE-TEST-001", generation.document().spec().id());
+        assertEquals(2, client.requests.size());
+        String correction = client.requests.get(1).messages()
+                .get(client.requests.get(1).messages().size() - 1).content();
+        assertTrue(correction.contains("结构或运行资格校验"));
+        assertTrue(correction.contains("command 不在评测任务允许列表"));
+        assertTrue(correction.contains("优先复用已经声明的 command Verifier ID"));
+        assertTrue(correction.contains("不要为每条 Criterion 复制相同命令的 Verifier"));
+        assertTrue(correction.contains("每个声明的 Verifier 都必须至少被一个 deterministic Criterion 引用"));
+        assertTrue(correction.contains("删除未引用的 Verifier"));
     }
 
     private static String validDocument() {
@@ -190,6 +259,25 @@ class SpecDraftGeneratorTest {
                     type: path_scope
                 ---
                 """;
+    }
+
+    private static String pathFieldOnScopeVerifierDocument() {
+        return validDocument().replace(
+                "  - id: VT-SCOPE\n    type: path_scope",
+                "  - id: VT-SCOPE\n    type: path_scope\n    path: src/Auth.java");
+    }
+
+    private static String scopeCriterionReferencesCommandDocument() {
+        return validDocument()
+                .replace("verifiers: [VT-SCOPE]", "verifiers: [VT-TEST]")
+                .replace(
+                        "  - id: VT-SCOPE\n    type: path_scope",
+                        "  - id: VT-SCOPE\n    type: path_scope\n"
+                                + "  - id: VT-TEST\n"
+                                + "    type: command\n"
+                                + "    command: mvn test\n"
+                                + "    expect:\n"
+                                + "      exit_code: 0");
     }
 
     private static final class RecordingClient implements LlmClient {

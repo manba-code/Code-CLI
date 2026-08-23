@@ -1,5 +1,6 @@
 package com.paicli.spec.eval;
 
+import com.paicli.config.PaiCliConfig;
 import com.paicli.llm.LlmClient;
 import com.paicli.tool.CommandExecutionResult;
 import com.paicli.tool.ToolRegistry;
@@ -7,12 +8,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Queue;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -24,6 +27,16 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ChangeSpecEvaluationInfrastructureTest {
+
+    @Test
+    void evaluationModelOverrideOnlyMutatesInMemoryConfig() {
+        PaiCliConfig config = new PaiCliConfig();
+        config.setDefaultProvider("glm");
+
+        ChangeSpecQualityEvaluationTest.applyModelOverride(config, "glm", "candidate-model");
+
+        assertEquals("candidate-model", config.getModel("glm"));
+    }
 
     @Test
     void catalogContainsTwoCasesPerTierAndFixedVerifierCommand() {
@@ -120,12 +133,42 @@ class ChangeSpecEvaluationInfrastructureTest {
                 result(ChangeSpecEvaluationMode.SPEC_WITH_REPAIR, true, true, "digest-1"));
 
         String report = ChangeSpecEvaluationReport.toMarkdown(
-                results, "stub", "stub-model", 7L, 1, 60_000L, false);
+                results, "stub", "stub-model", 7L, 1, 60_000L, false, "USD");
 
         assertTrue(report.contains("人工介入时间：N/A"));
         assertTrue(report.contains("digest 一致：1/1 对"));
         assertTrue(report.contains("不能单独得出‘满足完整提效门槛’"));
         assertTrue(report.contains("A · 普通 ReAct"));
+        assertTrue(report.contains("产品耗时 P50"));
+        assertTrue(report.contains("成功 TTA P50"));
+        assertTrue(report.contains("截断 TTA P50"));
+    }
+
+    @Test
+    void reportUsesConfiguredCostCurrency() {
+        String report = ChangeSpecEvaluationReport.toMarkdown(
+                List.of(result(ChangeSpecEvaluationMode.REACT, true, true, "")),
+                "stub", "stub-model", 7L, 1, 60_000L, true, "CNY");
+
+        assertTrue(report.contains("成本币种：CNY"), report);
+        assertTrue(report.contains("CNY 0.00"), report);
+        assertFalse(report.contains("$0.00"), report);
+    }
+
+    @Test
+    void totalProductDurationIncludesDraftAndSaturatesSafely() {
+        assertEquals(55_000L, ChangeSpecEvaluationRunner.totalProductDuration(15_000L, 40_000L));
+        assertEquals(Long.MAX_VALUE,
+                ChangeSpecEvaluationRunner.totalProductDuration(Long.MAX_VALUE - 5, 10));
+    }
+
+    @Test
+    void processOutputDecodingNeverTurnsNativeBytesIntoOracleException() {
+        byte[] nativeBytes = "测试失败".getBytes(Charset.forName("GB18030"));
+
+        String decoded = ChangeSpecEvaluationCase.decodeProcessOutput(nativeBytes);
+
+        assertEquals("测试失败", decoded);
     }
 
     @Test
@@ -134,7 +177,7 @@ class ChangeSpecEvaluationInfrastructureTest {
                 List.of(
                         result(ChangeSpecEvaluationMode.SPEC_NO_REPAIR, false, false, ""),
                         result(ChangeSpecEvaluationMode.SPEC_WITH_REPAIR, false, false, "")),
-                "stub", "stub-model", 7L, 1, 60_000L, false);
+                "stub", "stub-model", 7L, 1, 60_000L, false, "USD");
 
         assertTrue(report.contains("digest 一致：0/1 对"), report);
     }
@@ -172,7 +215,7 @@ class ChangeSpecEvaluationInfrastructureTest {
         ChangeSpecEvaluationResult invalid = result(
                 ChangeSpecEvaluationMode.SPEC_NO_REPAIR, false, false, "", draft.diagnosticFile());
         String report = ChangeSpecEvaluationReport.toMarkdown(
-                List.of(invalid), "stub", "stub-model", 7L, 1, 60_000L, false);
+                List.of(invalid), "stub", "stub-model", 7L, 1, 60_000L, false, "USD");
         assertTrue(report.contains("[Draft 诊断](<" + draft.diagnosticFile().toString().replace('\\', '/') + ">)"), report);
     }
 
@@ -192,7 +235,7 @@ class ChangeSpecEvaluationInfrastructureTest {
                 null,
                 "NO_CHANGE_COMPLETION");
         String report = ChangeSpecEvaluationReport.toMarkdown(
-                List.of(classified), "stub", "stub-model", 7L, 1, 60_000L, false);
+                List.of(classified), "stub", "stub-model", 7L, 1, 60_000L, false, "USD");
         assertTrue(report.contains("| FAILED | NO_CHANGE_COMPLETION | 1 |"), report);
     }
 
@@ -209,12 +252,29 @@ class ChangeSpecEvaluationInfrastructureTest {
                 ChangeSpecEvaluationCatalog.defaultCases().get(0), 4);
 
         assertFalse(draft.available());
-        assertEquals(1, stub.calls);
+        assertEquals(2, stub.calls);
         assertTrue(draft.error().contains("不在评测任务允许列表"), draft.error());
         assertTrue(draft.diagnosticFile() != null);
         String diagnostic = Files.readString(tempDir.resolve(draft.diagnosticFile()));
         assertTrue(diagnostic.contains("mvn -q -DskipTests=false verify"), diagnostic);
         assertTrue(diagnostic.contains("不在评测任务允许列表"), diagnostic);
+        assertTrue(diagnostic.contains("## Attempt 2"), diagnostic);
+    }
+
+    @Test
+    void pairedDraftCanCorrectEligibilityFailureOnSecondAttempt(@TempDir Path tempDir) {
+        EligibilityStubLlmClient stub = new EligibilityStubLlmClient(
+                "mvn -q -DskipTests=false verify",
+                ChangeSpecEvaluationCatalog.PUBLIC_VERIFIER);
+        ChangeSpecEvaluationRunner runner = new ChangeSpecEvaluationRunner(
+                () -> stub, tempDir, 0d, 0d, 60_000L);
+
+        ChangeSpecPairedDraft draft = runner.preparePairedDraft(
+                ChangeSpecEvaluationCatalog.defaultCases().get(0), 6);
+
+        assertTrue(draft.available(), draft.error());
+        assertEquals(2, stub.calls);
+        assertTrue(draft.diagnosticFile() == null);
     }
 
     @Test
@@ -315,18 +375,23 @@ class ChangeSpecEvaluationInfrastructureTest {
 
     private static final class EligibilityStubLlmClient implements LlmClient {
         private static final Pattern DRAFT_ID = Pattern.compile("CHANGE-\\d{8}-\\d{6}-\\d{3}");
-        private final String command;
+        private final List<String> commands;
         private int calls;
 
-        private EligibilityStubLlmClient(String command) {
-            this.command = command;
+        private EligibilityStubLlmClient(String... commands) {
+            this.commands = List.of(commands);
         }
 
         @Override
         public ChatResponse chat(List<Message> messages, List<Tool> tools) {
             calls++;
-            Matcher matcher = DRAFT_ID.matcher(messages.get(messages.size() - 1).content());
-            if (!matcher.find()) throw new IllegalStateException("未找到 Draft ID");
+            Matcher matcher = messages.stream()
+                    .map(Message::content)
+                    .filter(Objects::nonNull)
+                    .map(DRAFT_ID::matcher)
+                    .filter(Matcher::find)
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalStateException("未找到 Draft ID"));
             String content = """
                     ---
                     schema: paicli/change-spec/v1
@@ -364,7 +429,7 @@ class ChangeSpecEvaluationInfrastructureTest {
                           junit_report_glob: target/surefire-reports/TEST-*.xml
                           minimum_tests: 1
                     ---
-                    """.formatted(matcher.group(), command);
+                    """.formatted(matcher.group(), commands.get(Math.min(calls - 1, commands.size() - 1)));
             return new ChatResponse("assistant", content, List.of(), 10, 10);
         }
 

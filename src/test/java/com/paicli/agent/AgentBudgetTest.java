@@ -54,6 +54,36 @@ class AgentBudgetTest {
     }
 
     @Test
+    void stagnationDetectsRepeatedTwoStepToolCycle() {
+        AgentBudget budget = new AgentBudget(1_000_000, 3, 50);
+        List<LlmClient.ToolCall> write = List.of(toolCall("write_file", "{\"path\":\"A.java\",\"content\":\"same\"}"));
+        List<LlmClient.ToolCall> verify = List.of(toolCall("execute_command", "{\"command\":\"mvn test\"}"));
+
+        budget.recordToolCalls(write);
+        budget.recordToolCalls(verify);
+        budget.recordToolCalls(write);
+        budget.recordToolCalls(verify);
+        assertEquals(AgentBudget.ExitReason.WITHIN_BUDGET, budget.check());
+
+        budget.recordToolCalls(write);
+        budget.recordToolCalls(verify);
+        assertEquals(AgentBudget.ExitReason.STAGNATION_DETECTED, budget.check());
+    }
+
+    @Test
+    void differentSecondCycleDoesNotTriggerStagnation() {
+        AgentBudget budget = new AgentBudget(1_000_000, 3, 50);
+        budget.recordToolCalls(List.of(toolCall("write_file", "{\"content\":\"one\"}")));
+        budget.recordToolCalls(List.of(toolCall("execute_command", "{\"command\":\"mvn test\"}")));
+        budget.recordToolCalls(List.of(toolCall("write_file", "{\"content\":\"two\"}")));
+        budget.recordToolCalls(List.of(toolCall("execute_command", "{\"command\":\"mvn test\"}")));
+        budget.recordToolCalls(List.of(toolCall("write_file", "{\"content\":\"three\"}")));
+        budget.recordToolCalls(List.of(toolCall("execute_command", "{\"command\":\"mvn test\"}")));
+
+        assertEquals(AgentBudget.ExitReason.WITHIN_BUDGET, budget.check());
+    }
+
+    @Test
     void hardIterationLimitTriggersAfterEnoughIterations() {
         AgentBudget budget = new AgentBudget(1_000_000, 3, 3);
         budget.beginIteration();

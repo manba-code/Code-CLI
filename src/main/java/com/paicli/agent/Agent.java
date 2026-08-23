@@ -37,6 +37,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.function.Supplier;
 
 /**
@@ -133,6 +134,14 @@ public class Agent {
      * 普通调用方继续使用 {@link #run(String)}；ChangeSpec 通过本接口持久化可审计指标。
      */
     public RunResult runDetailed(String userInput) {
+        return runDetailed(userInput, AgentBudget.fromLlmClient(llmClient));
+    }
+
+    /**
+     * 使用调用方提供的运行预算执行 ReAct。自动评测可在不改变生产默认值的前提下限制成本和长尾。
+     */
+    public RunResult runDetailed(String userInput, AgentBudget budget) {
+        Objects.requireNonNull(budget, "budget");
         log.info("ReAct run started: inputLength={}", userInput == null ? 0 : userInput.length());
         pruneHistoricalImagePayloads();
         // 存入短期记忆
@@ -153,7 +162,6 @@ public class Agent {
         StreamRenderer streamRenderer = new StreamRenderer(renderer());
 
         long startNanos = System.nanoTime();
-        AgentBudget budget = AgentBudget.fromLlmClient(llmClient);
         pushStatus(budget, startNanos, "running");
 
         // 主退出条件 = LLM 自己决定（不再调用工具就返回）；

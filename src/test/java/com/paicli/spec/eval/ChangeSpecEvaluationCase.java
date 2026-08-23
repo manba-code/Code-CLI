@@ -1,6 +1,10 @@
 package com.paicli.spec.eval;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.Charset;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -129,9 +133,34 @@ record ChangeSpecEvaluationCase(
             process.destroyForcibly();
             process.waitFor(5, TimeUnit.SECONDS);
         }
-        String output = Files.exists(logFile) ? Files.readString(logFile, StandardCharsets.UTF_8) : "";
+        String output = Files.exists(logFile) ? decodeProcessOutput(Files.readAllBytes(logFile)) : "";
         if (output.length() > 8_000) output = output.substring(0, 8_000) + "...";
         return new CommandResult(finished ? process.exitValue() : -1, !finished, output.strip());
+    }
+
+    /** 子进程可能按宿主代码页输出；诊断解码不得把一次明确的非零退出升级成 Oracle 异常。 */
+    static String decodeProcessOutput(byte[] bytes) {
+        byte[] source = bytes == null ? new byte[0] : bytes;
+        String utf8 = decodeStrict(source, StandardCharsets.UTF_8);
+        if (utf8 != null) return utf8;
+        Charset platform = Charset.defaultCharset();
+        if (!platform.equals(StandardCharsets.UTF_8)) {
+            String nativeText = decodeStrict(source, platform);
+            if (nativeText != null) return nativeText;
+        }
+        return new String(source, Charset.forName("GB18030"));
+    }
+
+    private static String decodeStrict(byte[] bytes, Charset charset) {
+        try {
+            return charset.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(bytes))
+                    .toString();
+        } catch (CharacterCodingException ignored) {
+            return null;
+        }
     }
 
     private static void writeFiles(Path workspace, Map<String, String> files) throws IOException {

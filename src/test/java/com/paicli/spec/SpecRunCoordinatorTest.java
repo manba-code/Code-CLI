@@ -57,6 +57,8 @@ class SpecRunCoordinatorTest {
         assertTrue(executionInputs.get(0).contains("id: CHANGE-001"));
         assertTrue(executionInputs.get(0).contains(document.specDigest()));
         assertTrue(executionInputs.get(0).contains("不是验收 Verdict"));
+        assertTrue(executionInputs.get(0).contains("每次测试失败后先读取并分析最新错误"));
+        assertTrue(executionInputs.get(0).contains("不得原样重复相同的文件写入与测试命令周期"));
 
         SpecRunCoordinator.LockedSpec locked = locks.get(0);
         assertEquals(locked, locks.get(0));
@@ -180,10 +182,12 @@ class SpecRunCoordinatorTest {
 
         assertEquals(SpecRunResult.Status.REACT_FAILED, result.status());
         assertTrue(result.agentResponse().contains("react failed"));
+        assertTrue(result.detail().contains("react failed"));
         assertNotNull(result.workspaceChanges());
         assertTrue(result.verifierResults().isEmpty());
         assertEquals(SpecRunResult.Verdict.INCOMPLETE, result.verdict());
         assertTrue(Files.isRegularFile(result.artifacts().resultJson()));
+        assertTrue(Files.readString(result.artifacts().resultJson()).contains("react failed"));
         Path lockedPath = projectRoot.resolve(".paicli/specs/CHANGE-001-r1.md");
         assertTrue(Files.isRegularFile(lockedPath));
         assertNotNull(codec.decode(Files.readString(lockedPath)));
@@ -483,6 +487,7 @@ class SpecRunCoordinatorTest {
         assertEquals(1, result.verificationAttempts().size());
         assertEquals(1, result.metrics().repairCount());
         assertTrue(result.agentResponse().contains("repair exploded"));
+        assertTrue(result.detail().contains("repair exploded"));
         assertTrue(result.criterionResults().stream()
                 .allMatch(criterion -> criterion.status() == SpecRunResult.CriterionStatus.NOT_RUN));
         assertEquals(SpecRunResult.PersistenceStatus.SAVED, result.artifacts().status());

@@ -7,8 +7,8 @@ import java.util.List;
 
 public class DeepSeekClient extends AbstractOpenAiCompatibleClient {
 
-    private static final String API_URL = "https://api.deepseek.com/chat/completions";
-    private static final String DEFAULT_MODEL = "deepseek-v4-flash";
+    private static final String DEFAULT_BASE_URL = "https://api.deepseek.com";
+    private static final String DEFAULT_MODEL = "deepseek-v4-pro-0813";
     private static final OkHttpClient HTTP_1_1_CLIENT = SHARED_HTTP_CLIENT.newBuilder()
             .protocols(List.of(Protocol.HTTP_1_1))
             .build();
@@ -17,17 +17,17 @@ public class DeepSeekClient extends AbstractOpenAiCompatibleClient {
     private final String apiUrl;
 
     public DeepSeekClient(String apiKey) {
-        this(apiKey, DEFAULT_MODEL);
+        this(apiKey, DEFAULT_MODEL, DEFAULT_BASE_URL);
     }
 
     public DeepSeekClient(String apiKey, String model) {
-        this(apiKey, model, API_URL);
+        this(apiKey, model, DEFAULT_BASE_URL);
     }
 
-    DeepSeekClient(String apiKey, String model, String apiUrl) {
+    public DeepSeekClient(String apiKey, String model, String baseUrl) {
         this.apiKey = apiKey;
         this.model = model != null && !model.isBlank() ? model : DEFAULT_MODEL;
-        this.apiUrl = apiUrl != null && !apiUrl.isBlank() ? apiUrl : API_URL;
+        this.apiUrl = toChatCompletionsUrl(baseUrl);
     }
 
     @Override
@@ -83,6 +83,15 @@ public class DeepSeekClient extends AbstractOpenAiCompatibleClient {
     @Override
     public String promptCacheMode() {
         return "automatic-prefix-cache";
+    }
+
+    private static String toChatCompletionsUrl(String baseUrl) {
+        String normalized = baseUrl != null && !baseUrl.isBlank() ? baseUrl.trim() : DEFAULT_BASE_URL;
+        String withoutTrailingSlash = normalized.replaceAll("/+$", "");
+        if (withoutTrailingSlash.endsWith("/chat/completions")) {
+            return withoutTrailingSlash;
+        }
+        return withoutTrailingSlash + "/chat/completions";
     }
 
 }

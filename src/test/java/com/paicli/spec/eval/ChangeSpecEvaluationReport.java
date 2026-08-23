@@ -18,8 +18,10 @@ final class ChangeSpecEvaluationReport {
             long seed,
             int repetitions,
             long censoredDurationMs,
-            boolean costConfigured
+            boolean costConfigured,
+            String costCurrency
     ) {
+        String currency = normalizeCurrency(costCurrency);
         StringBuilder report = new StringBuilder();
         report.append("# ChangeSpec V1 A/B/C 快速评测\n\n")
                 .append("- 时间：").append(Instant.now()).append("\n")
@@ -28,12 +30,13 @@ final class ChangeSpecEvaluationReport {
                 .append("- 模式顺序 seed：").append(seed).append("\n")
                 .append("- 未成功运行的 time_to_accepted_change 截断值：")
                 .append(decimal(censoredDurationMs / 1000d)).append(" 秒\n")
+                .append("- 成本币种：").append(costConfigured ? currency : "未配置").append("\n")
                 .append("- 人工介入时间：N/A（自动 Pilot 不把自动确认冒充人工时间）\n")
                 .append("- 客观成功：最终候选同时通过隐藏 Oracle 与允许修改范围检查\n\n");
 
         report.append("## 总览\n\n")
-                .append("| 组 | 任务成功率 | 首次成功率 | 公开接受率 | 虚假完成率 | Scope 越界率 | TTA P50 | 平均 LLM 调用 | 平均 Token(in/out) | 平均成本 |\n")
-                .append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+                .append("| 组 | 任务成功率 | 首次成功率 | 公开接受率 | 虚假完成率 | Scope 越界率 | 产品耗时 P50 | 成功 TTA P50 | 截断 TTA P50 | 截断数 | 平均 LLM 调用 | 平均 Token(in/out) | 平均成本 |\n")
+                .append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
         for (ChangeSpecEvaluationMode mode : ChangeSpecEvaluationMode.values()) {
             List<ChangeSpecEvaluationResult> group = group(results, mode, value -> true);
             report.append("| ").append(mode.displayName()).append(" | ")
@@ -43,8 +46,13 @@ final class ChangeSpecEvaluationReport {
                     .append(falseCompletionRate(group)).append(" | ")
                     .append(rate(count(group, ChangeSpecEvaluationResult::scopeViolation), group.size())).append(" | ")
                     .append(decimal(median(group.stream()
+                            .map(ChangeSpecEvaluationResult::productDurationMs).toList()) / 1000d))
+                    .append("s | ")
+                    .append(successTtaP50(group)).append(" | ")
+                    .append(decimal(median(group.stream()
                             .map(ChangeSpecEvaluationResult::timeToAcceptedChangeMs).toList()) / 1000d))
                     .append("s | ")
+                    .append(count(group, value -> !value.taskSuccess())).append("/").append(group.size()).append(" | ")
                     .append(decimal(group.stream().mapToInt(ChangeSpecEvaluationResult::llmCalls)
                             .average().orElse(0))).append(" | ")
                     .append(decimal(group.stream().mapToLong(ChangeSpecEvaluationResult::inputTokens)
@@ -52,8 +60,8 @@ final class ChangeSpecEvaluationReport {
                     .append(decimal(group.stream().mapToLong(ChangeSpecEvaluationResult::outputTokens)
                             .average().orElse(0))).append(" | ")
                     .append(costConfigured
-                            ? "$" + decimal(group.stream().mapToDouble(
-                                    ChangeSpecEvaluationResult::estimatedCostUsd).average().orElse(0))
+                            ? currency + " " + decimal(group.stream().mapToDouble(
+                                    ChangeSpecEvaluationResult::estimatedCost).average().orElse(0))
                             : "未配置")
                     .append(" |\n");
         }
@@ -103,7 +111,7 @@ final class ChangeSpecEvaluationReport {
                         ? "不可计算（A 没有可用分母或基线为 0）"
                         : decimal(falseCompletionReduction * 100d) + "%")
                 .append("；门槛为至少 30%。\n")
-                .append("- C 相对 A 的 TTA P50 变化：")
+                .append("- C 相对 A 的截断 TTA P50 变化：")
                 .append(Double.isNaN(p50Change) ? "不可计算" : decimal(p50Change) + "%")
                 .append("；不得恶化超过 15%。\n")
                 .append("- human_intervention_time：N/A；因此本自动 Pilot 不能单独得出‘满足完整提效门槛’的结论。\n");
@@ -192,6 +200,14 @@ final class ChangeSpecEvaluationReport {
         return completions == 0 ? "N/A" : rate(count(group, ChangeSpecEvaluationResult::falseCompletion), completions);
     }
 
+    private static String successTtaP50(List<ChangeSpecEvaluationResult> group) {
+        List<Long> successful = group.stream()
+                .filter(ChangeSpecEvaluationResult::taskSuccess)
+                .map(ChangeSpecEvaluationResult::timeToAcceptedChangeMs)
+                .toList();
+        return successful.isEmpty() ? "N/A" : decimal(median(successful) / 1000d) + "s";
+    }
+
     private static Double relativeFalseCompletionReduction(
             List<ChangeSpecEvaluationResult> baseline,
             List<ChangeSpecEvaluationResult> candidate
@@ -225,6 +241,11 @@ final class ChangeSpecEvaluationReport {
 
     private static String decimal(double value) {
         return String.format(Locale.ROOT, "%.2f", value);
+    }
+
+    private static String normalizeCurrency(String value) {
+        String normalized = value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
+        return normalized.matches("[A-Z]{3}") ? normalized : "USD";
     }
 
     private static String escape(String value) {

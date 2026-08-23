@@ -15,7 +15,7 @@ import java.util.Locale;
  * 循环就退出。本类只承担三种"保险阀"职责，避免模型在异常情况下无限重复同一动作：
  *
  * 1. Token 预算：累计 input + output token 超过阈值后强制收尾（**默认无限**，仅显式配置时生效）
- * 2. 停滞检测：连续 N 次工具调用使用完全相同的工具名 + 参数，判定为死循环
+ * 2. 停滞检测：连续 N 次重复相同工具调用，或重复相同的两步工具调用周期，判定为死循环
  * 3. 硬轮数兜底：累计迭代轮数超过 hardMaxIterations，作为兜底防御
  *
  * 这三个条件按"先到先触发"判定，任何一个命中都会让循环结束。
@@ -23,7 +23,7 @@ import java.util.Locale;
  * 配置读取顺序（以 {@link #fromSystemProperties()} 为准）：
  * 1. 系统属性：{@code paicli.react.token.budget} / {@code paicli.react.stagnation.window} /
  *    {@code paicli.react.hard.max.iterations}
- * 2. 默认值：token 预算 = Integer.MAX_VALUE（实质不限）/ 连续 3 次相同工具调用 / 50 轮
+ * 2. 默认值：token 预算 = Integer.MAX_VALUE（实质不限）/ 连续 3 次相同工具调用周期 / 50 轮
  *
  * 设计取舍：长上下文模型（GLM-5.1 200k / DeepSeek V4 1M）配合套餐用户的"无限 token"诉求，
  * 默认不再以 80% × window 为硬限——让 LLM 自然停在它该停的地方。需要严格成本控制的
@@ -41,6 +41,7 @@ public class AgentBudget {
 
     private static final int DEFAULT_STAGNATION_WINDOW = 3;
     private static final int DEFAULT_HARD_MAX_ITERATIONS = 50;
+    private static final int MAX_STAGNATION_CYCLE_LENGTH = 2;
 
     private final int tokenBudget;
     private final int stagnationWindow;
@@ -101,7 +102,7 @@ public class AgentBudget {
     /**
      * 记录本轮工具调用签名并判断是否进入停滞。
      *
-     * 停滞条件：最近 stagnationWindow 轮的"工具名 + 参数"完全相同；
+     * 停滞条件：最近 stagnationWindow 次重复同一个"工具名 + 参数"，或重复同一个两步工具调用周期；
      * 一旦判定为停滞，状态会保持，后续 {@link #check()} 会返回 STAGNATION_DETECTED。
      */
     public void recordToolCalls(List<LlmClient.ToolCall> toolCalls) {
@@ -111,13 +112,10 @@ public class AgentBudget {
         }
         String signature = signatureOf(toolCalls);
         recentToolSignatures.addLast(signature);
-        while (recentToolSignatures.size() > stagnationWindow) {
+        while (recentToolSignatures.size() > stagnationWindow * MAX_STAGNATION_CYCLE_LENGTH) {
             recentToolSignatures.removeFirst();
         }
-        if (recentToolSignatures.size() == stagnationWindow) {
-            String first = recentToolSignatures.peekFirst();
-            stagnant = recentToolSignatures.stream().allMatch(sig -> sig.equals(first));
-        }
+        stagnant = repeatsCycle(1) || repeatsCycle(2);
     }
 
     public ExitReason check() {
@@ -168,7 +166,7 @@ public class AgentBudget {
                     "Token 预算已用尽（%d / %d），任务被强制收尾",
                     totalInputTokens + totalOutputTokens, tokenBudget);
             case STAGNATION_DETECTED -> String.format(Locale.ROOT,
-                    "检测到连续 %d 轮重复的工具调用，疑似死循环，已强制收尾",
+                    "检测到工具调用以相同模式连续重复 %d 次，疑似死循环，已强制收尾",
                     stagnationWindow);
             case HARD_ITERATION_LIMIT -> String.format(Locale.ROOT,
                     "达到硬轮数上限（%d），已强制收尾", hardMaxIterations);
@@ -181,6 +179,21 @@ public class AgentBudget {
             sb.append(tc.function().name()).append('|').append(tc.function().arguments()).append(';');
         }
         return sb.toString();
+    }
+
+    private boolean repeatsCycle(int cycleLength) {
+        int required = stagnationWindow * cycleLength;
+        if (recentToolSignatures.size() < required) {
+            return false;
+        }
+        List<String> signatures = List.copyOf(recentToolSignatures);
+        int start = signatures.size() - required;
+        for (int index = start + cycleLength; index < signatures.size(); index++) {
+            if (!signatures.get(index).equals(signatures.get(start + (index - start) % cycleLength))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static int readIntProperty(String key, int defaultValue) {

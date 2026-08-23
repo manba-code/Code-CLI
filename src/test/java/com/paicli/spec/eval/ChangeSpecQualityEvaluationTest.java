@@ -29,6 +29,8 @@ class ChangeSpecQualityEvaluationTest {
     void compareReactChangeSpecAndEvidenceRepairWithHiddenOracle() throws Exception {
         PaiCliConfig config = PaiCliConfig.load();
         String requestedProvider = System.getProperty("paicli.changeSpecEval.provider", "").trim();
+        String requestedModel = System.getProperty("paicli.changeSpecEval.model", "").trim();
+        applyModelOverride(config, requestedProvider, requestedModel);
         Supplier<LlmClient> clientFactory = () -> createClient(config, requestedProvider);
         LlmClient probe = clientFactory.get();
 
@@ -36,8 +38,13 @@ class ChangeSpecQualityEvaluationTest {
         long seed = Long.getLong("paicli.changeSpecEval.seed", 20260820L);
         double inputCost = nonNegativeDoubleProperty("paicli.changeSpecEval.inputCostPerMillion", 0d);
         double outputCost = nonNegativeDoubleProperty("paicli.changeSpecEval.outputCostPerMillion", 0d);
+        String costCurrency = System.getProperty("paicli.changeSpecEval.costCurrency", "USD");
         long censoredDurationMs = Duration.ofMinutes(
                 boundedIntProperty("paicli.changeSpecEval.censorMinutes", 10, 1, 60)).toMillis();
+        int reactTokenBudget = boundedIntProperty(
+                "paicli.changeSpecEval.reactTokenBudget", 250_000, 1, Integer.MAX_VALUE);
+        int reactMaxIterations = boundedIntProperty(
+                "paicli.changeSpecEval.reactMaxIterations", 15, 1, 50);
         boolean costConfigured = inputCost > 0 || outputCost > 0;
         List<ChangeSpecEvaluationCase> cases = selectCases(ChangeSpecEvaluationCatalog.defaultCases());
 
@@ -45,7 +52,8 @@ class ChangeSpecQualityEvaluationTest {
         Path runRoot = Path.of("target", "change-spec-eval", runId).toAbsolutePath().normalize();
         Files.createDirectories(runRoot);
         ChangeSpecEvaluationRunner runner = new ChangeSpecEvaluationRunner(
-                clientFactory, runRoot, inputCost, outputCost, censoredDurationMs);
+                clientFactory, runRoot, inputCost, outputCost, censoredDurationMs,
+                reactTokenBudget, reactMaxIterations);
 
         List<ChangeSpecEvaluationResult> results = new ArrayList<>();
         Random random = new Random(seed);
@@ -67,7 +75,8 @@ class ChangeSpecQualityEvaluationTest {
                 seed,
                 repetitions,
                 censoredDurationMs,
-                costConfigured);
+                costConfigured,
+                costCurrency);
         Path reportFile = runRoot.resolve("report.md");
         Files.writeString(reportFile, report, StandardCharsets.UTF_8);
         System.out.println("ChangeSpec A/B/C evaluation report: " + reportFile);
@@ -86,6 +95,19 @@ class ChangeSpecQualityEvaluationTest {
                     + "-Dpaicli.changeSpecEval.provider=<provider> 指定 provider");
         }
         return client;
+    }
+
+    static void applyModelOverride(PaiCliConfig config, String requestedProvider, String requestedModel) {
+        if (requestedModel == null || requestedModel.isBlank()) return;
+        String provider = requestedProvider == null || requestedProvider.isBlank()
+                ? config.getDefaultProvider()
+                : requestedProvider;
+        if (provider == null || provider.isBlank()) {
+            throw new IllegalArgumentException("指定 paicli.changeSpecEval.model 时必须有可用 provider");
+        }
+        config.getProviders()
+                .computeIfAbsent(provider.trim().toLowerCase(), ignored -> new PaiCliConfig.ProviderConfig())
+                .setModel(requestedModel.trim());
     }
 
     private static List<ChangeSpecEvaluationCase> selectCases(List<ChangeSpecEvaluationCase> available) {
