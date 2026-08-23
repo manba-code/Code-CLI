@@ -18,13 +18,13 @@
 
 ## 2. 免费验证
 
-- [x] ChangeSpec/预算/报告回归全部通过；四态结论、新时间口径、ReAct LLM/工具墙钟拆分和 12 任务公开证据契约落地后的最新结果为 42 tests、0 failure、0 error、3 个 fixture 预检按开关跳过：
+- [x] ChangeSpec/预算/报告回归全部通过；四态结论、新时间口径、ReAct LLM/工具墙钟拆分和 13 任务公开证据契约落地后的最新结果为 42 tests、0 failure、0 error、3 个 fixture 预检按开关跳过：
 
 ```powershell
 mvn test '-Dtest=AgentBudgetTest,SpecDraftGeneratorTest,ChangeSpecEvaluationInfrastructureTest' -DskipTests=false
 ```
 
-- [x] 12 个 fixture 通过逐项公开证据下限与隐藏 Oracle，并验证每个确定性单点错误突变都被生产命令执行路径拒绝（最新 22/22，0 failure，0 error）：
+- [x] 13 个 fixture 通过逐项公开证据下限与隐藏 Oracle，并验证每个确定性单点错误突变都被生产命令执行路径拒绝（最新 22/22，0 failure，0 error，耗时 442.0s）：
 
 ```powershell
 mvn test -Dtest=ChangeSpecEvaluationInfrastructureTest '-Dpaicli.changeSpecEval.validateFixtures=true' -DskipTests=false
@@ -76,9 +76,10 @@ mvn test -Pchange-spec-eval '-Dpaicli.changeSpecEval.provider=glm' '-Dpaicli.cha
 - [x] 时间指标分为客观正确候选 TTA、可信产品决策 TTA、失败实际耗时和惩罚 TTA；固定 `600s` 明确只是历史失败惩罚，不再称为实际失败耗时或严格删失时间。
 - [x] 报告增加 Draft、ReAct、公开 Verifier、隐藏 Oracle 分段 P50、成功率 95% Wilson 区间和单位成功成本。
 - [x] ReAct 内增加 LLM 请求与工具批次各自的墙钟采集；失败模型请求仍计时，并行工具按整批等待时间统计，公开 Verifier 继续单列。LLM 请求内部的服务端推理、网络和流式接收仍无法再拆分。
-- [x] 12 个 fixture（每层 4 个）声明逐项公开证据契约，公开测试按证据项拆分；Draft 的 command、JUnit glob、`minimum_tests` 下限和 Criterion 引用在锁定前校验，报告显示执行测试数/任务下限。
+- [x] 13 个 fixture（4 small / 5 medium / 4 high）声明逐项公开证据契约，公开测试按证据项拆分；Draft 的 command、JUnit glob、`minimum_tests` 下限和 Criterion 引用在锁定前校验，报告显示执行测试数/任务下限。
 - [x] 任务目录达到 12～15 个的数量下限，新增显式非目标、跨文件约束、兼容性决策、安全脱敏和状态转换；每个 fixture 都有一个基于参考实现的确定性单点错误突变，免费预检必须证明公开 Verifier 能杀死它。
-- [ ] 新版真实评测每组至少重复 3 次，并继续补充专门的歧义澄清任务。12 任务 × 3 组 × 3 次将产生 108 次产品运行；当前未获授权，不得自动启动。
+- [x] 新增专门的歧义澄清任务 `clarified-display-name`；A/B/C 接收完全相同的统一澄清记录，且参考实现、隐藏 Oracle、Scope、生产公开 Verifier 和单点突变均通过免费预检。
+- [ ] 新版真实评测每组至少重复 3 次。13 任务 × 3 组 × 3 次将产生 117 次产品运行；当前未获授权，不得自动启动。
 - [ ] 设计真人参与的 Spec 确认、HITL、结果复核、返工与沟通总人时；自动 Pilot 的 `total_human_effort` 继续是 `NOT_MEASURED`。
 - [x] 单独归因并修复仓库 Quick 的历史失败：刷新后 9 个失败均来自 Windows 路径/CRLF 假设、RAG 测试外部依赖或 project path 规范化不一致；修复后 `-Pquick` 为 846 tests、0 failure、0 error、5 skipped，不带付费 Profile 的全量回归为 892 tests、0 failure、0 error、11 skipped。
 

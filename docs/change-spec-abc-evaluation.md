@@ -27,7 +27,7 @@
 
 ## 3. 任务集
 
-默认任务集包含 12 个隔离 Java 17 Maven fixture，每个层级 4 个：
+默认任务集包含 13 个隔离 Java 17 Maven fixture，分层为 4 small / 5 medium / 4 high：
 
 | 层级 | 任务 | 主要风险 |
 |---|---|---|
@@ -39,6 +39,7 @@
 | 中型 | `timeout-config-compat` | 新旧配置兼容、优先级和输入校验 |
 | 中型 | `feature-flag-precedence` | 多来源兼容优先级与严格布尔解析 |
 | 中型 | `order-state-machine` | 状态转换矩阵与非法事件 |
+| 中型 | `clarified-display-name` | 统一澄清记录、Unicode 空白与 code point 截断 |
 | 高风险 | `workspace-path-safety` | 路径逃逸和安全边界 |
 | 高风险 | `operation-result-api-compat` | 公共 API 源兼容和新增语义 |
 | 高风险 | `secret-redactor` | 多种凭证语法与日志脱敏边界 |
@@ -132,14 +133,14 @@ A 的“ReAct 正常结束”和 B/C 的 `Verdict=PASSED` 是不同强度的产�
 - B/C 共用锁定 Spec document/digest；
 - 模式顺序按固定 seed 随机化；
 - 每个“任务 × 模式 × 重复轮次”使用独立 workspace 和记忆；
-- 当前客户端不能统一设置所有 provider 的采样 seed，真实模型输出不能完全复现；目录默认每组重复两次，正式统计研究仍要求至少三次；
-- 12 任务目录达到 RFC 的任务数量下限，但尚未运行新版付费基线，也未完成专门的歧义澄清和真人总人时实验。
+- 当前客户端不能统一设置所有 provider 的采样 seed，真实模型输出不能完全复现；目录默认每组重复两次，正式统计研究仍要求至少三次（当前 13 任务即 13×3×3=117 次产品运行，尚未获授权）；
+- 13 任务目录达到 RFC 的任务数量下限，但尚未运行新版付费基线，也未完成真人总人时实验。
 - 成功率使用 95% Wilson 区间；A→B、B→C、A→C 按相同任务与重复轮次报告候选胜/负/平。当前只形成描述性配对统计，不用小样本点估计冒充显著性结论。
-- 现有 12 个 fixture 已覆盖显式非目标、跨文件约束、兼容性决策、安全边界、状态转换和确定性错误突变，但需求、Scope 和命令仍较明确，不足以单独测量需求澄清价值。
+- 现有 13 个 fixture 已覆盖显式非目标、跨文件约束、兼容性决策、安全边界、状态转换和确定性错误突变；`clarified-display-name` 额外向 A/B/C 提供完全相同的统一澄清记录，但在运行新版付费基线前仍不能声称已经测得需求澄清价值。
 
 ## 7. 运行
 
-付费运行前可显式复验 12 个参考实现都能通过各自的公开测试和隐藏 Oracle，并逐一验证确定性单点突变会被生产 `ToolRegistry.executeCommandForVerification` 路径拒绝，防止弱公开测试或平台 Shell 差异污染 B/C；这些较慢检查在默认回归中跳过：
+付费运行前可显式复验 13 个参考实现都能通过各自的公开测试和隐藏 Oracle，并逐一验证确定性单点突变会被生产 `ToolRegistry.executeCommandForVerification` 路径拒绝，防止弱公开测试或平台 Shell 差异污染 B/C；这些较慢检查在默认回归中跳过：
 
 ```bash
 mvn test -Dtest=ChangeSpecEvaluationInfrastructureTest \
@@ -147,7 +148,7 @@ mvn test -Dtest=ChangeSpecEvaluationInfrastructureTest \
   -DskipTests=false
 ```
 
-默认运行 12 个任务、三组、每组两次，共 72 次产品运行；另有每个“任务 × 重复轮次”一次配对 Draft 调用。该命令会产生费用，必须在用户单独批准后执行：
+默认运行 13 个任务、三组、每组两次，共 78 次产品运行；另有每个“任务 × 重复轮次”一次配对 Draft 调用。该命令会产生费用，必须在用户单独批准后执行：
 
 ```bash
 mvn test -Pchange-spec-eval
@@ -183,7 +184,7 @@ mvn test -Pchange-spec-eval \
 | `paicli.changeSpecEval.model` | provider 当前配置 | 只在评测 JVM 内覆盖模型 ID |
 | `paicli.changeSpecEval.repetitions` | `2` | 每任务/组重复次数，1～20 |
 | `paicli.changeSpecEval.seed` | `20260820` | 三组运行顺序 seed |
-| `paicli.changeSpecEval.cases` | 全部 12 个 | 逗号分隔任务 ID |
+| `paicli.changeSpecEval.cases` | 全部 13 个 | 逗号分隔任务 ID |
 | `paicli.changeSpecEval.censorMinutes` | `10` | 失败惩罚 TTA 固定分钟数，1～60；不是实际超时或统计删失时间 |
 | `paicli.changeSpecEval.inputCostPerMillion` | `0` | 输入 Token 单价；0 表示不估价 |
 | `paicli.changeSpecEval.outputCostPerMillion` | `0` | 输出 Token 单价；0 表示不估价 |
@@ -228,6 +229,6 @@ target/change-spec-eval/<run-id>/
 配对 Draft 采用双层约束：产品 Codec 拒绝让非 scope deterministic Criterion 只引用 `path_scope`；
 评测资格检查再要求 command 精确命中任务允许列表、JUnit glob 固定为 `target/surefire-reports/TEST-*.xml`、`minimum_tests` 达到 fixture 的逐项公开证据下限，并校验每条非 scope deterministic Criterion 引用至少一个合格 command。报告分列公开证据实际执行测试数/任务下限。首次资格失败复用 Draft Generator 的唯一一次纠错机会；第二次仍失败才保存诊断。
 
-12 个现有 fixture 的公开测试已按证据项拆分，并由免费预检核对声明测试数、实际 JUnit 执行数和参考实现；每个 fixture 的单点错误突变也必须被公开 Verifier 拒绝。任务扩展和证据加固发生在历史 GLM/DeepSeek Pilot 之后，因此后续付费结果必须建立新版基线，不能直接把与旧报告的变化归因给模型。
+13 个现有 fixture 的公开测试已按证据项拆分，并由免费预检核对声明测试数、实际 JUnit 执行数和参考实现；每个 fixture 的单点错误突变也必须被公开 Verifier 拒绝。任务扩展和证据加固发生在历史 GLM/DeepSeek Pilot 之后，因此后续付费结果必须建立新版基线，不能直接把与旧报告的变化归因给模型。
 
 首次完整 Pilot、修复后的复跑结果与后续跨模型边界见 [ChangeSpec Pilot 修复与复跑清单](change-spec-pilot-remediation-checklist.md)。
