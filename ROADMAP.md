@@ -607,7 +607,7 @@
 
 **当前已完成前六条产品切片和第七条评测基础设施**：产品链路已覆盖领域模型/Codec/校验/Digest、Draft/确认、锁定/ReAct、Workspace/Verifier、Criterion/Verdict/持久化和最多一次 Evidence 驱动修复；评测侧已提供 13 个分层 fixture（4 small / 5 medium / 4 high），包括向 A/B/C 提供相同统一澄清记录的 `clarified-display-name`，并具备逐项公开证据契约和每任务一个确定性单点突变，以及 A/B/C 配对运行、首次候选快照、隐藏 Oracle、独立 `change-spec-eval` Profile、四态分维度结论、A→B/B→C/A→C 作用拆分、95% 区间、修复机会分母、客观正确/可信决策/失败实际/惩罚 TTA 和 ReAct LLM/工具批次墙钟拆分。生产默认修复行为不变，B 组只在评测运行中显式关闭修复。
 
-**下一步**：设计包含确认、HITL、复核与返工的真人总人时实验，并在获得单独授权后建立新版真实模型基线。13 个现有 fixture 已覆盖显式非目标、兼容性、安全边界、状态转换、跨文件约束和统一澄清记录，并补齐公开证据下限与单点突变；Quick 历史失败也已归因修复，当前 `-Pquick` 为 846 tests、0 failures、0 errors、5 skipped，不带付费 Profile 的全量回归为 892 tests、0 failures、0 errors、11 skipped。任务与证据变更发生在历史 Pilot 之后，后续真实结果必须建立新版基线。任何新的完整复跑均未获授权；自动 Pilot 的人工总投入为 `NOT_MEASURED`，只限制人工效率结论，不抹去已测得的技术质量或自动时间结论。
+**下一步**：真人总人时 9-session 可行性试跑已完成并通过流程审计，中文更正报告为 `docs/change-spec-human-effort-feasibility-20260823-01-zh.md`；机械流程审计通过，但测后说明最终 `ACCEPT` 未基于具体代码审阅，因此真人效率不可评价。契约锁定、范围治理、验证闭环和可审计性的工程价值有正面证据，量化收益尚未证明。正式研究前必须预注册人时非劣界值、补齐 A 路径可比产品耗时、强化 transcript/计时采集，并复盘公开 Verifier 未阻止 false acceptance 的原因。13 个现有 fixture 已覆盖显式非目标、兼容性、安全边界、状态转换、跨文件约束和统一澄清记录，并补齐公开证据下限与单点突变；Quick 历史失败也已归因修复。任务与证据变更发生在历史 Pilot 之后，后续真实结果必须建立新版基线；13×3×2 或 13×3×3 的新完整复跑仍未获授权。
 
 详细设计与完成定义见 `docs/change-spec-v1-rfc.md`。
 

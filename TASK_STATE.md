@@ -1,7 +1,7 @@
 # ChangeSpec 任务状态
 
 > 更新时间：2026-08-23
-> 当前状态：前六条垂直切片已完成；第七条切片的首次 Pilot 修复、GLM 同模型代表性小样和完整 36 次复跑均已完成。评测目录已扩展到 13 个任务（4 small / 5 medium / 4 high），其中 `clarified-display-name` 向 A/B/C 提供完全相同的统一澄清记录；每个任务都有逐项公开证据契约和一个确定性单点错误突变。`glm-4.6v-flashx` 历史完整复跑 A/B/C 成功率为 58.33%/41.67%/41.67%；`deepseek-v4-pro-0813` 的历史冻结三任务小样 A/B/C 均为 100%。两者均早于本次任务目录与证据加固，不能直接与未来新版基线比较；任何新的完整付费评测均未获授权。
+> 当前状态：前六条垂直切片已完成；第七条切片的首次 Pilot 修复、GLM 同模型代表性小样和完整 36 次复跑均已完成。评测目录已扩展到 13 个任务（4 small / 5 medium / 4 high），其中 `clarified-display-name` 向 A/B/C 提供完全相同的统一澄清记录；每个任务都有逐项公开证据契约和一个确定性单点错误突变。真人总人时 9-session 可行性试跑已使用 `deepseek / DeepSeek-V4-pro` 完成并通过协议审计：机械流程 9/9 完成；测后说明最终 `ACCEPT` 未基于具体代码审阅，因此完整真人总人时和接受准确率不可评价。模式工程价值有正面证据，量化收益尚未证明。`glm-4.6v-flashx` 历史完整复跑 A/B/C 成功率为 58.33%/41.67%/41.67%；`deepseek-v4-pro-0813` 的历史冻结三任务小样 A/B/C 均为 100%。两者均早于本次任务目录与证据加固，不能直接与未来新版基线比较；13×3×2 新版基线和 13×3×3 正式研究均未获授权。
 > 事实来源：当前工作区代码、`git status`、`git diff`、Maven/Surefire 测试结果，以及 `docs/change-spec-v1-rfc.md`。不能由这些材料证明的内容单独标为“尚未确认”。
 
 ## 1. 当前目标
@@ -154,7 +154,7 @@ PaiCLI 的 ChangeSpec 是可选的 Spec-Driven Code Change 契约层：把自然
 - DeepSeek 代表性跨模型小样已完成，但每任务只重复一次且任务出现成功率天花板，仍不能给纯模型原因分配可信百分比，也不能判定 ChangeSpec 的增量成功或修复价值；
 - 13 个 fixture 的公开证据与单点突变均已通过免费预检，且已包含统一澄清记录任务；但尚未运行新版真实模型基线，因此仍不能声称已经测得需求澄清价值，每组至少 3 次的正式研究也未获授权；
 - LLM 请求墙钟仍把服务端推理、网络传输和流式接收合并在一起，不能进一步归因到 provider 内部阶段；
-- 完整 `total_human_effort` 尚未采集 Spec 确认、HITL、结果复核、返工和沟通时间；
+- 真人总人时 9-session 可行性数据已完整采集并通过唯一性、人时求和、配对 digest、任务隔离和 Oracle 顺序审计；
 - V1 仍只支持 revision 1，不支持运行中修改锁定需求或恢复/重跑既有 Spec；
 
 ### 明确不在当前切片
@@ -165,7 +165,7 @@ PaiCLI 的 ChangeSpec 是可选的 Spec-Driven Code Change 契约层：把自然
 
 ## 6. 下一阶段任务
 
-历史免费回归 → 原模型 3 个代表任务 × 1 次 → 原模型完整 36 次 → DeepSeek 冻结代表性 9 次小样均已完成并归档；此后 13 任务目录、统一澄清记录任务、公开证据契约、确定性突变和 Quick 历史失败修复也已完成。下一阶段可免费推进真人总人时实验设计；13×3×2=78 次新版基线或 13×3×3=117 次正式研究均未获授权，不得自动启动。旧 12-task 正式研究规模 108 次也未运行。详细边界见 [`docs/change-spec-pilot-remediation-checklist.md`](docs/change-spec-pilot-remediation-checklist.md)。
+历史免费回归 → 原模型 3 个代表任务 × 1 次 → 原模型完整 36 次 → DeepSeek 冻结代表性 9 次小样均已完成并归档；此后 13 任务目录、统一澄清记录任务、公开证据契约、确定性突变、Quick 历史失败修复，以及真人总人时实验协议与 CSV 采集模板也已完成。由 P1/P2/P3 三名执行参与者 + R1 独立需求确认者进行的 9-session 真人可行性试跑已全部完成：9/9 session `VALID`、Scope 9/9，客观正确率 A/B/C 为 1/3、1/3、2/3，false acceptance 为 2/3、2/3、1/3，C 修复机会 0/3；中文更正报告见 `docs/change-spec-human-effort-feasibility-20260823-01-zh.md`。契约锁定、范围治理、验证闭环和可审计性的工程价值成立；真人效率与质量增益不可定论。13×3×2=78 次新版基线或 13×3×3=117 次正式研究仍未获授权，不得自动启动。详细恢复点见 `target/change-spec-human-effort/feasibility-20260823-01/PAUSE_CHECKPOINT.md`。
 
 同模型代表性小样的完成证据：
 
@@ -201,3 +201,11 @@ PaiCLI 的 ChangeSpec 是可选的 Spec-Driven Code Change 契约层：把自然
 2. ✅ 正式文档与配置统一为 13 个任务、4/5/4 分层和默认 78 次。
 3. ✅ 免费定向回归、扩大 Spec/ChangeSpec 回归、Quick 和无付费 Profile 全量回归。
 4. ⛔ 任何真实模型新版基线或正式研究仍须用户单独审核并明确授权，不得自动启动。
+
+## 8. 真人总人时可行性试跑结果（2026-08-23 至 2026-08-24）
+
+- ✅ 用户已授权进入可行性测试阶段，并指定 `deepseek / DeepSeek-V4-pro`；该授权不扩展到 78 次新版基线或 117-session 正式研究。
+- ✅ 免费前检：`mvn test -Dtest=ChangeSpecEvaluationInfrastructureTest -DskipTests=false '-Dmaven.compiler.useIncrementalCompilation=false'`，22 tests、0 failure、0 error、3 个慢检查按预期开关跳过。
+- ✅ 已生成 `target/change-spec-human-effort/feasibility-20260823-01/`，冻结 commit、fixture catalog hash、模型、预算、9-session Latin square 分配及空白事件/结果表。
+- ✅ 状态为 `COMPLETE_PROTOCOL_VALID`：S01-S09 共 9/9 场完成且协议有效；隐藏 Oracle 已在全部人工决定冻结后解封。
+- ✅ 结果：A/B/C 客观正确率 1/3、1/3、2/3；Scope 9/9；false acceptance 2/3、2/3、1/3；平均真人总人时 167843/270394/250754 ms；C 修复机会 0/3。测后说明最终 `ACCEPT` 未查看具体代码，因此这些人时只能视为操作下限，接受准确率也不可评价；模式工程价值有正面证据，量化收益未证明。

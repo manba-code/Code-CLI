@@ -1,0 +1,27 @@
+schema: paicli/change-spec-human-effort-study/v1
+protocol_version: 1
+study_id: ""
+stage: feasibility
+git_commit: ""
+worktree_clean: true
+fixture_catalog_sha256: ""
+provider: ""
+model: ""
+input_cost_per_million: null
+output_cost_per_million: null
+cost_currency: CNY
+seed: 20260820
+cases:
+  - ascii-slugifier
+  - login-retry-policy
+  - workspace-path-safety
+react_max_iterations: 15
+react_token_budget: 250000
+hitl_enabled: true
+allowed_verifier_command: mvn -q -DskipTests=false test
+maximum_active_human_minutes_per_session: 30
+maximum_human_initiated_reruns: 2
+human_effort_noninferiority_margin_pct: null
+assignments_file: assignments.csv
+events_file: human-effort-events.csv
+sessions_file: human-effort-sessions.csv

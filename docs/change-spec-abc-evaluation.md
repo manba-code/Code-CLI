@@ -1,6 +1,6 @@
 # ChangeSpec V1 A/B/C 评测协议
 
-> 状态：评测框架、修复后的代表性小样和 GLM 同模型 36 次真实 LLM Pilot 均已完成；DeepSeek 代表性小样 A/B/C 均为 100%，出现成功率天花板。新报告使用四态分维度结论，不再把天花板、零基线、没有修复机会或未测人工时间解释成“没有价值”。
+> 状态：评测框架、修复后的代表性小样和 GLM 同模型 36 次真实 LLM Pilot 均已完成；DeepSeek 代表性小样 A/B/C 均为 100%，出现成功率天花板。新报告使用四态分维度结论，不再把天花板、零基线、没有修复机会或未测人工时间解释成“没有价值”。真人总人时协议和采集模板已设计，但尚未执行真人 session。
 > 运行入口：`mvn test -Pchange-spec-eval`（会产生网络请求和 Token 费用）。
 
 ## 1. 要回答的问题
@@ -64,6 +64,8 @@
 - fixture 位于隔离 workspace，Agent 继续受 PathGuard 和 CommandGuard 约束；
 - 自动评测不替代 Human Criterion：若 Draft 生成 Human Criterion，评测器选择 `SKIPPED`，最终通常为 `NEEDS_HUMAN`；
 - 因为没有真实用户，本 Pilot 的 `total_human_effort` 固定报告为 `NOT_MEASURED`，不能写成 0；自动确认也不能冒充真人投入。
+
+真人实验如何计量 Spec 确认、HITL、Human Criterion、结果复核、返工、沟通和重跑，见 [ChangeSpec 真人总人时实验协议](change-spec-human-effort-study.md)。协议把主动人时与模型/命令等待分开，并要求同一参与者不重复接触同一 fixture、B/C 复用同一锁定 Spec。
 
 ## 5. 指标定义
 
@@ -134,7 +136,7 @@ A 的“ReAct 正常结束”和 B/C 的 `Verdict=PASSED` 是不同强度的产�
 - 模式顺序按固定 seed 随机化；
 - 每个“任务 × 模式 × 重复轮次”使用独立 workspace 和记忆；
 - 当前客户端不能统一设置所有 provider 的采样 seed，真实模型输出不能完全复现；目录默认每组重复两次，正式统计研究仍要求至少三次（当前 13 任务即 13×3×3=117 次产品运行，尚未获授权）；
-- 13 任务目录达到 RFC 的任务数量下限，但尚未运行新版付费基线，也未完成真人总人时实验。
+- 13 任务目录达到 RFC 的任务数量下限，但尚未运行新版付费基线；真人总人时协议已设计，9-session 可行性试跑和正式实验均未执行。
 - 成功率使用 95% Wilson 区间；A→B、B→C、A→C 按相同任务与重复轮次报告候选胜/负/平。当前只形成描述性配对统计，不用小样本点估计冒充显著性结论。
 - 现有 13 个 fixture 已覆盖显式非目标、跨文件约束、兼容性决策、安全边界、状态转换和确定性错误突变；`clarified-display-name` 额外向 A/B/C 提供完全相同的统一澄清记录，但在运行新版付费基线前仍不能声称已经测得需求澄清价值。
 

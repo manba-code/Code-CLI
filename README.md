@@ -48,9 +48,10 @@ ReAct 耗时另行拆出 LLM 请求等待墙钟和工具批次墙钟；并行工
 Verifier 进入唯一一次修复时还会注入首次 changed-files 数量；若为 0，会明确要求实际使用工具修改，
 不能只描述计划。评测报告把完整结束、隐藏任务失败且零改动的 Spec Run 标为
 `NO_CHANGE_COMPLETION`。每个 fixture 另有一个单点错误突变，免费预检要求公开 Verifier 必须拒绝它。
-任务目录和公开证据契约在历史 Pilot 后已变化，新的完整付费评测必须建立新版基线且需单独批准。协议与参数见
-[`docs/change-spec-abc-evaluation.md`](docs/change-spec-abc-evaluation.md)；首次 Pilot 的修复与复跑顺序见
-[`docs/change-spec-pilot-remediation-checklist.md`](docs/change-spec-pilot-remediation-checklist.md)。
+任务目录和公开证据契约在历史 Pilot 后已变化，新的完整付费评测必须建立新版基线且需单独批准。自动评测协议与参数见
+[`docs/change-spec-abc-evaluation.md`](docs/change-spec-abc-evaluation.md)；真人主动人时的分类、计时、分配和 CSV 模板见
+[`docs/change-spec-human-effort-study.md`](docs/change-spec-human-effort-study.md)；首次 Pilot 的修复与复跑顺序见
+[`docs/change-spec-pilot-remediation-checklist.md`](docs/change-spec-pilot-remediation-checklist.md)。9-session 真人可行性试跑已完成，中文更正版见 [`docs/change-spec-human-effort-feasibility-20260823-01-zh.md`](docs/change-spec-human-effort-feasibility-20260823-01-zh.md)：模式工程价值有正面证据，量化效率与质量增益尚未证明；正式实验仍未执行。
 
 2026-08-23 的 GLM 同模型完整复跑已归档：`glm-4.6v-flashx` 下 A/B/C 成功率为
 58.33%/41.67%/41.67%，配对 Draft/digest 12/12，C 虚假完成率为 0%。随后冻结三个代表任务运行
