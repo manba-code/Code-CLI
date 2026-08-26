@@ -26,7 +26,10 @@ final class ChangeSpecEvaluationCatalog {
                 workspacePath(),
                 operationResultCompatibility(),
                 secretRedactor(),
-                tokenExpiryPolicy());
+                tokenExpiryPolicy(),
+                budgetAllocator(),
+                slidingWindowLimiter(),
+                deadlineRetryRunner());
     }
 
     private static ChangeSpecEvaluationCase safeDivider() {
@@ -1246,6 +1249,474 @@ final class ChangeSpecEvaluationCatalog {
                         "src/main/java/eval/TokenPolicy.java"));
     }
 
+    private static ChangeSpecEvaluationCase budgetAllocator() {
+        return evaluationCase(
+                "budget-allocator",
+                ChangeSpecEvaluationTier.HIGH_RISK,
+                """
+                实现 BudgetAllocator.allocate(long total, List<Long> weights) 返回 List<Long>：
+                1. weights 为 null、为空、含 null 元素或含 <= 0 的权重时抛 IllegalArgumentException；total < 0 时抛 IllegalArgumentException；
+                2. total == 0 时返回与 weights 等长的全 0 列表；
+                3. 每份的基础值为 floor(total × w ÷ W)，W 为全部权重之和；算术必须精确且在 long 范围内溢出安全，不得用 double/float 逼近；
+                4. 基础值分配后剩余的余量按各份小数部分（total × w ÷ W 的小数部分）从大到小逐份加一，直至分完；
+                5. 小数部分相同时索引更小的份先得到加一；
+                6. 任何合法输入下返回列表元素之和必须恰好等于 total；
+                7. 只允许修改 src/main/java/eval/BudgetAllocator.java，不得修改测试和 pom.xml；
+                8. 公开验证命令必须使用：mvn -q -DskipTests=false test。
+                """,
+                List.of(
+                        "整除时按权重比例精确分配",
+                        "余量按小数部分从大到小分配，同小数部分时索引小者优先",
+                        "total 为 0 时返回全 0 列表",
+                        "非法 total 或非法 weights 抛 IllegalArgumentException",
+                        "任意合法输入下份额之和恒等于 total"),
+                Map.of(
+                        "pom.xml", fixturePom(),
+                        "src/main/java/eval/BudgetAllocator.java", """
+                                package eval;
+
+                                import java.util.List;
+
+                                public final class BudgetAllocator {
+                                    private BudgetAllocator() { }
+
+                                    public static List<Long> allocate(long total, List<Long> weights) {
+                                        throw new UnsupportedOperationException("not implemented");
+                                    }
+                                }
+                                """,
+                        "src/test/java/eval/BudgetAllocatorVisibleTest.java", """
+                                package eval;
+
+                                import org.junit.jupiter.api.Test;
+                                import static org.junit.jupiter.api.Assertions.*;
+
+                                import java.util.List;
+
+                                class BudgetAllocatorVisibleTest {
+                                    @Test void splitsEvenlyWhenWeightsSumDividesTotal() {
+                                        assertEquals(List.of(50L, 50L), BudgetAllocator.allocate(100L, List.of(50L, 50L)));
+                                        assertEquals(List.of(10L, 20L, 70L), BudgetAllocator.allocate(100L, List.of(1L, 2L, 7L)));
+                                    }
+
+                                    @Test void distributesRemainderToLargestFractionalPart() {
+                                        assertEquals(List.of(1L, 3L, 6L), BudgetAllocator.allocate(10L, List.of(1L, 2L, 4L)));
+                                    }
+
+                                    @Test void returnsAllZerosForZeroTotal() {
+                                        assertEquals(List.of(0L, 0L, 0L), BudgetAllocator.allocate(0L, List.of(3L, 7L, 5L)));
+                                    }
+
+                                    @Test void rejectsInvalidTotalsAndWeights() {
+                                        assertThrows(IllegalArgumentException.class, () -> BudgetAllocator.allocate(-1L, List.of(1L)));
+                                        assertThrows(IllegalArgumentException.class, () -> BudgetAllocator.allocate(10L, null));
+                                        assertThrows(IllegalArgumentException.class, () -> BudgetAllocator.allocate(10L, List.of()));
+                                        assertThrows(IllegalArgumentException.class, () -> BudgetAllocator.allocate(10L, List.of(1L, 0L)));
+                                        assertThrows(IllegalArgumentException.class, () -> BudgetAllocator.allocate(10L, List.of(1L, -2L)));
+                                    }
+
+                                    @Test void keepsSumExactForAwkwardSplits() {
+                                        List<Long> shares = BudgetAllocator.allocate(7L, List.of(1L, 1L, 1L));
+                                        assertEquals(7L, shares.stream().mapToLong(Long::longValue).sum());
+                                        assertEquals(List.of(3L, 2L, 2L), shares);
+                                    }
+                                }
+                                """),
+                Map.of("src/test/java/eval/BudgetAllocatorHiddenTest.java", """
+                        package eval;
+
+                        import org.junit.jupiter.api.Test;
+                        import static org.junit.jupiter.api.Assertions.*;
+
+                        import java.util.Arrays;
+                        import java.util.List;
+
+                        class BudgetAllocatorHiddenTest {
+                            @Test void staysExactNearLongMaxWithoutOverflow() {
+                                long half = Long.MAX_VALUE / 2;
+                                List<Long> shares = BudgetAllocator.allocate(Long.MAX_VALUE - 1, List.of(half, half + 1));
+                                assertEquals(List.of(half, half), shares);
+                                assertEquals(Long.MAX_VALUE - 1, shares.stream().mapToLong(Long::longValue).sum());
+                            }
+
+                            @Test void resolvesTiesTowardsLowerIndices() {
+                                assertEquals(List.of(1L, 0L), BudgetAllocator.allocate(1L, List.of(1L, 1L)));
+                                assertEquals(List.of(3L, 3L, 2L, 2L), BudgetAllocator.allocate(10L, List.of(1L, 1L, 1L, 1L)));
+                                assertEquals(List.of(1L, 0L, 0L), BudgetAllocator.allocate(1L, List.of(2L, 2L, 2L)));
+                            }
+
+                            @Test void keepsSumsExactForAwkwardWeights() {
+                                List<Long> shares = BudgetAllocator.allocate(999_983L, List.of(7L, 11L, 13L, 17L));
+                                assertEquals(999_983L, shares.stream().mapToLong(Long::longValue).sum());
+                                List<Long> bigShares = BudgetAllocator.allocate(
+                                        Long.MAX_VALUE - 2, List.of(3L, 5L, 7L, 11L, 101L));
+                                assertEquals(Long.MAX_VALUE - 2, bigShares.stream().mapToLong(Long::longValue).sum());
+                            }
+
+                            @Test void rejectsNullWeightElements() {
+                                assertThrows(IllegalArgumentException.class,
+                                        () -> BudgetAllocator.allocate(10L, Arrays.asList(1L, null)));
+                            }
+                        }
+                        """),
+                Set.of("src/main/java/eval/BudgetAllocator.java"));
+    }
+
+    private static ChangeSpecEvaluationCase slidingWindowLimiter() {
+        return evaluationCase(
+                "sliding-window-limiter",
+                ChangeSpecEvaluationTier.HIGH_RISK,
+                """
+                实现滑动窗口限流器 SlidingWindowLimiter：
+                1. 构造函数 SlidingWindowLimiter(int maxPerWindow, long windowMillis)：任一参数 <= 0 抛 IllegalArgumentException；
+                2. boolean tryAcquire(long nowMillis)：以 nowMillis 为窗口右端点统计落在 (nowMillis - windowMillis, nowMillis] 内的既有获取次数（左端点不含、右端点含）；若加上本次后不超过 maxPerWindow，则记录本次获取并返回 true；否则返回 false 且不记录；
+                3. 相同毫秒时间戳允许多次获取，每次独立计数；
+                4. int availablePermits(long nowMillis)：返回 maxPerWindow 减去当前窗口内既有获取次数，最小为 0；本方法既不产生也不清除获取记录；
+                5. tryAcquire 与 availablePermits 的 nowMillis 不得小于此前任一方法的最近调用值，否则抛 IllegalArgumentException；
+                6. 只允许修改 src/main/java/eval/SlidingWindowLimiter.java，不得修改测试和 pom.xml；
+                7. 公开验证命令必须使用：mvn -q -DskipTests=false test。
+                """,
+                List.of(
+                        "窗口内获取数不超过 maxPerWindow，超出时拒绝且不记录",
+                        "availablePermits 反映剩余额度且不产生也不清除记录",
+                        "非法构造参数与时间回退抛 IllegalArgumentException",
+                        "同一毫秒的多次获取独立计数"),
+                Map.of(
+                        "pom.xml", fixturePom(),
+                        "src/main/java/eval/SlidingWindowLimiter.java", """
+                                package eval;
+
+                                public final class SlidingWindowLimiter {
+                                    public SlidingWindowLimiter(int maxPerWindow, long windowMillis) {
+                                    }
+
+                                    public boolean tryAcquire(long nowMillis) {
+                                        throw new UnsupportedOperationException("not implemented");
+                                    }
+
+                                    public int availablePermits(long nowMillis) {
+                                        throw new UnsupportedOperationException("not implemented");
+                                    }
+                                }
+                                """,
+                        "src/test/java/eval/SlidingWindowLimiterVisibleTest.java", """
+                                package eval;
+
+                                import org.junit.jupiter.api.Test;
+                                import static org.junit.jupiter.api.Assertions.*;
+
+                                class SlidingWindowLimiterVisibleTest {
+                                    @Test void rejectsAcquireBeyondMaxInsideWindow() {
+                                        SlidingWindowLimiter limiter = new SlidingWindowLimiter(2, 100L);
+                                        assertTrue(limiter.tryAcquire(10L));
+                                        assertTrue(limiter.tryAcquire(20L));
+                                        assertFalse(limiter.tryAcquire(50L));
+                                        assertTrue(limiter.tryAcquire(111L));
+                                    }
+
+                                    @Test void exposesAvailablePermitsWithoutConsuming() {
+                                        SlidingWindowLimiter limiter = new SlidingWindowLimiter(3, 100L);
+                                        assertEquals(3, limiter.availablePermits(0L));
+                                        assertTrue(limiter.tryAcquire(5L));
+                                        assertEquals(2, limiter.availablePermits(10L));
+                                        assertEquals(2, limiter.availablePermits(10L));
+                                        assertTrue(limiter.tryAcquire(10L));
+                                        assertEquals(1, limiter.availablePermits(10L));
+                                    }
+
+                                    @Test void rejectsInvalidConstructorAndBackwardsClock() {
+                                        assertThrows(IllegalArgumentException.class, () -> new SlidingWindowLimiter(0, 100L));
+                                        assertThrows(IllegalArgumentException.class, () -> new SlidingWindowLimiter(2, 0L));
+                                        SlidingWindowLimiter limiter = new SlidingWindowLimiter(2, 100L);
+                                        assertTrue(limiter.tryAcquire(100L));
+                                        assertThrows(IllegalArgumentException.class, () -> limiter.tryAcquire(50L));
+                                        assertThrows(IllegalArgumentException.class, () -> limiter.availablePermits(50L));
+                                    }
+
+                                    @Test void countsRepeatedAcquireAtSameTimestamp() {
+                                        SlidingWindowLimiter limiter = new SlidingWindowLimiter(2, 100L);
+                                        assertTrue(limiter.tryAcquire(7L));
+                                        assertTrue(limiter.tryAcquire(7L));
+                                        assertFalse(limiter.tryAcquire(7L));
+                                        assertEquals(0, limiter.availablePermits(7L));
+                                    }
+                                }
+                                """),
+                Map.of("src/test/java/eval/SlidingWindowLimiterHiddenTest.java", """
+                        package eval;
+
+                        import org.junit.jupiter.api.Test;
+                        import static org.junit.jupiter.api.Assertions.*;
+
+                        class SlidingWindowLimiterHiddenTest {
+                            @Test void windowLeftBoundaryIsHalfOpen() {
+                                SlidingWindowLimiter limiter = new SlidingWindowLimiter(1, 100L);
+                                assertTrue(limiter.tryAcquire(0L));
+                                assertFalse(limiter.tryAcquire(99L));
+                                assertTrue(limiter.tryAcquire(100L));
+                            }
+
+                            @Test void availablePermitsFollowsSlidingWindowAndClampsAtZero() {
+                                SlidingWindowLimiter limiter = new SlidingWindowLimiter(2, 50L);
+                                assertTrue(limiter.tryAcquire(10L));
+                                assertTrue(limiter.tryAcquire(20L));
+                                assertEquals(0, limiter.availablePermits(30L));
+                                assertEquals(1, limiter.availablePermits(69L));
+                                assertEquals(2, limiter.availablePermits(70L));
+                            }
+
+                            @Test void permitsQueriesDoNotEraseAcquireRecords() {
+                                SlidingWindowLimiter limiter = new SlidingWindowLimiter(1, 100L);
+                                assertTrue(limiter.tryAcquire(10L));
+                                assertEquals(0, limiter.availablePermits(50L));
+                                assertFalse(limiter.tryAcquire(50L));
+                                assertTrue(limiter.tryAcquire(110L));
+                            }
+
+                            @Test void clockMonotonicityIsSharedAcrossBothMethods() {
+                                SlidingWindowLimiter limiter = new SlidingWindowLimiter(2, 100L);
+                                assertTrue(limiter.tryAcquire(50L));
+                                assertEquals(1, limiter.availablePermits(60L));
+                                assertThrows(IllegalArgumentException.class, () -> limiter.tryAcquire(59L));
+                                assertThrows(IllegalArgumentException.class, () -> limiter.availablePermits(59L));
+                            }
+                        }
+                        """),
+                Set.of("src/main/java/eval/SlidingWindowLimiter.java"));
+    }
+
+    private static ChangeSpecEvaluationCase deadlineRetryRunner() {
+        return evaluationCase(
+                "deadline-retry-runner",
+                ChangeSpecEvaluationTier.HIGH_RISK,
+                """
+                实现跨文件的重试预算与截止时间执行器：
+                1. RetryBudget(int transientAttempts, int timeoutAttempts)：任一参数 < 1 抛 IllegalArgumentException；两个参数都是包含首次尝试在内的总尝试次数上限；
+                2. RetryBudget.maxAttempts(FailureKind kind)：TRANSIENT → transientAttempts；TIMEOUT → timeoutAttempts；PERMANENT → 1；kind 为 null 抛 IllegalArgumentException；
+                3. RetryBudget.canRetry(FailureKind kind, int attemptsSoFar)：kind 为 null 或 attemptsSoFar < 0 抛 IllegalArgumentException；PERMANENT 一律返回 false；其余返回 attemptsSoFar < maxAttempts(kind)；
+                4. DeadlineRetryRunner(RetryBudget budget, long deadlineEpochMs)：budget 为 null 抛 IllegalArgumentException；
+                5. DeadlineRetryRunner.execute(Task task, LongSupplier clock)：每次尝试（包含第一次）之前先取 clock.getAsLong()，若该时刻 >= deadlineEpochMs 则抛 DeadlineExceededException，即使重试预算尚未用尽；
+                6. 尝试成功则立即返回 Task.call() 的结果；
+                7. 尝试抛出 TaskFailure 后：attemptsSoFar 加一；若 canRetry(kind, attemptsSoFar) 为 true 则回到第 5 步继续，否则原样重抛该 TaskFailure；
+                8. FailureKind、Task、TaskFailure、DeadlineExceededException 已提供且不得修改；
+                9. 只允许修改 src/main/java/eval/RetryBudget.java 和 src/main/java/eval/DeadlineRetryRunner.java，不得修改测试和 pom.xml；
+                10. 公开验证命令必须使用：mvn -q -DskipTests=false test。
+                """,
+                List.of(
+                        "TRANSIENT/TIMEOUT 在各自总尝试次数上限内重试直至成功",
+                        "预算耗尽时原样重抛最后一次 TaskFailure",
+                        "PERMANENT 失败不重试，立即重抛",
+                        "每次尝试前（含首次）检查截止时间，超时抛 DeadlineExceededException"),
+                Map.of(
+                        "pom.xml", fixturePom(),
+                        "src/main/java/eval/FailureKind.java", """
+                                package eval;
+
+                                public enum FailureKind {
+                                    TRANSIENT,
+                                    TIMEOUT,
+                                    PERMANENT
+                                }
+                                """,
+                        "src/main/java/eval/Task.java", """
+                                package eval;
+
+                                @FunctionalInterface
+                                public interface Task {
+                                    String call();
+                                }
+                                """,
+                        "src/main/java/eval/TaskFailure.java", """
+                                package eval;
+
+                                public final class TaskFailure extends RuntimeException {
+                                    private final FailureKind kind;
+
+                                    public TaskFailure(FailureKind kind, String message) {
+                                        super(message);
+                                        if (kind == null) {
+                                            throw new IllegalArgumentException("kind must not be null");
+                                        }
+                                        this.kind = kind;
+                                    }
+
+                                    public FailureKind kind() {
+                                        return kind;
+                                    }
+                                }
+                                """,
+                        "src/main/java/eval/DeadlineExceededException.java", """
+                                package eval;
+
+                                public final class DeadlineExceededException extends RuntimeException {
+                                    public DeadlineExceededException(String message) {
+                                        super(message);
+                                    }
+                                }
+                                """,
+                        "src/main/java/eval/RetryBudget.java", """
+                                package eval;
+
+                                public final class RetryBudget {
+                                    public RetryBudget(int transientAttempts, int timeoutAttempts) {
+                                    }
+
+                                    public int maxAttempts(FailureKind kind) {
+                                        throw new UnsupportedOperationException("not implemented");
+                                    }
+
+                                    public boolean canRetry(FailureKind kind, int attemptsSoFar) {
+                                        throw new UnsupportedOperationException("not implemented");
+                                    }
+                                }
+                                """,
+                        "src/main/java/eval/DeadlineRetryRunner.java", """
+                                package eval;
+
+                                import java.util.function.LongSupplier;
+
+                                public final class DeadlineRetryRunner {
+                                    public DeadlineRetryRunner(RetryBudget budget, long deadlineEpochMs) {
+                                    }
+
+                                    public String execute(Task task, LongSupplier clock) {
+                                        throw new UnsupportedOperationException("not implemented");
+                                    }
+                                }
+                                """,
+                        "src/test/java/eval/DeadlineRetryVisibleTest.java", """
+                                package eval;
+
+                                import org.junit.jupiter.api.Test;
+                                import static org.junit.jupiter.api.Assertions.*;
+
+                                import java.util.concurrent.atomic.AtomicInteger;
+                                import java.util.concurrent.atomic.AtomicLong;
+
+                                class DeadlineRetryVisibleTest {
+                                    @Test void retriesTransientFailuresUntilSuccess() {
+                                        AtomicInteger attempts = new AtomicInteger();
+                                        AtomicLong clock = new AtomicLong(0L);
+                                        Task task = () -> {
+                                            if (attempts.incrementAndGet() < 3) {
+                                                throw new TaskFailure(FailureKind.TRANSIENT, "flaky");
+                                            }
+                                            return "ok";
+                                        };
+                                        String result = new DeadlineRetryRunner(new RetryBudget(3, 2), 1_000L)
+                                                .execute(task, clock::get);
+                                        assertEquals("ok", result);
+                                        assertEquals(3, attempts.get());
+                                    }
+
+                                    @Test void rethrowsLastFailureWhenBudgetIsExhausted() {
+                                        AtomicInteger attempts = new AtomicInteger();
+                                        AtomicLong clock = new AtomicLong(0L);
+                                        Task task = () -> {
+                                            attempts.incrementAndGet();
+                                            throw new TaskFailure(FailureKind.TIMEOUT, "slow");
+                                        };
+                                        DeadlineRetryRunner runner = new DeadlineRetryRunner(new RetryBudget(2, 2), 1_000L);
+                                        TaskFailure failure = assertThrows(
+                                                TaskFailure.class, () -> runner.execute(task, clock::get));
+                                        assertEquals(FailureKind.TIMEOUT, failure.kind());
+                                        assertEquals(2, attempts.get());
+                                    }
+
+                                    @Test void permanentFailuresAreNeverRetried() {
+                                        AtomicInteger attempts = new AtomicInteger();
+                                        AtomicLong clock = new AtomicLong(0L);
+                                        Task task = () -> {
+                                            attempts.incrementAndGet();
+                                            throw new TaskFailure(FailureKind.PERMANENT, "bad");
+                                        };
+                                        DeadlineRetryRunner runner = new DeadlineRetryRunner(new RetryBudget(5, 5), 1_000L);
+                                        TaskFailure failure = assertThrows(
+                                                TaskFailure.class, () -> runner.execute(task, clock::get));
+                                        assertEquals(FailureKind.PERMANENT, failure.kind());
+                                        assertEquals(1, attempts.get());
+                                    }
+
+                                    @Test void deadlineExpiryStopsFurtherAttempts() {
+                                        AtomicInteger attempts = new AtomicInteger();
+                                        AtomicLong clock = new AtomicLong(0L);
+                                        Task task = () -> {
+                                            attempts.incrementAndGet();
+                                            throw new TaskFailure(FailureKind.TRANSIENT, "flaky");
+                                        };
+                                        DeadlineRetryRunner runner = new DeadlineRetryRunner(new RetryBudget(9, 9), 500L);
+                                        assertThrows(DeadlineExceededException.class, () -> {
+                                            runner.execute(task, () -> attempts.get() == 0 ? clock.get() : 600L);
+                                        });
+                                        assertEquals(1, attempts.get());
+                                    }
+                                }
+                                """),
+                Map.of("src/test/java/eval/DeadlineRetryHiddenTest.java", """
+                        package eval;
+
+                        import org.junit.jupiter.api.Test;
+                        import static org.junit.jupiter.api.Assertions.*;
+
+                        import java.util.concurrent.atomic.AtomicInteger;
+
+                        class DeadlineRetryHiddenTest {
+                            @Test void deadlineIsCheckedBeforeTheVeryFirstAttempt() {
+                                AtomicInteger attempts = new AtomicInteger();
+                                Task task = () -> {
+                                    attempts.incrementAndGet();
+                                    return "ok";
+                                };
+                                DeadlineRetryRunner runner = new DeadlineRetryRunner(new RetryBudget(9, 9), 100L);
+                                assertThrows(DeadlineExceededException.class, () -> runner.execute(task, () -> 100L));
+                                assertEquals(0, attempts.get());
+                            }
+
+                            @Test void deadlineBoundaryIsInclusiveAndAllowsJustBefore() {
+                                AtomicInteger attempts = new AtomicInteger();
+                                Task task = () -> {
+                                    attempts.incrementAndGet();
+                                    return "ok";
+                                };
+                                DeadlineRetryRunner runner = new DeadlineRetryRunner(new RetryBudget(9, 9), 100L);
+                                assertEquals("ok", runner.execute(task, () -> 99L));
+                                assertEquals(1, attempts.get());
+                            }
+
+                            @Test void attemptLimitCountsTheFirstAttempt() {
+                                AtomicInteger attempts = new AtomicInteger();
+                                Task task = () -> {
+                                    attempts.incrementAndGet();
+                                    throw new TaskFailure(FailureKind.TIMEOUT, "slow");
+                                };
+                                DeadlineRetryRunner runner = new DeadlineRetryRunner(new RetryBudget(3, 3), 10_000L);
+                                assertThrows(TaskFailure.class, () -> runner.execute(task, () -> 0L));
+                                assertEquals(3, attempts.get());
+                            }
+
+                            @Test void budgetValidationAndBoundaries() {
+                                RetryBudget budget = new RetryBudget(2, 4);
+                                assertEquals(2, budget.maxAttempts(FailureKind.TRANSIENT));
+                                assertEquals(4, budget.maxAttempts(FailureKind.TIMEOUT));
+                                assertEquals(1, budget.maxAttempts(FailureKind.PERMANENT));
+                                assertTrue(budget.canRetry(FailureKind.TRANSIENT, 1));
+                                assertFalse(budget.canRetry(FailureKind.TRANSIENT, 2));
+                                assertFalse(budget.canRetry(FailureKind.PERMANENT, 0));
+                                assertThrows(IllegalArgumentException.class, () -> budget.maxAttempts(null));
+                                assertThrows(IllegalArgumentException.class, () -> budget.canRetry(null, 1));
+                                assertThrows(IllegalArgumentException.class, () -> budget.canRetry(FailureKind.TRANSIENT, -1));
+                                assertThrows(IllegalArgumentException.class, () -> new RetryBudget(0, 2));
+                                assertThrows(IllegalArgumentException.class, () -> new RetryBudget(2, 0));
+                            }
+
+                            @Test void nullBudgetIsRejected() {
+                                assertThrows(IllegalArgumentException.class, () -> new DeadlineRetryRunner(null, 100L));
+                            }
+                        }
+                        """),
+                Set.of("src/main/java/eval/RetryBudget.java", "src/main/java/eval/DeadlineRetryRunner.java"));
+    }
+
     private static ChangeSpecEvaluationCase evaluationCase(
             String id,
             ChangeSpecEvaluationTier tier,
@@ -1554,6 +2025,170 @@ final class ChangeSpecEvaluationCatalog {
                             }
                         }
                         """));
+        solutions.put("budget-allocator", Map.of(
+                "src/main/java/eval/BudgetAllocator.java", """
+                        package eval;
+                        import java.math.BigInteger;
+                        import java.util.ArrayList;
+                        import java.util.List;
+                        public final class BudgetAllocator {
+                            private BudgetAllocator() { }
+                            public static List<Long> allocate(long total, List<Long> weights) {
+                                if (weights == null || weights.isEmpty()) {
+                                    throw new IllegalArgumentException("weights must not be null or empty");
+                                }
+                                if (total < 0) {
+                                    throw new IllegalArgumentException("total must not be negative");
+                                }
+                                BigInteger weightSum = BigInteger.ZERO;
+                                List<BigInteger> bigWeights = new ArrayList<>(weights.size());
+                                for (Long weight : weights) {
+                                    if (weight == null || weight <= 0) {
+                                        throw new IllegalArgumentException("weights must be positive");
+                                    }
+                                    bigWeights.add(BigInteger.valueOf(weight));
+                                    weightSum = weightSum.add(BigInteger.valueOf(weight));
+                                }
+                                BigInteger totalBig = BigInteger.valueOf(total);
+                                List<Long> shares = new ArrayList<>(weights.size());
+                                List<BigInteger> remainders = new ArrayList<>(weights.size());
+                                BigInteger allocated = BigInteger.ZERO;
+                                for (BigInteger weight : bigWeights) {
+                                    BigInteger[] division = totalBig.multiply(weight).divideAndRemainder(weightSum);
+                                    shares.add(division[0].longValueExact());
+                                    remainders.add(division[1]);
+                                    allocated = allocated.add(division[0]);
+                                }
+                                List<Integer> order = new ArrayList<>(weights.size());
+                                for (int index = 0; index < weights.size(); index++) {
+                                    order.add(index);
+                                }
+                                order.sort((left, right) -> {
+                                    int byRemainder = remainders.get(right).compareTo(remainders.get(left));
+                                    return byRemainder != 0 ? byRemainder : Integer.compare(left, right);
+                                });
+                                BigInteger leftover = totalBig.subtract(allocated);
+                                for (int index : order) {
+                                    if (leftover.signum() == 0) break;
+                                    shares.set(index, shares.get(index) + 1);
+                                    leftover = leftover.subtract(BigInteger.ONE);
+                                }
+                                return List.copyOf(shares);
+                            }
+                        }
+                        """));
+        solutions.put("sliding-window-limiter", Map.of(
+                "src/main/java/eval/SlidingWindowLimiter.java", """
+                        package eval;
+                        import java.util.ArrayDeque;
+                        import java.util.Deque;
+                        public final class SlidingWindowLimiter {
+                            private final int maxPerWindow;
+                            private final long windowMillis;
+                            private final Deque<Long> acquisitions = new ArrayDeque<>();
+                            private long lastNowMillis = Long.MIN_VALUE;
+                            public SlidingWindowLimiter(int maxPerWindow, long windowMillis) {
+                                if (maxPerWindow <= 0 || windowMillis <= 0) {
+                                    throw new IllegalArgumentException("maxPerWindow and windowMillis must be positive");
+                                }
+                                this.maxPerWindow = maxPerWindow;
+                                this.windowMillis = windowMillis;
+                            }
+                            public boolean tryAcquire(long nowMillis) {
+                                checkMonotonic(nowMillis);
+                                evictExpired(nowMillis);
+                                if (acquisitions.size() >= maxPerWindow) {
+                                    return false;
+                                }
+                                acquisitions.addLast(nowMillis);
+                                return true;
+                            }
+                            public int availablePermits(long nowMillis) {
+                                checkMonotonic(nowMillis);
+                                evictExpired(nowMillis);
+                                return Math.max(0, maxPerWindow - acquisitions.size());
+                            }
+                            private void checkMonotonic(long nowMillis) {
+                                if (nowMillis < lastNowMillis) {
+                                    throw new IllegalArgumentException("nowMillis must not go backwards");
+                                }
+                                lastNowMillis = nowMillis;
+                            }
+                            private void evictExpired(long nowMillis) {
+                                while (!acquisitions.isEmpty() && nowMillis - acquisitions.peekFirst() >= windowMillis) {
+                                    acquisitions.pollFirst();
+                                }
+                            }
+                        }
+                        """));
+        solutions.put("deadline-retry-runner", Map.of(
+                "src/main/java/eval/RetryBudget.java", """
+                        package eval;
+                        public final class RetryBudget {
+                            private final int transientAttempts;
+                            private final int timeoutAttempts;
+                            public RetryBudget(int transientAttempts, int timeoutAttempts) {
+                                if (transientAttempts < 1 || timeoutAttempts < 1) {
+                                    throw new IllegalArgumentException("attempt limits must be at least 1");
+                                }
+                                this.transientAttempts = transientAttempts;
+                                this.timeoutAttempts = timeoutAttempts;
+                            }
+                            public int maxAttempts(FailureKind kind) {
+                                if (kind == null) {
+                                    throw new IllegalArgumentException("kind must not be null");
+                                }
+                                return switch (kind) {
+                                    case TRANSIENT -> transientAttempts;
+                                    case TIMEOUT -> timeoutAttempts;
+                                    case PERMANENT -> 1;
+                                };
+                            }
+                            public boolean canRetry(FailureKind kind, int attemptsSoFar) {
+                                if (kind == null) {
+                                    throw new IllegalArgumentException("kind must not be null");
+                                }
+                                if (attemptsSoFar < 0) {
+                                    throw new IllegalArgumentException("attemptsSoFar must not be negative");
+                                }
+                                if (kind == FailureKind.PERMANENT) {
+                                    return false;
+                                }
+                                return attemptsSoFar < maxAttempts(kind);
+                            }
+                        }
+                        """,
+                "src/main/java/eval/DeadlineRetryRunner.java", """
+                        package eval;
+                        import java.util.function.LongSupplier;
+                        public final class DeadlineRetryRunner {
+                            private final RetryBudget budget;
+                            private final long deadlineEpochMs;
+                            public DeadlineRetryRunner(RetryBudget budget, long deadlineEpochMs) {
+                                if (budget == null) {
+                                    throw new IllegalArgumentException("budget must not be null");
+                                }
+                                this.budget = budget;
+                                this.deadlineEpochMs = deadlineEpochMs;
+                            }
+                            public String execute(Task task, LongSupplier clock) {
+                                int attemptsSoFar = 0;
+                                while (true) {
+                                    if (clock.getAsLong() >= deadlineEpochMs) {
+                                        throw new DeadlineExceededException("deadline exceeded before attempt");
+                                    }
+                                    try {
+                                        return task.call();
+                                    } catch (TaskFailure failure) {
+                                        attemptsSoFar++;
+                                        if (!budget.canRetry(failure.kind(), attemptsSoFar)) {
+                                            throw failure;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        """));
         return Map.copyOf(solutions);
     }
 
@@ -1623,7 +2258,22 @@ final class ChangeSpecEvaluationCatalog {
                         "token-expiry-cross-file",
                         "src/main/java/eval/TokenPolicy.java",
                         "if (nowEpochSecond > Long.MAX_VALUE - skewSeconds) return false;",
-                        ""));
+                        ""),
+                new PublicEvidenceMutation(
+                        "budget-allocator",
+                        "src/main/java/eval/BudgetAllocator.java",
+                        "return byRemainder != 0 ? byRemainder : Integer.compare(left, right);",
+                        "return byRemainder != 0 ? byRemainder : Integer.compare(right, left);"),
+                new PublicEvidenceMutation(
+                        "sliding-window-limiter",
+                        "src/main/java/eval/SlidingWindowLimiter.java",
+                        "if (acquisitions.size() >= maxPerWindow) {",
+                        "if (acquisitions.size() > maxPerWindow) {"),
+                new PublicEvidenceMutation(
+                        "deadline-retry-runner",
+                        "src/main/java/eval/RetryBudget.java",
+                        "return attemptsSoFar < maxAttempts(kind);",
+                        "return attemptsSoFar <= maxAttempts(kind);"));
     }
 
     record PublicEvidenceMutation(

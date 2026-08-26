@@ -12,6 +12,14 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 class LlmClientFactoryTest {
 
     @Test
+    void defaultsToDeepSeekV4Pro() {
+        PaiCliConfig config = new PaiCliConfig();
+
+        assertEquals("deepseek", config.getDefaultProvider());
+        assertEquals("DeepSeek-V4-pro", new DeepSeekClient("test-key").getModelName());
+    }
+
+    @Test
     void createsGlm5vTurboClientWithMultimodalEndpoint() {
         PaiCliConfig config = new PaiCliConfig();
         config.getProviders().put("glm",

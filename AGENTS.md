@@ -13,11 +13,12 @@
 - 项目名：`PaiCLI`
 - 定位：面向商业使用的 Java Agent CLI 产品，对标 Claude Code
 - 已交付 23 期（ReAct → Plan+DAG → Memory → RAG → Multi-Agent → HITL → 并行工具 → 多模型 → 联网 → MCP 核心 → MCP 高级 → 长上下文 → Chrome DevTools → CDP 会话复用 → Skill → TUI → LSP 诊断 → Side-Git 快照 → Prompt 分层 → Runtime API → 图片输入 → 微信 iLink 通道文本 MVP）
-- ChangeSpec V1 已完成前六条产品切片、首次 Pilot 修复和 GLM 同模型复跑。2026-08-23 的 `glm-4.6v-flashx` 完整 36 次复跑中 A/B/C 成功率为 58.33%/41.67%/41.67%，配对 Draft/digest 12/12，C 虚假完成率 0%；随后冻结三个代表任务运行 `deepseek-v4-pro-0813` 小样，A/B/C 均为 100%，出现成功率天花板且 C 没有修复机会。不能把前者概括为 ChangeSpec 无价值，也不能把后者概括为已提效。评测修复已落地：结构或语义资格失败共用 Draft Generator 的最多两次纠错链路；B/C 产品耗时包含配对 Draft；报告使用 `PASS / FAIL / NOT_EVALUABLE / NOT_MEASURED`，显示 A→B/B→C/A→C 配对作用、95% 区间、修复机会/条件成功率、客观正确候选/可信产品决策/失败实际/惩罚 TTA、分段耗时和单位成功成本；ReAct 内进一步分列 LLM 请求等待墙钟与工具批次墙钟，并行工具按整批等待时间统计；评测目录已扩展到 13 个 fixture（4 small / 5 medium / 4 high），其中 `clarified-display-name` 向 A/B/C 提供完全相同的统一澄清记录，用于测量明确需求契约；所有 fixture 逐项声明公开证据契约，Draft 的 command、JUnit glob、最低测试数和 Criterion 引用在锁定前校验，并各自提供一个应被公开 Verifier 杀死的确定性单点突变；固定失败值只是历史惩罚，不是实际失败耗时或严格统计删失；Windows Oracle 日志容错解码；Agent 停滞检测覆盖重复两步工具周期；自动评测默认限制每个 ReAct 阶段 15 轮/250k Token，生产默认行为不变。B/C 继续共用锁定 Spec/digest，B 只关闭修复，C 最多一次 Evidence 修复；`NO_CHANGE_COMPLETION` 和隐藏 Oracle 继续负责识别公开误放行。任务目录、公开测试与资格契约均在历史 Pilot 后增强，后续真实结果必须建立新版基线，不能与旧报告直接归因为模型差异。真人总人时 9-session 可行性试跑已于 2026-08-24 使用 `deepseek / DeepSeek-V4-pro` 完成：9/9 session 为 `VALID`、Scope 9/9；客观正确率 A/B/C 为 1/3、1/3、2/3，false acceptance 为 2/3、2/3、1/3；平均真人总人时为 167843/270394/250754 ms，C 修复机会 0/3。测后协调者说明所有最终 `ACCEPT` 均未查看具体代码，故接受准确率和完整真人总人时不可评价；但契约锁定、范围治理、验证闭环与可审计性的工程价值已有正面证据。综合表述为“工程价值成立，量化收益未证明”，不能概括为已提效。13×3×2 新版基线和 13×3×3 正式研究均未获授权，不得自动运行。`mvn test -Pchange-spec-eval` 现在默认产生 78 次产品运行并产生费用。详见 `docs/change-spec-human-effort-study.md` 和 `docs/change-spec-pilot-remediation-checklist.md`。
+- ChangeSpec V1 已完成前六条产品切片、首次 Pilot 修复和 GLM 同模型复跑。2026-08-23 的 `glm-4.6v-flashx` 完整 36 次复跑中 A/B/C 成功率为 58.33%/41.67%/41.67%，配对 Draft/digest 12/12，C 虚假完成率 0%；随后冻结三个代表任务运行 `deepseek-v4-pro-0813` 小样，A/B/C 均为 100%，出现成功率天花板且 C 没有修复机会。不能把前者概括为 ChangeSpec 无价值，也不能把后者概括为已提效。评测修复已落地：结构或语义资格失败共用 Draft Generator 的最多两次纠错链路；B/C 产品耗时包含配对 Draft；报告使用 `PASS / FAIL / NOT_EVALUABLE / NOT_MEASURED`，显示 A→B/B→C/A→C 配对作用、95% 区间、修复机会/条件成功率、客观正确候选/可信产品决策/失败实际/惩罚 TTA、分段耗时和单位成功成本；ReAct 内进一步分列 LLM 请求等待墙钟与工具批次墙钟，并行工具按整批等待时间统计；评测目录已扩展到 16 个 fixture（4 small / 5 medium / 7 high），其中 `clarified-display-name` 向 A/B/C 提供完全相同的统一澄清记录，用于测量明确需求契约；2026-08-26 新增 `budget-allocator`（最大余数分配 + long 溢出陷阱）、`sliding-window-limiter`（半开滑窗边界语义 + 双方法共享时钟单调性）、`deadline-retry-runner`（跨文件重试预算 × 截止时间交互、含首次尝试前检查）三个 high fixture，目标是在强模型上制造来自任务复杂度而非模型驱动能力缺陷的失败空间；所有 fixture 逐项声明公开证据契约，Draft 的 command、JUnit glob、最低测试数和 Criterion 引用在锁定前校验，并各自提供一个应被公开 Verifier 杀死的确定性单点突变；固定失败值只是历史惩罚，不是实际失败耗时或严格统计删失；Windows Oracle 日志容错解码；Agent 停滞检测覆盖重复两步工具周期；自动评测默认限制每个 ReAct 阶段 15 轮/250k Token，生产默认行为不变。B/C 继续共用锁定 Spec/digest，B 只关闭修复，C 最多一次 Evidence 修复；`NO_CHANGE_COMPLETION` 和隐藏 Oracle 继续负责识别公开误放行。任务目录、公开测试与资格契约均在历史 Pilot 后增强，后续真实结果必须建立新版基线，不能与旧报告直接归因为模型差异。真人总人时 9-session 可行性试跑已于 2026-08-24 使用 `deepseek / DeepSeek-V4-pro` 完成：9/9 session 为 `VALID`、Scope 9/9；客观正确率 A/B/C 为 1/3、1/3、2/3，false acceptance 为 2/3、2/3、1/3；平均真人总人时为 167843/270394/250754 ms，C 修复机会 0/3。测后协调者说明所有最终 `ACCEPT` 均未查看具体代码，故接受准确率和完整真人总人时不可评价；但契约锁定、范围治理、验证闭环与可审计性的工程价值已有正面证据。综合表述为“工程价值成立，量化收益未证明”，不能概括为已提效。2026-08-26 已完成 resume-mini-pilot 两个收束批次：批次 01（3 任务 × A/C × 1 次，单一 AI 评审探索性数据）客观 6/6、错误接受 0，唯一 REWORK 源于锁定 Spec 的 AC 文本矛盾而非代码错误，说明契约质量本身需要治理；批次 02（新增 3 个 high fixture × A/B/C × 2 = 18 次纯自动运行）A/B/C 均 100%、0 修复机会，确认算法复杂度不是强模型的失败轴，契约层开销约 2.5× 墙钟且集中在 Draft 阶段（P50 99.64s），ReAct 实现本身不变慢。收束表述：SpecAgent 不提高模型上限，它把静默虚假完成变成诚实 FAIL + 可审计证据；存在失败空间（弱模型或含糊需求）时降低错误接受，无失败空间时是明码标价的保险费。三格证据矩阵见 `docs/change-spec-resume-mini-pilot-guide.md` §11。13×3×2 新版基线和 13×3×3 正式研究均未获授权，不得自动运行；新增 fixture 后的 16×3×2 基线同样未获授权。`mvn test -Pchange-spec-eval` 现在默认产生 96 次产品运行并产生费用。详见 `docs/change-spec-human-effort-study.md` 和 `docs/change-spec-pilot-remediation-checklist.md`。
 - 2026-08-23 已完成 Quick 历史失败归因与跨平台修复：`-Pquick` 为 846 tests，0 failures，0 errors，5 skipped；随后不带付费 Profile 的全量回归为 892 tests，0 failures，0 errors，11 个平台/显式评测项按预期 skipped。
 - `PAI.md` 是 PaiCLI 的项目级记忆文件：启动时自动注入 system prompt，适合团队共享的长期稳定规则；个人/会变化的经验继续用 `/save` 长期记忆。
 - 下一步：OAuth / sampling / recovery 作为后续 MCP 增强
 - Banner 版本：`v16.1.0`，Maven 产物：`paicli-1.0-SNAPSHOT.jar`（两者不一致是正常状态）
+- 新安装或没有 `~/.paicli/config.json` 时默认 provider/model 为 `deepseek / DeepSeek-V4-pro`；已有持久配置继续优先，不自动覆盖用户选择。
 
 ## 运行前提
 
@@ -37,7 +38,7 @@ java -jar target/paicli-1.0-SNAPSHOT.jar wechat start   # 前台启动微信通�
 mvn test -Pquick          # 常规回归
 mvn test -Pphase16-smoke  # TUI 相关
 mvn test -Pagent-eval     # 真实 LLM 三组 A/B 质量评测；显式运行才产生 Token 费用
-mvn test -Pchange-spec-eval # ChangeSpec A/B/C：默认 13×3×2=78；显式运行才产生 Token 费用
+mvn test -Pchange-spec-eval # ChangeSpec A/B/C：默认 16×3×2=96；显式运行才产生 Token 费用
 mvn test -Dtest=XxxTest -DskipTests=false   # 针对性
 mvn test -DskipTests=false                  # 全量回归
 /init                    # 生成精简项目级记忆 PAI.md；已有文件不覆盖，/init --force 可重写
@@ -68,6 +69,7 @@ MCP 动态工具：`mcp__{server}__{tool}`（+ resources 虚拟工具）
 MCP 配置会合并用户级 `~/.paicli/mcp.json` 与项目级 `.paicli/mcp.json`；`${VAR}` 支持系统环境变量、系统属性、项目 `.env`、用户 `~/.env`。检测到 `STEP_API_KEY` 时会自动内置 `step_search` 远程 MCP（显式同名配置优先）。
 
 DeepSeek V4 / Kimi thinking 模式下，assistant tool-call 消息的 `reasoning_content` 必须随下一轮请求历史带回；其他 provider 默认只把 reasoning 写日志 / 展示。
+DeepSeek 是新安装的默认 provider，代码默认模型为 `DeepSeek-V4-pro`；`DEEPSEEK_MODEL` 和持久配置仍可覆盖该模型 ID。
 DeepSeek SSE 调用默认强制 HTTP/1.1，避免部分网络/网关下 HTTP/2 长流被远端重置成 `stream was reset: INTERNAL_ERROR`。
 DeepSeek 当前按文本 provider 处理：`supportsImageInput()` 返回 false，历史或工具回灌里的图片 `ContentPart` 会在请求序列化时替换为文本提示，不能把 `image_url` block 发给 DeepSeek API。
 
@@ -223,7 +225,7 @@ src/main/java/com/paicli/
 | DAG/Plan | `mvn test -Dtest=ExecutionPlanTest` |
 | Multi-Agent | `mvn test -Dtest=WorkerPoolTest,SubAgentTest,AgentRoleTest,AgentMessageTest,AgentOrchestratorTest` |
 | Agent A/B 质量 | `mvn test -Pagent-eval`（真实 API、非确定性、有费用） |
-| ChangeSpec A/B/C | `mvn test -Pchange-spec-eval`（真实 API、默认 78 次产品运行、有费用；需单独批准） |
+| ChangeSpec A/B/C | `mvn test -Pchange-spec-eval`（真实 API、默认 96 次产品运行、有费用；需单独批准） |
 | TUI/终端 | `mvn test -Pphase16-smoke` |
 | RAG | `mvn test -Dtest=CodeChunkerTest,CodeAnalyzerTest,VectorStoreTest,CodeIndexTest` |
 | 常规回归 | `mvn test -Pquick` |

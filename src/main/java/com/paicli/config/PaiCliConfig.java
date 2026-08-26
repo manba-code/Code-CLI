@@ -20,7 +20,7 @@ public class PaiCliConfig {
     private static final Path CONFIG_FILE = CONFIG_DIR.resolve("config.json");
     private static final ObjectMapper mapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
 
-    private String defaultProvider = "glm";
+    private String defaultProvider = "deepseek";
     private Map<String, ProviderConfig> providers = new LinkedHashMap<>();
 
     @JsonIgnoreProperties(ignoreUnknown = true)

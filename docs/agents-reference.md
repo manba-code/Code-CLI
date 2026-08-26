@@ -270,7 +270,7 @@ TuiBootstrap / LanternaWindow / TuiSessionController / pane/ / hitl/ / history/ 
 
 ### LLM Clients
 - GLMClient：glm-5.1，glm-5v 开头切多模态接口
-- DeepSeekClient：deepseek-v4-flash，thinking + tool calls 带回 reasoning_content
+- DeepSeekClient：新安装默认 provider，默认模型 `DeepSeek-V4-pro`，thinking + tool calls 带回 reasoning_content
 - StepClient：step-3.5-flash，可通过 STEP_BASE_URL 切通道
 - KimiClient：kimi-k2.6，thinking + tool calls 带回 reasoning_content
 - FreeLlmApiClient：auto，默认 http://localhost:5173/v1，OpenAI-compatible 本地网关；可用 `/config provider freellmapi ...` 写入配置后 `/model freellmapi` 切换
@@ -282,11 +282,12 @@ TuiBootstrap / LanternaWindow / TuiSessionController / pane/ / hitl/ / history/ 
 ## .env.example Reference
 
 ```bash
-GLM_API_KEY=your_api_key_here
+DEEPSEEK_API_KEY=your_deepseek_api_key_here
+# DEEPSEEK_MODEL=DeepSeek-V4-pro
+# DEEPSEEK_BASE_URL=https://api.deepseek.com
+# GLM_API_KEY=your_api_key_here
 # GLM_MODEL=glm-5.1
 # GLM_MODEL=glm-5v-turbo
-# DEEPSEEK_API_KEY=your_deepseek_api_key_here
-# DEEPSEEK_MODEL=deepseek-v4-flash
 # STEP_API_KEY=your_step_api_key_here
 # STEP_MODEL=step-3.5-flash
 # STEP_BASE_URL=https://api.stepfun.com/v1

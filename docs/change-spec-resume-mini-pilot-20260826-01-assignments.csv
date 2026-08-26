@@ -1,0 +1,7 @@
+study_id,session_id,operator_participant_id,spec_confirmer_participant_id,case_id,tier,mode,repetition_block,order_index,paired_spec_id
+resume-mini-pilot-20260826-01,S01,P1,P1,feature-flag-precedence,MEDIUM,A,1,1,
+resume-mini-pilot-20260826-01,S02,P1,P1,operation-result-api-compat,HIGH_RISK,C,1,2,CHANGE-20260826-143119-273
+resume-mini-pilot-20260826-01,S03,P1,P1,token-expiry-cross-file,HIGH_RISK,A,1,3,
+resume-mini-pilot-20260826-01,S04,P1,P1,feature-flag-precedence,MEDIUM,C,1,4,CHANGE-20260826-142320-085
+resume-mini-pilot-20260826-01,S05,P1,P1,operation-result-api-compat,HIGH_RISK,A,1,5,
+resume-mini-pilot-20260826-01,S06,P1,P1,token-expiry-cross-file,HIGH_RISK,C,1,6,CHANGE-20260826-143656-412

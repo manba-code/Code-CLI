@@ -8,7 +8,7 @@ import java.util.List;
 public class DeepSeekClient extends AbstractOpenAiCompatibleClient {
 
     private static final String DEFAULT_BASE_URL = "https://api.deepseek.com";
-    private static final String DEFAULT_MODEL = "deepseek-v4-pro-0813";
+    private static final String DEFAULT_MODEL = "DeepSeek-V4-pro";
     private static final OkHttpClient HTTP_1_1_CLIENT = SHARED_HTTP_CLIENT.newBuilder()
             .protocols(List.of(Protocol.HTTP_1_1))
             .build();

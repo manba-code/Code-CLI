@@ -1,0 +1,7 @@
+study_id,session_id,participant_id,mode,case_id,repetition_block,event_id,category,started_at_utc,ended_at_utc,active_ms,measurement_source,notes
+resume-mini-pilot-20260826-01,S01,P1,A,feature-flag-precedence,1,E01,result_review,2026-08-26T06:56:07.734Z,2026-08-26T06:56:54.020Z,46286,ai_reviewer_wallclock,评审者为 AI（GLM-5.3）；墙钟含工具调用延迟；探索性数据不可用于人工提效结论
+resume-mini-pilot-20260826-01,S02,P1,C,operation-result-api-compat,1,E02,spec_confirmation+result_review,2026-08-26T06:58:56.885Z,2026-08-26T06:59:37.455Z,40570,ai_reviewer_wallclock,spec_confirmation 与 result_review 未拆分计时；AI 评审探索性数据
+resume-mini-pilot-20260826-01,S03,P1,A,token-expiry-cross-file,1,E03,result_review,2026-08-26T06:57:33.152Z,2026-08-26T06:58:18.298Z,45146,ai_reviewer_wallclock,评审者为 AI；探索性数据
+resume-mini-pilot-20260826-01,S04,P1,C,feature-flag-precedence,1,E04,spec_confirmation+result_review,2026-08-26T06:58:18.311Z,2026-08-26T06:58:56.865Z,38554,ai_reviewer_wallclock,spec_confirmation 与 result_review 未拆分计时；AI 评审探索性数据
+resume-mini-pilot-20260826-01,S05,P1,A,operation-result-api-compat,1,E05,result_review,2026-08-26T06:56:54.035Z,2026-08-26T06:57:33.132Z,39097,ai_reviewer_wallclock,评审者为 AI；探索性数据
+resume-mini-pilot-20260826-01,S06,P1,C,token-expiry-cross-file,1,E06,spec_confirmation+result_review,2026-08-26T06:59:37.470Z,2026-08-26T07:00:51.671Z,74201,ai_reviewer_wallclock,含发现 AC-4/AC-5 契约文本矛盾并核对公开测试源码的时间；AI 评审探索性数据

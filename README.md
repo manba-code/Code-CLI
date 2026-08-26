@@ -4,6 +4,8 @@
 
 当前进度：已完成第 16.1 期 inline 流式 TUI 形态修正、第 17 期 `LSP 诊断注入` MVP、第 18 期 `Git Side-History 快照与回滚` MVP、第 19 期 `Prompt 分层架构` MVP、第 20 期 `异步后台任务 + Runtime API` MVP、第 21 期 `图片复制粘贴输入` MVP、第 23 期 `微信 iLink 通道` 文本 MVP。
 
+新安装或没有 `~/.paicli/config.json` 时默认使用 `deepseek / DeepSeek-V4-pro`；已有持久配置继续优先，仍可通过 `/model ...` 或 `/config provider ...` 切换模型。
+
 ## 测试策略
 
 日常开发不需要每次都跑全量测试。`mvn clean package` 默认跳过测试，优先产出可手工验收的 jar；需要回归时按改动范围选择：
@@ -125,6 +127,7 @@ Verifier 进入唯一一次修复时还会注入首次 changed-files 数量；�
 
 - `LlmClient` 接口抽象 + `AbstractOpenAiCompatibleClient` 模板基类
 - 内置 `GLMClient`、`DeepSeekClient`、`StepClient`、`KimiClient`、`FreeLlmApiClient`、`AgnesClient` 六个瘦实现
+- 新安装默认使用 `deepseek / DeepSeek-V4-pro`，已有 `~/.paicli/config.json` 不强制迁移
 - `/model glm-5.1` / `/model glm-5v-turbo` 明确切 GLM 模型；`/model deepseek` / `/model step` / `/model kimi` / `/model freellmapi` / `/model agnes` 切 provider 并读取配置里的具体模型
 - 配置持久化到 `~/.paicli/config.json`，API Key 可从配置、环境变量或 `.env` 读取
 

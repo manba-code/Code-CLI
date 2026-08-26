@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1180" viewBox="0 0 1400 1180">
+  <rect width="1400" height="1180" fill="white"/>
+  <text x="700" y="44" text-anchor="middle" font-size="22" font-weight="bold" fill="#111" font-family="Noto Sans SC, Microsoft YaHei">PaiCLI - 简历能力素材用例图</text>
+
+  <!-- Actor 1, W=300 -->
+  <circle cx="60" cy="282" r="18" fill="none" stroke="#333" stroke-width="2"/>
+  <line x1="60" y1="300" x2="60" y2="340" stroke="#333" stroke-width="2"/>
+  <line x1="35" y1="318" x2="85" y2="318" stroke="#333" stroke-width="2"/>
+  <line x1="60" y1="340" x2="38" y2="370" stroke="#333" stroke-width="2"/>
+  <line x1="60" y1="340" x2="82" y2="370" stroke="#333" stroke-width="2"/>
+  <text x="60" y="390" text-anchor="middle" font-size="14" fill="#222" font-family="Noto Sans SC, Microsoft YaHei">AI 开发者</text>
+
+  <ellipse cx="200" cy="300" rx="90" ry="32" fill="#7b5ea7" stroke="#7b5ea7" stroke-width="1.5"/>
+  <text x="200" y="305" text-anchor="middle" font-size="13" fill="white" font-family="Noto Sans SC, Microsoft YaHei">Agent CLI 基建域</text>
+  <line x1="78" y1="300" x2="108" y2="300" stroke="#aaa" stroke-width="1.2"/>
+
+  <g fill="#f8f8f8" stroke="#bbb" stroke-width="1.5" font-family="Noto Sans SC, Microsoft YaHei" font-size="13" text-anchor="middle">
+    <ellipse cx="460" cy="100" rx="110" ry="28"/><ellipse cx="460" cy="180" rx="110" ry="28"/>
+    <ellipse cx="460" cy="260" rx="110" ry="28"/><ellipse cx="460" cy="340" rx="110" ry="28"/>
+    <ellipse cx="460" cy="420" rx="110" ry="28"/><ellipse cx="460" cy="500" rx="110" ry="28"/>
+  </g>
+  <g fill="#222" font-family="Noto Sans SC, Microsoft YaHei" font-size="13" text-anchor="middle">
+    <text x="460" y="105">多执行范式编排</text><text x="460" y="185">统一工具与并行执行</text>
+    <text x="460" y="265">MCP / 多模型扩展</text><text x="460" y="345">上下文与记忆治理</text>
+    <text x="460" y="425">HITL / 策略 / 审计</text><text x="460" y="505">TUI / Runtime / 多通道</text>
+  </g>
+  <g stroke="#ccc" stroke-width="1">
+    <line x1="290" y1="300" x2="350" y2="100"/><line x1="290" y1="300" x2="350" y2="180"/>
+    <line x1="290" y1="300" x2="350" y2="260"/><line x1="290" y1="300" x2="350" y2="340"/>
+    <line x1="290" y1="300" x2="350" y2="420"/><line x1="290" y1="300" x2="350" y2="500"/>
+  </g>
+
+  <!-- Actor 2, W=900 -->
+  <circle cx="60" cy="882" r="18" fill="none" stroke="#333" stroke-width="2"/>
+  <line x1="60" y1="900" x2="60" y2="940" stroke="#333" stroke-width="2"/>
+  <line x1="35" y1="918" x2="85" y2="918" stroke="#333" stroke-width="2"/>
+  <line x1="60" y1="940" x2="38" y2="970" stroke="#333" stroke-width="2"/>
+  <line x1="60" y1="940" x2="82" y2="970" stroke="#333" stroke-width="2"/>
+  <text x="60" y="990" text-anchor="middle" font-size="14" fill="#222" font-family="Noto Sans SC, Microsoft YaHei">开发者 / 评审者</text>
+
+  <ellipse cx="200" cy="900" rx="90" ry="32" fill="#3a7bd5" stroke="#3a7bd5" stroke-width="1.5"/>
+  <text x="200" y="905" text-anchor="middle" font-size="13" fill="white" font-family="Noto Sans SC, Microsoft YaHei">ChangeSpec 治理域</text>
+  <line x1="78" y1="900" x2="108" y2="900" stroke="#aaa" stroke-width="1.2"/>
+
+  <g fill="#f8f8f8" stroke="#bbb" stroke-width="1.5" font-family="Noto Sans SC, Microsoft YaHei" font-size="13" text-anchor="middle">
+    <ellipse cx="460" cy="700" rx="110" ry="28"/><ellipse cx="460" cy="780" rx="110" ry="28"/>
+    <ellipse cx="460" cy="860" rx="110" ry="28"/><ellipse cx="460" cy="940" rx="110" ry="28"/>
+    <ellipse cx="460" cy="1020" rx="110" ry="28"/><ellipse cx="460" cy="1100" rx="110" ry="28"/>
+  </g>
+  <g fill="#222" font-family="Noto Sans SC, Microsoft YaHei" font-size="13" text-anchor="middle">
+    <text x="460" y="705">需求结构化与澄清</text><text x="460" y="785">契约确认与摘要锁定</text>
+    <text x="460" y="865">确定性 Verifier 验收</text><text x="460" y="945">Evidence 驱动修复</text>
+    <text x="460" y="1025">Verdict 与审计产物</text><text x="460" y="1105">A/B/C 评测与统计</text>
+  </g>
+  <g stroke="#ccc" stroke-width="1">
+    <line x1="290" y1="900" x2="350" y2="700"/><line x1="290" y1="900" x2="350" y2="780"/>
+    <line x1="290" y1="900" x2="350" y2="860"/><line x1="290" y1="900" x2="350" y2="940"/>
+    <line x1="290" y1="900" x2="350" y2="1020"/><line x1="290" y1="900" x2="350" y2="1100"/>
+  </g>
+
+  <rect x="870" y="90" width="420" height="230" rx="10" fill="white" stroke="#ccc" stroke-width="1.2"/>
+  <text x="1080" y="122" text-anchor="middle" font-size="15" font-weight="bold" fill="#222" font-family="Noto Sans SC, Microsoft YaHei">两条主线的关系</text>
+  <text x="900" y="165" font-size="13" fill="#333" font-family="Noto Sans SC, Microsoft YaHei">Agent CLI 基建：让 Agent 能执行、能扩展、能长期运行</text>
+  <text x="900" y="205" font-size="13" fill="#333" font-family="Noto Sans SC, Microsoft YaHei">ChangeSpec：让代码交付可约束、可验证、可修复、可审计</text>
+  <text x="900" y="255" font-size="13" fill="#555" font-family="Noto Sans SC, Microsoft YaHei">简历定位：前者体现 Agent 工程能力，后者体现可靠性与评测能力</text>
+</svg>
