@@ -71,11 +71,16 @@ public abstract class AbstractOpenAiCompatibleClient implements LlmClient {
         customizeRequest(request);
         Request builtRequest = request.build();
 
-        try (Response response = httpClient().newCall(builtRequest).execute()) {
+        // Draft Job owns infrastructure retries; disable OkHttp's invisible retry within its scope.
+        OkHttpClient transport = LlmCallCancellation.scoped()
+                ? httpClient().newBuilder().retryOnConnectionFailure(false).build() : httpClient();
+        okhttp3.Call call = transport.newCall(builtRequest);
+        LlmCallCancellation.register(call);
+        try (Response response = call.execute()) {
             ResponseBody responseBodyObj = response.body();
             if (!response.isSuccessful()) {
                 String errorBody = responseBodyObj != null ? responseBodyObj.string() : "无响应体";
-                throw new IOException("API请求失败: " + response.code() + " - " + errorBody);
+                throw new LlmHttpException(response.code(), "API请求失败: " + response.code() + " - " + errorBody);
             }
             if (responseBodyObj == null) {
                 throw new IOException("API返回空响应体");

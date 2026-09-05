@@ -6,6 +6,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 class CliCommandParserTest {
+    @org.junit.jupiter.api.Test
+    void runtimeServeRequiresExplicitHttpAndDoesNotIntroduceDemoSlashCommand() {
+        org.junit.jupiter.api.Assertions.assertTrue(CliCommandParser.isRuntimeServeCommand(new String[]{"serve", "--http", "--port", "8086"}));
+        org.junit.jupiter.api.Assertions.assertFalse(CliCommandParser.isRuntimeServeCommand(new String[]{"serve"}));
+        org.junit.jupiter.api.Assertions.assertFalse(CliCommandParser.isRuntimeServeCommand(null));
+        org.junit.jupiter.api.Assertions.assertFalse(CliCommandParser.isRuntimeServeCommand(new String[]{"--http"}));
+        org.junit.jupiter.api.Assertions.assertEquals(CliCommandParser.CommandType.UNKNOWN_COMMAND, CliCommandParser.parse("/demo").type());
+    }
+
 
     @Test
     void parsesSpecCommandWithoutPayload() {

@@ -41,6 +41,24 @@ class SpecDraftGeneratorTest {
     }
 
     @Test
+    void generatesCallerAssignedRevisionForSupplementedDraft() throws Exception {
+        RecordingClient client = new RecordingClient(validDocument().replace("revision: 1", "revision: 2"));
+        SpecDraftGenerator generator = new SpecDraftGenerator(
+                client,
+                new ChangeSpecCodec(),
+                "CHANGE-TEST-001",
+                2);
+
+        ChangeSpecDocument document = generator.generate("补充不得修改公开接口", "", "");
+
+        assertEquals(2, document.spec().revision());
+        String systemPrompt = client.requests.get(0).messages().get(0).content();
+        String userPrompt = client.requests.get(0).messages().get(1).content();
+        assertTrue(systemPrompt.contains("补充要求后可能大于 1"));
+        assertTrue(userPrompt.contains("Draft revision（必须原样使用）：\n2"));
+    }
+
+    @Test
     void retriesOnceWithValidationErrors() throws Exception {
         RecordingClient client = new RecordingClient(
                 "---\nschema: wrong\n---",

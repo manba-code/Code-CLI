@@ -662,3 +662,11 @@ Git       Prompt    异步后台    图片
 ---
 
 *已完成第 16 期 TUI 产品化（含 16.1 形态修正：默认切换为 inline 流式 TUI，Lanterna 全屏 TUI 通过 `PAICLI_RENDERER=lanterna` 保留）、第 17 期 LSP 诊断注入 MVP、第 18 期 Git Side-History 快照与回滚 MVP、第 19 期 Prompt 分层架构 MVP、第 20 期后台任务 + Runtime API MVP、第 21 期图片复制粘贴输入 MVP。*
+
+## PaiChange 本地演示平台（Phase 1–6）✅
+
+后续开发计划 M1、M2 已完成：见 [PaiChange 后续开发计划](docs/paichange-next-development-plan.md)。Draft 异步生成、持久化调度、重试/取消、重启恢复与 Web 状态展示已验收（quick 911 tests，0 failures/errors，5 skipped）。M2 已增加 Human Evidence 补录、更正历史、确定性交付判断重算、审批失效及版本化 Mock Check 发布（平台针对性 63、Node 11 项通过；quick 923 tests，0 failures/errors，5 skipped；浏览器验收通过）；详见 [M2 实施记录](docs/paichange-m2-implementation.md)。工具策略与审批、真实 SCM、身份 RBAC、执行隔离与存储部署仍待开发；真实共享试点须满足身份、工具策略和最小隔离的依赖门槛。
+
+2026-09-04：独立 ChangeTask、契约审批、风险路由、Git worktree Worker、验证与受控修复、Delivery Approval、SQLite Mock Check，以及同源最小 Web 已落地。`-Dpaichange.demo=true` 可显式运行离线退款 fixture，Draft/ReAct 使用确定性替身；不代表真实模型收益验证。
+
+真实 Jira/GitLab/GitHub、RBAC、组织工具策略、Worker HITL 与生产沙箱仍未交付。启动、验收和边界见 README 的 PaiChange 部分及 `docs/paichange-platform-refactoring-plan.md` §27。

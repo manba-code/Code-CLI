@@ -21,6 +21,7 @@ public final class SpecDraftGenerator {
     private final ChangeSpecCodec codec;
     private final String systemPrompt;
     private final String draftId;
+    private final int draftRevision;
     private final DraftAttemptListener attemptListener;
 
     public SpecDraftGenerator(LlmClient llmClient) {
@@ -28,6 +29,7 @@ public final class SpecDraftGenerator {
                 llmClient,
                 new ChangeSpecCodec(),
                 "CHANGE-" + LocalDateTime.now().format(ID_TIME),
+                1,
                 DraftAttemptListener.NO_OP);
     }
 
@@ -36,11 +38,16 @@ public final class SpecDraftGenerator {
                 llmClient,
                 new ChangeSpecCodec(),
                 "CHANGE-" + LocalDateTime.now().format(ID_TIME),
+                1,
                 attemptListener);
     }
 
     SpecDraftGenerator(LlmClient llmClient, ChangeSpecCodec codec, String draftId) {
-        this(llmClient, codec, draftId, DraftAttemptListener.NO_OP);
+        this(llmClient, codec, draftId, 1, DraftAttemptListener.NO_OP);
+    }
+
+    SpecDraftGenerator(LlmClient llmClient, ChangeSpecCodec codec, String draftId, int draftRevision) {
+        this(llmClient, codec, draftId, draftRevision, DraftAttemptListener.NO_OP);
     }
 
     SpecDraftGenerator(
@@ -49,9 +56,23 @@ public final class SpecDraftGenerator {
             String draftId,
             DraftAttemptListener attemptListener
     ) {
+        this(llmClient, codec, draftId, 1, attemptListener);
+    }
+
+    SpecDraftGenerator(
+            LlmClient llmClient,
+            ChangeSpecCodec codec,
+            String draftId,
+            int draftRevision,
+            DraftAttemptListener attemptListener
+    ) {
         this.llmClient = Objects.requireNonNull(llmClient, "llmClient");
         this.codec = Objects.requireNonNull(codec, "codec");
         this.draftId = requireText(draftId, "draftId");
+        if (draftRevision < 1) {
+            throw new IllegalArgumentException("draftRevision 必须大于等于 1");
+        }
+        this.draftRevision = draftRevision;
         this.attemptListener = Objects.requireNonNull(attemptListener, "attemptListener");
         this.systemPrompt = PromptRepository.createDefault().loadRequired("modes/spec-draft.md");
     }
@@ -91,6 +112,7 @@ public final class SpecDraftGenerator {
         ChangeSpecValidationException lastValidationError = null;
         SpecRunResult.LlmUsage usage = SpecRunResult.LlmUsage.empty();
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            if (Thread.currentThread().isInterrupted()) throw new java.io.InterruptedIOException("Draft generation canceled");
             LlmClient.ChatResponse response = llmClient.chat(List.copyOf(messages), List.of());
             if (response != null) {
                 usage = usage.plus(new SpecRunResult.LlmUsage(
@@ -139,8 +161,8 @@ public final class SpecDraftGenerator {
         if (!draftId.equals(document.spec().id())) {
             identityErrors.add("id 必须是调用方分配的 " + draftId);
         }
-        if (document.spec().revision() != 1) {
-            identityErrors.add("Draft revision 必须是 1");
+        if (document.spec().revision() != draftRevision) {
+            identityErrors.add("Draft revision 必须是 " + draftRevision);
         }
         if (!identityErrors.isEmpty()) {
             throw new ChangeSpecValidationException(identityErrors);
@@ -155,6 +177,9 @@ public final class SpecDraftGenerator {
                 Draft ID（必须原样使用）：
                 %s
 
+                Draft revision（必须原样使用）：
+                %d
+
                 用户需求：
                 %s
 
@@ -165,6 +190,7 @@ public final class SpecDraftGenerator {
                 %s
                 """.formatted(
                 draftId,
+                draftRevision,
                 request,
                 textOrNone(projectContext),
                 textOrNone(referencedContext));

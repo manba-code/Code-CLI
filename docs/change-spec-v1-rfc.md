@@ -143,6 +143,8 @@ V1 不强制所有任务使用 Spec，也不实现复杂的自动分类器。
 
 V1 锁定 revision 1。确认前的补充只是修改 Draft；确认后如果需求本身需要改变，本次运行停止，用户重新发起 `/spec`。正式的跨 Revision 交互在闭环价值验证后再实现。
 
+PaiChange 平台编排在 V1 之上增加了“审批前 Draft revision”：负责人补充要求会为同一 specId 生成下一 revision，旧 digest 立即失效；一旦确认锁定，单次 Spec Run 仍不得改变 revision。现有 `/spec` CLI 继续保持 revision 1 行为。
+
 ## 6. 用户交互
 
 ### 6.1 命令入口

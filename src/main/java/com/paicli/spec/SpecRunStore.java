@@ -21,6 +21,7 @@ final class SpecRunStore {
     private static final String RUNS_DIR = ".paicli/runs";
 
     private final Path projectRoot;
+    private final Path runsDirectory;
     private final Clock clock;
     private final ObjectMapper mapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
 
@@ -29,7 +30,14 @@ final class SpecRunStore {
     }
 
     SpecRunStore(Path projectRoot, Clock clock) {
+        this(projectRoot, projectRoot.resolve(RUNS_DIR), clock);
+    }
+
+    SpecRunStore(Path projectRoot, Path runsDirectory, Clock clock) {
         this.projectRoot = Objects.requireNonNull(projectRoot, "projectRoot").toAbsolutePath().normalize();
+        this.runsDirectory = Objects.requireNonNull(runsDirectory, "runsDirectory")
+                .toAbsolutePath()
+                .normalize();
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
@@ -40,10 +48,7 @@ final class SpecRunStore {
                 result.workspaceChanges(),
                 "result.workspaceChanges");
 
-        Path runsDir = projectRoot.resolve(RUNS_DIR).normalize();
-        if (!runsDir.startsWith(projectRoot)) {
-            throw new IOException("ChangeSpec 运行目录超出项目根目录");
-        }
+        Path runsDir = runsDirectory;
         Files.createDirectories(runsDir);
         Path runDir = runsDir.resolve(identity.runId()).normalize();
         if (!runsDir.equals(runDir.getParent())) {

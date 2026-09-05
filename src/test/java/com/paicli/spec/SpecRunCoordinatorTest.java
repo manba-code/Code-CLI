@@ -73,6 +73,48 @@ class SpecRunCoordinatorTest {
     }
 
     @Test
+    void executesPreviouslyLockedSpecWithoutRunningCliDraftSession() throws Exception {
+        ChangeSpecDocument document = codec.decode(validDocument());
+        FileChangeSpecModule module = new FileChangeSpecModule(
+                projectRoot,
+                context -> SpecDraftSession.DraftGeneration.unmeasured(document));
+        ChangeSpecModule.LockedSpec locked = module.lockDocument(document);
+        AtomicBoolean executed = new AtomicBoolean();
+        AtomicBoolean verificationStarted = new AtomicBoolean();
+        SpecDraftSession unusedSession = new SpecDraftSession(
+                request -> {
+                    throw new AssertionError("异步执行不得重新生成 Draft");
+                },
+                draft -> {
+                    throw new AssertionError("异步执行不得打开终端审批");
+                });
+        SpecExecutionEngine engine = new SpecRunCoordinator(
+                projectRoot,
+                unusedSession,
+                request -> request,
+                (phase, input, lockedSpec) -> {
+                    assertFalse(verificationStarted.get());
+                    executed.set(true);
+                    return SpecRunCoordinator.ReActExecutionResult.completed("async done");
+                });
+
+        SpecRunResult result = engine.execute(new SpecExecutionEngine.ExecutionContext(
+                "修复问题",
+                locked,
+                12L,
+                30L,
+                SpecRunResult.LlmUsage.empty(),
+                () -> verificationStarted.set(true)));
+
+        assertTrue(executed.get());
+        assertTrue(verificationStarted.get());
+        assertEquals(SpecRunResult.Status.FINISHED, result.status());
+        assertEquals("async done", result.agentResponse());
+        assertEquals(12L, result.metrics().specGenerationMs());
+        assertEquals(30L, result.metrics().specConfirmationMs());
+    }
+
+    @Test
     void injectsSupplementAsPartOfFinalConfirmedRequest() throws Exception {
         ChangeSpecDocument document = codec.decode(validDocument());
         AtomicInteger reviews = new AtomicInteger();

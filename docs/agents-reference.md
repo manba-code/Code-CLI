@@ -331,3 +331,11 @@ EMBEDDING_BASE_URL=http://localhost:11434
 不覆盖：真实 LLM 联调、真实 Embedding API、真实 MCP server 联调、终端完整手工体验。2026-08-23 的本地全量回归为 892 tests、0 failures、0 errors、11 skipped；RAG 测试使用 stub Embedding，不把外部服务在线状态混入单元测试。
 
 完整测试类列表：CliCommandParserTest / MainBrowserCommandTest / PlanReviewInputParserTest / MainInputNormalizationTest / ExecutionPlanTest / MemoryEntryTest / ConversationMemoryTest / LongTermMemoryTest / MemoryRetrieverTest / MemoryManagerTest / ExplicitMemoryHintsTest / ContextProfileTest / PlanExecuteAgentTest / AgentMemoryHintTest / AgentRoleTest / AgentMessageTest / AgentOrchestratorTest / EmbeddingClientTest / SearchResultTest / NetworkPolicyTest / HtmlExtractorTest / WebFetcherTest / SearchProviderFactoryTest / ZhipuSearchProviderTest / VectorStoreTest / CodeChunkerTest / CodeAnalyzerTest / CodeIndexTest / ApprovalPolicyTest / ApprovalResultTest / HitlToolRegistryTest / TerminalHitlHandlerTest / ToolRegistryTest / BrowserSessionTest / BrowserConnectivityCheckTest / SensitivePagePolicyTest / BrowserGuardTest / McpSchemaSanitizerTest / McpConfigLoaderTest / JsonRpcClientTest / McpToolBridgeTest / McpResourceCacheTest / AtMentionParserTest / AtMentionExpanderTest / AtMentionCompleterTest / NotificationRouterTest / PathGuardTest / CommandGuardTest / AuditLogTest / SkillFrontmatterParserTest / SkillRegistryTest / SkillStateStoreTest / SkillBuiltinExtractorTest / SkillContextBufferTest / SkillIndexFormatterTest / LoadSkillToolTest / SkillCommandHandlerTest
+
+### PaiChange M1 Draft 后台任务
+
+初次创建与 SUPPLEMENT 不在 HTTP 请求中调用模型。`change_tasks.draft_job_json` 与任务及事件使用同一事务；`DraftJobRunner` 消费持久化意图，Workflow 负责状态、领取身份与结果资格。取消/重试端点、迁移、超时退避和崩溃窗口详见 [M1 实施记录](paichange-m1-implementation.md)。原 Worker Job 和 CLI `/spec` 的业务语义保持独立。
+
+### PaiChange M2 人工验收
+
+`HumanEvidenceSubmission` 与 Delivery 决策均显式绑定任务 version、Spec digest、run、head 和判断 revision。Workflow 通过 `ChangeArtifactReader` 验证服务端 Artifact ID，`DeliveryJudgmentReducer` 只读原始 Run 最终确定性结果，追加人工记录/判断且清除旧交付审批；批准/发布前重算比对。SQLite 人工快照、审批失效和事件使用同一事务；Mock 的追加历史与当前 Check 投影使用另一幂等事务，按 publication key 补偿事件。详见 [M2 实施记录](paichange-m2-implementation.md)，不能让 Adapter 或页面自报成功，也不能覆盖原始 result.json。

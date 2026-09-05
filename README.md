@@ -256,6 +256,61 @@ v16.1 抽出 `Renderer` 接口 + 三个实现：
 - Runtime API 强制要求 `PAICLI_RUNTIME_API_KEY` 或 `-Dpaicli.runtime.api.key`
 - 详细文档见 `docs/phase-20-runtime-api.md`
 
+### PaiChange Phase 1–6：本地 Web 演示与 Mock 交付
+
+`serve --http` 现在同时装配 Change API 和原有 threads API。ChangeTask、事件、审批、Worker Job 和 Mock PR/Check 保存在 `~/.paichange/changes.db`，可通过 `PAICHANGE_DATA_DIR` / `-Dpaichange.data.dir` 指定数据目录；同一目录只允许一个平台进程。工作区位置继续使用 `PAICHANGE_WORKSPACE_DIR` / `-Dpaichange.workspace.dir`，必须在源仓库外。
+
+- `POST /v1/changes`：以 `idempotencyKey` 幂等创建；必填 `title`、`requirement`、`actorId`、`repository.path/baseRef`。
+- `GET /v1/changes`、`GET /v1/changes/{changeId}`：列表与详情，包含当前 Spec、风险、route、run 和 Mock delivery。
+- `GET /v1/changes/{changeId}/events?after=0`：JSON 事件回放，`after` 是已读事件的 `sequence`，不包含该事件。
+- `POST /v1/changes/{changeId}/spec-decisions`：`APPROVE / SUPPLEMENT / REJECT`，校验 `expectedVersion + expectedDraftDigest`。
+- `POST /v1/changes/{changeId}/draft-cancel` / `draft-retry`：取消正在生成的 Draft / 显式重试生成失败；请求携带 `expectedVersion + expectedGeneration + actorId`，过期返回 409。详情的 `draftJob` 展示 generation、目标 revision、attempt、退避时间与安全失败原因。
+- `POST /v1/changes/{changeId}/delivery-decisions`：`APPROVE / REJECT`，校验 `expectedVersion + expectedSpecDigest + expectedRunId + expectedHeadSha + expectedJudgmentRevision`。
+
+- `POST /v1/changes/{changeId}/human-evidence`：按 Human Criterion 追加 PASS/FAIL/SKIPPED、理由与当前 Artifact ID，绑定同样五项身份；详情返回原始 Run 和有版本的当前交付判断。
+
+两组端点共用 `127.0.0.1` 监听和 `Authorization: Bearer <key>` / `X-PaiCLI-API-Key` 校验。Draft 创建/补充请求只保存任务与调度意图，模型在后台运行；201 不代表草稿已就绪。服务重启恢复未完成 Draft，已锁定 Spec 不重新生成；普通启动不会自动创建新任务。真实提交请求会使用配置的模型并产生模型费用，确定性测试不调用模型。
+
+Mock 工单示例见 `docs/fixtures/paichange/local-issue.json`：修改本地仓库路径与需求后，复制到数据目录的 `fixtures/`，以 `POST /v1/changes` 请求体 `{"fixture":"local-issue.json"}` 创建。Fixture 仅接受该目录内的 JSON 文件名。
+
+发布前重新核对锁定 Spec、分支 head、持久化原始 Verdict/Evidence、当前交付判断和有效审批；HIGH 必须有 Delivery Approval。`NEEDS_HUMAN` 仅发布 pending，Delivery Approval 不能覆盖它；当前交付判断失败仅发布 failure。发布失败保持未完成状态，后台可安全重试。
+
+当前已提供最小同源 Web 页面，仍不包含真实 Jira/GitLab/GitHub、RBAC 或组织工具白名单。`toolPolicy` 只是已记录的路由 profile；当前 Worker 工厂使用 `ToolRegistry` 的 PathGuard/CommandGuard，未接组织 profile 白名单或交互 HITL Handler，不能将业务审批理解为工具审批或安全沙箱。完整实施记录、HTTP 示例和剩余边界见 `docs/paichange-platform-refactoring-plan.md` §27。
+
+#### Web 与离线演示
+
+正常 `serve --http` 在同一端口提供 `/changes` 页面：任务创建/列表、详情与事件时间线、Draft/锁定 Spec、revision diff、风险与路由、代码 diff、Verifier/Criteria/Evidence、逐项人工验收、两阶段审批及 Mock PR Check 历史。页面空壳不含任务数据；连接后所有数据与决策均使用原 API Key 校验。Key 仅在当前页面内存中使用，不放入 URL、静态资源、浏览器存储或日志，刷新页面需要重新连接；URL fragment 保留当前 changeId，连接后继续跟踪。后台状态采用 1–10 秒退避轮询，可暂停；页面隐藏、断开和待审批/终态在当前判断的 Mock Check 发布对齐后停止轮询。
+
+无需模型 Key、无需外网的演示（本机需要 JDK 17+ 和 Git）：
+
+```bash
+mvn package -DskipTests
+export PAICLI_RUNTIME_API_KEY="<自行设置的本地测试密钥>"
+java -Dpaichange.demo=true -jar target/paicli-1.0-SNAPSHOT.jar serve --http --port 8086
+```
+
+打开 `http://127.0.0.1:8086/changes`，输入上面的 Key 后连接。默认创建新的系统临时目录并打印位置；如需重启继续审批，在 `-jar` 前添加 `-Dpaichange.demo.dir=/absolute/path/to/demo-data`。离线目录与正常 `PAICHANGE_DATA_DIR` 分离，不读取个人模型配置或启动 MCP。未显式设置 `paichange.demo=true` 时，原运行默认行为不变。
+
+五分钟演示步骤：
+
+1. 展开“创建 ChangeTask”并创建退款 fixture；页面标记“离线模拟执行 · Mock SCM”。重复创建返回同一任务，重新演示请使用新的演示数据目录。
+2. 核对 Draft；可填写补充要求后勾选确认、点击 `Spec SUPPLEMENT`，查看 r1→r2 diff。离线 Draft 的可执行验收固定，补充文本只保留为确认记录，不模拟理解任意新需求。
+3. 勾选确认并点击 `Spec APPROVE`，默认审批人 `techlead`，发起人 `developer`。确定性 RiskEngine 得出 MEDIUM，路由明确标记 `offline-demo / deterministic-fixture`。
+4. Worker 使用真实 Git worktree、SpecExecutionEngine、Java command Verifier 和 SQLite。首次替身写入 `hours >= 24`，23/24/25 边界验收 FAIL；一次受控修复改为 `hours > 24` 后 PASS。检查两轮 Evidence、Criterion Results 和最终代码 diff。
+5. 在 `DELIVERY_REVIEW` 核对当前 version/digest/run/headSha/判断 revision，勾选确认并点击 `Delivery APPROVE`；只有 Mock Check 保存成功才显示发布完成。Spec/Delivery 均可拒绝；普通交付审批不能覆盖 NEEDS_HUMAN 或失败 Verdict。
+
+新增只读接口：`GET /v1/changes/{changeId}/artifacts` 返回 `version`、Draft/锁定 Spec 正文、全部关联 revisions、最新 revision diff、Verifier/Criteria、最终代码 diff、Criterion Results、两轮验证与 Evidence。可用 `?fromRevision=1&toRevision=2` 比较已保存 revision；不存在返回 404。只接受 revision 整数参数，不接受文件路径；从任务关联和历史 digest 解析文件，拒绝目录遍历、符号链接及跨产物根访问，每文件限 4 MiB。代码 diff 是否被执行引擎截断会在页面标明。`GET /v1/changes/capabilities` 返回当前模拟执行与 Mock SCM 标记。
+
+页面把 Spec、工单、diff 和 Evidence 全部作为纯文本渲染，并设置同源 CSP。Spec 审批携带当前 `expectedVersion + digest`；交付审批与人工验收携带 `expectedVersion + specDigest + runId + headSha + judgmentRevision`；409 会刷新内容、清除勾选并要求重新确认，不自动重放；400/401/403/404/422/500 分别提示，内容读取失败时禁用审批。生成/执行中采用 1–10 秒退避轮询，审批阶段保留用户所核对的快照。点击创建后立即显示提交和保存提示，按钮显示加载状态并禁用重复提交；201 后恢复按钮并展示后台生成状态，创建区提示随结果更新，HTTP 错误和草稿生成失败分别反馈。创建请求保留幂等键，响应不明时以同一请求重试；需不同需求时使用“新请求”。
+
+2026-09-04 验证：Phase 1–6 联合针对性 149 项全通过；`mvn test -Pquick` 为 899 项、0 failures/errors、5 skipped；浏览器完成创建、补充、双页面 409、注入防护、修复证据与 Mock success 交付验收。
+
+离线 fixture 位于 `src/main/resources/paichange-demo/`，仅替代 Draft 与 ReAct；验证实际运行本地 Java fixture，SCM 仅写本地 SQLite。演示模式只允许创建固定 `offline-refund.json`，不接受任意仓库创建请求。仍无组织工具策略、RBAC、真实 SCM 或生产隔离；文件产物不是不可篡改对象存储，不能把此演示描述为生产平台或真实模型提效证据。
+
+M1 已实现 Draft 异步生成、取消、失败重试和重启恢复。SQLite 自动增量添加 Draft 调度列；调度与任务/事件同事务，默认两个并发、每 generation 最多三次基础设施 attempt、每次 600 秒超时，失败退避 1/2 秒。内容资格纠错仍单独最多两次。HTTP 取消终止当前生成请求；不可取消实现的迟到结果不会覆盖当前版本。迁移、崩溃窗口和操作说明见 [M1 实施记录](docs/paichange-m1-implementation.md)。
+
+M2 已实现 Human Evidence 补录闭环。人工记录按 Criterion 追加，更正保留旧记录并使旧 Delivery Approval 失效；缺项/跳过仍为 NEEDS_HUMAN，确定性失败或异常不能由人工判断升级。全部通过后按风险路由进入独立交付审批，HIGH 仍需有效批准。Mock Check 支持 pending 到最终结论的版本化幂等发布，保存全部发布历史，拒绝迟到结果回退。页面分别显示原始 Run Verdict 与当前交付判断，人工入口只接受说明及当前任务已有 Artifact 引用；原固定退款 fixture 不含人工项。API、迁移、测试与浏览器验收详见 [M2 实施记录](docs/paichange-m2-implementation.md)。
+
 ### 第二十一期：图片复制粘贴输入（MVP）
 
 - `LlmClient.Message` 支持 `ContentPart`，包括 `text`、`image_base64`、`image_url`

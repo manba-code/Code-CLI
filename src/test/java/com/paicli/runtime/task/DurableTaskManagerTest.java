@@ -5,6 +5,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -57,6 +59,86 @@ class DurableTaskManagerTest {
             DurableTask canceled = waitForTerminal(manager, task.id());
 
             assertEquals(TaskStatus.CANCELED, canceled.status());
+        }
+    }
+
+    @Test
+    void runsReferenceOnlyWorkerJobAndDeduplicatesActiveReference(@TempDir Path tempDir) throws Exception {
+        AtomicReference<WorkerJob> observed = new AtomicReference<>();
+        try (DurableTaskManager manager = new DurableTaskManager(
+                tempDir.resolve("jobs.db"), prompt -> "prompt:" + prompt, 1)) {
+            manager.registerWorkerJobHandler("change.execute", job -> {
+                observed.set(job);
+                Thread.sleep(100);
+                return "done:" + job.referenceId();
+            }, WorkerJobLifecycleListener.NO_OP);
+
+            WorkerJob first = manager.enqueueWorkerJob("change.execute", "change_123456789abc");
+            WorkerJob duplicate = manager.enqueueWorkerJob("change.execute", "change_123456789abc");
+            assertEquals(first.id(), duplicate.id());
+            manager.start();
+
+            DurableTask completed = waitForTerminal(manager, first.id());
+            assertEquals(TaskStatus.COMPLETED, completed.status());
+            assertEquals("", completed.prompt());
+            assertEquals("change.execute", observed.get().type());
+            assertEquals("change_123456789abc", observed.get().referenceId());
+        }
+    }
+
+    @Test
+    void recoveredWorkerJobNotifiesBusinessLifecycleBeforeRerun(@TempDir Path tempDir) throws Exception {
+        Path db = tempDir.resolve("recovery-jobs.db");
+        String jobId;
+        try (DurableTaskManager manager = new DurableTaskManager(db, prompt -> "unused", 1)) {
+            WorkerJob job = manager.enqueueWorkerJob("change.execute", "change_abcdef123456");
+            jobId = job.id();
+            markRunning(manager, jobId);
+        }
+
+        AtomicInteger recovered = new AtomicInteger();
+        try (DurableTaskManager manager = new DurableTaskManager(db, prompt -> "unused", 1)) {
+            manager.registerWorkerJobHandler(
+                    "change.execute",
+                    job -> "resumed",
+                    new WorkerJobLifecycleListener() {
+                        @Override
+                        public void recovered(WorkerJob job) {
+                            assertEquals(1, job.recoveryCount());
+                            recovered.incrementAndGet();
+                        }
+                    });
+            manager.start();
+
+            assertEquals(TaskStatus.COMPLETED, waitForTerminal(manager, jobId).status());
+            assertEquals(1, recovered.get());
+        }
+    }
+
+    @Test
+    void cancelingWorkerJobNotifiesBusinessLifecycle(@TempDir Path tempDir) throws Exception {
+        AtomicInteger canceled = new AtomicInteger();
+        try (DurableTaskManager manager = new DurableTaskManager(
+                tempDir.resolve("cancel-job.db"), prompt -> "unused", 1)) {
+            manager.registerWorkerJobHandler(
+                    "change.execute",
+                    job -> {
+                        Thread.sleep(5000);
+                        return "late";
+                    },
+                    new WorkerJobLifecycleListener() {
+                        @Override
+                        public void canceled(WorkerJob job, String reason) {
+                            canceled.incrementAndGet();
+                        }
+                    });
+            manager.start();
+            WorkerJob job = manager.enqueueWorkerJob("change.execute", "change_fedcba654321");
+            waitUntilStatus(manager, job.id(), TaskStatus.RUNNING);
+
+            assertTrue(manager.cancel(job.id()));
+            assertEquals(TaskStatus.CANCELED, waitForTerminal(manager, job.id()).status());
+            assertTrue(canceled.get() >= 1);
         }
     }
 

@@ -21,6 +21,7 @@ public class DurableTaskManager implements Closeable {
     private final int workerCount;
     private final Connection connection;
     private final Map<String, Thread> runningTasks = new ConcurrentHashMap<>();
+    private final Map<String, WorkerJobRegistration> workerJobHandlers = new ConcurrentHashMap<>();
     private ExecutorService workers;
     private volatile boolean running;
 
@@ -105,6 +106,59 @@ public class DurableTaskManager implements Closeable {
         }
     }
 
+    /** 注册 Worker Job handler；必须在 start() 之前完成，避免任务在缺少 handler 时被领取。 */
+    public synchronized void registerWorkerJobHandler(
+            String type,
+            WorkerJobRunner runner,
+            WorkerJobLifecycleListener lifecycleListener
+    ) {
+        if (running) {
+            throw new IllegalStateException("Worker Job handler 必须在 DurableTaskManager.start() 前注册");
+        }
+        String normalizedType = requireText(type, "type");
+        WorkerJobRegistration registration = new WorkerJobRegistration(
+                java.util.Objects.requireNonNull(runner, "runner"),
+                lifecycleListener == null ? WorkerJobLifecycleListener.NO_OP : lifecycleListener);
+        if (workerJobHandlers.putIfAbsent(normalizedType, registration) != null) {
+            throw new IllegalStateException("Worker Job handler 已注册: " + normalizedType);
+        }
+    }
+
+    /**
+     * 投递仅含业务引用的技术任务。同 type + referenceId 的活动任务会返回既有记录，避免重复执行。
+     */
+    public synchronized WorkerJob enqueueWorkerJob(String type, String referenceId) {
+        String normalizedType = requireText(type, "type");
+        String normalizedReference = requireText(referenceId, "referenceId");
+        Optional<DurableTask> existing = findActiveWorkerJob(normalizedType, normalizedReference);
+        if (existing.isPresent()) {
+            return existing.get().toWorkerJob();
+        }
+        String id = "job_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        String now = Instant.now().toString();
+        try (PreparedStatement ps = connection.prepareStatement("""
+                INSERT INTO runtime_tasks (
+                    id, status, prompt, created_at, job_type, reference_id, recovery_count
+                ) VALUES (?, ?, ?, ?, ?, ?, 0)
+                """)) {
+            ps.setString(1, id);
+            ps.setString(2, TaskStatus.ENQUEUED.value());
+            ps.setString(3, "");
+            ps.setString(4, now);
+            ps.setString(5, normalizedType);
+            ps.setString(6, normalizedReference);
+            ps.executeUpdate();
+            notifyAll();
+            return find(id).orElseThrow().toWorkerJob();
+        } catch (SQLException e) {
+            Optional<DurableTask> raced = findActiveWorkerJob(normalizedType, normalizedReference);
+            if (raced.isPresent()) {
+                return raced.get().toWorkerJob();
+            }
+            throw new IllegalStateException("提交 Worker Job 失败: " + e.getMessage(), e);
+        }
+    }
+
     public synchronized List<DurableTask> list(int limit) {
         int bounded = Math.max(1, Math.min(limit, 100));
         List<DurableTask> tasks = new ArrayList<>();
@@ -149,6 +203,7 @@ public class DurableTaskManager implements Closeable {
             thread.interrupt();
         }
         markTerminal(id, TaskStatus.CANCELED, current.get().result(), "用户取消", current.get().startedAt());
+        notifyCanceled(current.get(), "用户取消");
         notifyAll();
         return true;
     }
@@ -172,17 +227,23 @@ public class DurableTaskManager implements Closeable {
                 runningTasks.put(taskId, Thread.currentThread());
                 Instant startedAt = Instant.now();
                 try {
-                    String result = runner.run(task.prompt());
+                    String result = runTask(task);
                     synchronized (this) {
                         DurableTask latest = find(taskId).orElse(null);
                         if (latest != null && latest.status() != TaskStatus.CANCELED) {
                             markTerminal(taskId, TaskStatus.COMPLETED, result, null, startedAt);
                         }
                     }
+                } catch (WorkerJobCanceledException e) {
+                    synchronized (this) {
+                        markTerminal(taskId, TaskStatus.CANCELED, "", e.getMessage(), startedAt);
+                        notifyCanceled(task, e.getMessage());
+                    }
                 } catch (InterruptedException e) {
                     Thread.interrupted();
                     synchronized (this) {
                         markTerminal(taskId, TaskStatus.CANCELED, "", "任务线程被中断", startedAt);
+                        notifyCanceled(task, "任务线程被中断");
                     }
                 } catch (Exception e) {
                     synchronized (this) {
@@ -201,6 +262,21 @@ public class DurableTaskManager implements Closeable {
                 // Worker loop must stay alive; individual failures are recorded on the task row when possible.
             }
         }
+    }
+
+    private String runTask(DurableTask task) throws Exception {
+        if (!task.workerJob()) {
+            return runner.run(task.prompt());
+        }
+        WorkerJobRegistration registration = workerJobHandlers.get(task.jobType());
+        if (registration == null) {
+            throw new IllegalStateException("未注册 Worker Job handler: " + task.jobType());
+        }
+        WorkerJob job = task.toWorkerJob();
+        if (job.recoveryCount() > 0) {
+            registration.lifecycleListener().recovered(job);
+        }
+        return registration.runner().run(job);
     }
 
     private synchronized DurableTask claimNext() throws SQLException {
@@ -285,17 +361,26 @@ public class DurableTaskManager implements Closeable {
                         finished_at TEXT,
                         updated_at TEXT,
                         duration_ms INTEGER DEFAULT 0
+                        ,job_type TEXT NOT NULL DEFAULT 'prompt'
+                        ,reference_id TEXT
+                        ,recovery_count INTEGER NOT NULL DEFAULT 0
                     )
                     """);
+            ensureWorkerJobColumns();
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_runtime_tasks_status ON runtime_tasks(status)");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_runtime_tasks_created ON runtime_tasks(created_at)");
+            stmt.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_active_worker_job
+                    ON runtime_tasks(job_type, reference_id)
+                    WHERE job_type <> 'prompt' AND status IN ('enqueued', 'running')
+                    """);
         }
     }
 
     private synchronized void recoverRunningTasks() throws SQLException {
         try (PreparedStatement ps = connection.prepareStatement("""
                 UPDATE runtime_tasks
-                SET status = ?, updated_at = ?
+                SET status = ?, updated_at = ?, recovery_count = recovery_count + 1
                 WHERE status = ?
                 """)) {
             ps.setString(1, TaskStatus.ENQUEUED.value());
@@ -315,8 +400,70 @@ public class DurableTaskManager implements Closeable {
                 parseInstant(rs.getString("created_at")),
                 parseInstant(rs.getString("started_at")),
                 parseInstant(rs.getString("finished_at")),
-                rs.getLong("duration_ms")
+                rs.getLong("duration_ms"),
+                rs.getString("job_type"),
+                rs.getString("reference_id"),
+                rs.getInt("recovery_count")
         );
+    }
+
+    private synchronized Optional<DurableTask> findActiveWorkerJob(String type, String referenceId) {
+        try (PreparedStatement ps = connection.prepareStatement("""
+                SELECT * FROM runtime_tasks
+                WHERE job_type = ? AND reference_id = ? AND status IN (?, ?)
+                ORDER BY created_at ASC LIMIT 1
+                """)) {
+            ps.setString(1, type);
+            ps.setString(2, referenceId);
+            ps.setString(3, TaskStatus.ENQUEUED.value());
+            ps.setString(4, TaskStatus.RUNNING.value());
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.of(fromRow(rs)) : Optional.empty();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("读取活动 Worker Job 失败: " + e.getMessage(), e);
+        }
+    }
+
+    private void notifyCanceled(DurableTask task, String reason) {
+        if (task == null || !task.workerJob()) {
+            return;
+        }
+        WorkerJobRegistration registration = workerJobHandlers.get(task.jobType());
+        if (registration != null) {
+            registration.lifecycleListener().canceled(task.toWorkerJob(), reason);
+        }
+    }
+
+    private void ensureWorkerJobColumns() throws SQLException {
+        ensureColumn("job_type", "TEXT NOT NULL DEFAULT 'prompt'");
+        ensureColumn("reference_id", "TEXT");
+        ensureColumn("recovery_count", "INTEGER NOT NULL DEFAULT 0");
+    }
+
+    private void ensureColumn(String name, String definition) throws SQLException {
+        boolean found = false;
+        try (Statement statement = connection.createStatement();
+             ResultSet columns = statement.executeQuery("PRAGMA table_info(runtime_tasks)")) {
+            while (columns.next()) {
+                if (name.equalsIgnoreCase(columns.getString("name"))) {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if (!found) {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("ALTER TABLE runtime_tasks ADD COLUMN " + name + " " + definition);
+            }
+        }
+    }
+
+    private static String requireText(String value, String name) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(name + " 不能为空");
+        }
+        return value.trim();
     }
 
     private static Instant parseInstant(String value) {
@@ -342,5 +489,11 @@ public class DurableTaskManager implements Closeable {
             connection.close();
         } catch (SQLException ignored) {
         }
+    }
+
+    private record WorkerJobRegistration(
+            WorkerJobRunner runner,
+            WorkerJobLifecycleListener lifecycleListener
+    ) {
     }
 }

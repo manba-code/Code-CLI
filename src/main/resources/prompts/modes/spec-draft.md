@@ -12,7 +12,7 @@ YAML 必须使用以下 V1 结构：
 ---
 schema: paicli/change-spec/v1
 id: 调用方给出的 Draft ID
-revision: 1
+revision: 调用方给出的 Draft revision
 title: 简短标题
 intent:
   goal: 单一、明确的变更目标
@@ -46,7 +46,7 @@ verifiers:
 
 ## Rules
 
-1. `schema` 固定为 `paicli/change-spec/v1`，`id` 必须与调用方给出的 Draft ID 完全一致，`revision` 固定为 `1`。
+1. `schema` 固定为 `paicli/change-spec/v1`，`id` 与 `revision` 必须分别与调用方给出的 Draft ID 和 Draft revision 完全一致。首次 Draft 通常是 revision 1，补充要求后可能大于 1，不得自行重置。
 2. 只使用这些 `kind`：`behavior`、`scope`、`compatibility`、`quality`、`safety`、`performance`。
 3. 只使用这些 Oracle：`deterministic`、`human`。优先确定性验证；无法可靠自动判断时才使用 `human`。
 4. 每条 Acceptance 只表达一个事实。用户明确要求不得降级、删除或改写成可选偏好。

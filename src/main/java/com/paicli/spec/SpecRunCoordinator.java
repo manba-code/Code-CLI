@@ -2,11 +2,8 @@ package com.paicli.spec;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.AtomicMoveNotSupportedException;
-import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -23,8 +20,7 @@ import java.util.function.UnaryOperator;
 /**
  * 将确认后的 ChangeSpec 锁定、交给 ReAct、验证、逐条判断 Criterion，并持久化最终运行结果。
  */
-public final class SpecRunCoordinator {
-    private static final String SPECS_DIR = ".paicli/specs";
+public final class SpecRunCoordinator implements SpecExecutionEngine {
     private static final int MAX_REPAIR_INPUT_CHARS = 16 * 1024;
     private static final DateTimeFormatter RUN_TIME = DateTimeFormatter
             .ofPattern("yyyyMMdd-HHmmss-SSS")
@@ -41,6 +37,7 @@ public final class SpecRunCoordinator {
     private final SpecRunStore runStore;
     private final Clock clock;
     private final RunOptions runOptions;
+    private final FileChangeSpecModule specModule;
 
     public SpecRunCoordinator(
             Path projectRoot,
@@ -121,6 +118,34 @@ public final class SpecRunCoordinator {
                 runOptions);
     }
 
+    /**
+     * Worker 使用的构造入口：workspace 仍用于 baseline、Verifier 和工具执行，运行产物写入独立目录，
+     * 因此 worktree 释放后 Evidence 仍然可用。
+     */
+    public SpecRunCoordinator(
+            Path projectRoot,
+            Path runsDirectory,
+            SpecDraftSession draftSession,
+            UnaryOperator<String> confirmedRequestExpander,
+            ReActExecutor reactExecutor,
+            SpecVerifier verifier,
+            HumanCriterionJudge humanCriterionJudge,
+            RunOptions runOptions
+    ) {
+        this(
+                projectRoot,
+                draftSession,
+                confirmedRequestExpander,
+                reactExecutor,
+                new ChangeSpecCodec(),
+                new WorkspaceChangeTracker(projectRoot),
+                verifier,
+                humanCriterionJudge,
+                new SpecRunStore(projectRoot, runsDirectory, Clock.systemUTC()),
+                Clock.systemUTC(),
+                runOptions);
+    }
+
     SpecRunCoordinator(
             Path projectRoot,
             SpecDraftSession draftSession,
@@ -173,6 +198,12 @@ public final class SpecRunCoordinator {
         this.runStore = Objects.requireNonNull(runStore, "runStore");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.runOptions = Objects.requireNonNull(runOptions, "runOptions");
+        this.specModule = new FileChangeSpecModule(
+                this.projectRoot,
+                this.codec,
+                context -> {
+                    throw new IOException("CLI Draft 由 SpecDraftSession 提供");
+                });
     }
 
     public SpecRunResult run(String request) throws IOException {
@@ -191,7 +222,38 @@ public final class SpecRunCoordinator {
 
         ChangeSpecDocument document = Objects.requireNonNull(review.document(), "confirmed document");
         String confirmedRequest = Objects.requireNonNull(review.confirmedRequest(), "confirmed request");
-        LockedSpec lockedSpec = lock(document);
+        ChangeSpecModule.LockedSpec lockedSpec = specModule.lockDocument(document);
+        return executeInternal(new ExecutionContext(
+                confirmedRequest,
+                lockedSpec,
+                review.generationMs(),
+                review.confirmationMs(),
+                review.llmUsage()), runStartedAt);
+    }
+
+    @Override
+    public SpecRunResult execute(ExecutionContext context) throws IOException {
+        return executeInternal(Objects.requireNonNull(context, "context"), System.nanoTime());
+    }
+
+    private SpecRunResult executeInternal(ExecutionContext context, long runStartedAt) throws IOException {
+        String confirmedRequest = context.confirmedRequest();
+        ChangeSpecModule.LockedSpec locked = context.lockedSpec();
+        ChangeSpecDocument document = codec.decode(Files.readString(locked.path(), StandardCharsets.UTF_8));
+        if (!locked.specId().equals(document.spec().id())
+                || locked.revision() != document.spec().revision()
+                || !locked.specDigest().equals(document.specDigest())) {
+            throw new IOException("锁定的 ChangeSpec identity 与文件内容不一致");
+        }
+        LockedSpec lockedSpec = new LockedSpec(
+                locked.path(), locked.specId(), locked.revision(), locked.specDigest());
+        SpecDraftSession.Result review = new SpecDraftSession.Result(
+                SpecDraftSession.Status.CONFIRMED,
+                document,
+                confirmedRequest,
+                context.generationMs(),
+                context.confirmationMs(),
+                context.draftLlmUsage());
         SpecRunResult.RunIdentity identity = new SpecRunResult.RunIdentity(
                 createRunId(),
                 lockedSpec.specId(),
@@ -281,6 +343,7 @@ public final class SpecRunCoordinator {
             return persist(result);
         }
 
+        context.verificationStarted().run();
         long verificationStartedAt = System.nanoTime();
         SpecVerifier.VerificationRun verification;
         try {
@@ -776,44 +839,6 @@ public final class SpecRunCoordinator {
                 reactUsage);
     }
 
-    private LockedSpec lock(ChangeSpecDocument document) throws IOException {
-        String encoded = codec.encode(document);
-        ChangeSpecDocument encodedDocument = codec.decode(encoded);
-        assertIdentity(document, encodedDocument, "编码后的 ChangeSpec");
-
-        Path specsDir = projectRoot.resolve(SPECS_DIR).normalize();
-        if (!specsDir.startsWith(projectRoot)) {
-            throw new IOException("ChangeSpec 保存目录超出项目根目录");
-        }
-        Files.createDirectories(specsDir);
-
-        ChangeSpec spec = document.spec();
-        String fileName = spec.id() + "-r" + spec.revision() + ".md";
-        Path target = specsDir.resolve(fileName).normalize();
-        if (!specsDir.equals(target.getParent())) {
-            throw new IOException("ChangeSpec id 不能用于安全文件名: " + spec.id());
-        }
-        if (Files.exists(target)) {
-            throw new FileAlreadyExistsException("锁定的 ChangeSpec 已存在，不能覆盖: " + target);
-        }
-
-        Path temporary = Files.createTempFile(specsDir, "." + fileName + ".", ".tmp");
-        boolean moved = false;
-        try {
-            Files.writeString(temporary, encoded, StandardCharsets.UTF_8);
-            moveWithoutReplacing(temporary, target);
-            moved = true;
-        } finally {
-            if (!moved) {
-                Files.deleteIfExists(temporary);
-            }
-        }
-
-        ChangeSpecDocument saved = codec.decode(Files.readString(target, StandardCharsets.UTF_8));
-        assertIdentity(document, saved, "保存后的 ChangeSpec");
-        return new LockedSpec(target, spec.id(), spec.revision(), document.specDigest());
-    }
-
     private String buildExecutionInput(String confirmedRequest, ChangeSpecDocument document) throws IOException {
         String machineContract = codec.encodeMachineContract(document);
         return """
@@ -854,26 +879,6 @@ public final class SpecRunCoordinator {
             return null;
         } catch (Exception e) {
             return "锁定的 ChangeSpec 无法回读验证: " + messageOf(e);
-        }
-    }
-
-    private static void assertIdentity(
-            ChangeSpecDocument expected,
-            ChangeSpecDocument actual,
-            String source
-    ) throws IOException {
-        if (!expected.spec().id().equals(actual.spec().id())
-                || expected.spec().revision() != actual.spec().revision()
-                || !expected.specDigest().equals(actual.specDigest())) {
-            throw new IOException(source + " 的 specId、revision 或 digest 与确认结果不一致");
-        }
-    }
-
-    private static void moveWithoutReplacing(Path source, Path target) throws IOException {
-        try {
-            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
-        } catch (AtomicMoveNotSupportedException e) {
-            Files.move(source, target);
         }
     }
 

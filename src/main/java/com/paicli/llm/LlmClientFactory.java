@@ -7,6 +7,11 @@ public class LlmClientFactory {
     private LlmClientFactory() {}
 
     public static LlmClient create(String provider, PaiCliConfig config) {
+        return create(provider, null, config);
+    }
+
+    /** 创建绑定 ExecutionRoute 明确模型的任务级 Client，不修改共享配置。 */
+    public static LlmClient create(String provider, String routedModel, PaiCliConfig config) {
         if (provider == null) return null;
 
         String normalized = normalizeProvider(provider);
@@ -19,8 +24,8 @@ public class LlmClientFactory {
             return null;
         }
 
-        String model = firstConfigured(config.getModel(normalized),
-                configuredProvider.equals(normalized) ? null : config.getModel(configuredProvider));
+        String model = firstConfigured(routedModel, firstConfigured(config.getModel(normalized),
+                configuredProvider.equals(normalized) ? null : config.getModel(configuredProvider)));
         String baseUrl = firstConfigured(config.getBaseUrl(normalized),
                 configuredProvider.equals(normalized) ? null : config.getBaseUrl(configuredProvider));
         String loraId = firstConfigured(config.getLoraId(normalized),
@@ -52,6 +57,19 @@ public class LlmClientFactory {
         }
 
         return null;
+    }
+
+    public static String defaultModel(String provider) {
+        return switch (normalizeProvider(provider)) {
+            case "glm" -> "glm-5.1";
+            case "deepseek" -> "DeepSeek-V4-pro";
+            case "step" -> "step-3.5-flash";
+            case "kimi" -> "kimi-k2.6";
+            case "freellmapi" -> "auto";
+            case "xfyun" -> "Qwen3.6-35B-A3B";
+            case "agnes" -> "agnes-2.0-flash";
+            default -> throw new IllegalArgumentException("不支持的 provider: " + provider);
+        };
     }
 
     private static String normalizeProvider(String provider) {

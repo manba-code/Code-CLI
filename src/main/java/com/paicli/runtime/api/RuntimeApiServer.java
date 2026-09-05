@@ -27,6 +27,11 @@ public class RuntimeApiServer implements AutoCloseable {
     });
 
     public RuntimeApiServer(RuntimeThreadStore store, TaskRunner runner, int port, String apiKey) throws IOException {
+        this(store, runner, port, apiKey, null);
+    }
+
+    public RuntimeApiServer(RuntimeThreadStore store, TaskRunner runner, int port, String apiKey,
+                            ChangeApiHandler changes) throws IOException {
         if (apiKey == null || apiKey.isBlank()) {
             throw new IllegalArgumentException("Runtime API 需要配置 PAICLI_RUNTIME_API_KEY 或 -Dpaicli.runtime.api.key");
         }
@@ -35,6 +40,16 @@ public class RuntimeApiServer implements AutoCloseable {
         this.apiKey = apiKey;
         this.server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
         this.server.createContext("/v1/threads", this::handleThreads);
+        if (changes != null) {
+            this.server.createContext("/changes", new ChangeWebHandler());
+            this.server.createContext("/v1/changes", exchange -> {
+                if (!authorized(exchange)) {
+                    writeJson(exchange, 401, "{\"error\":\"unauthorized\"}");
+                    return;
+                }
+                changes.handle(exchange);
+            });
+        }
         this.server.setExecutor(executor);
     }
 

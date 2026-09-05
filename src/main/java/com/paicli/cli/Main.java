@@ -883,13 +883,16 @@ public class Main {
     }
 
     private static boolean isRuntimeServeCommand(String[] args) {
-        return args != null
-                && args.length >= 1
-                && "serve".equalsIgnoreCase(args[0])
-                && java.util.Arrays.stream(args).anyMatch("--http"::equalsIgnoreCase);
+        return CliCommandParser.isRuntimeServeCommand(args);
     }
 
     private static void startRuntimeApiAndBlock(String[] args) {
+        if (Boolean.getBoolean("paichange.demo")) {
+            try { com.paicli.change.OfflineChangeDemo.startAndBlock(parseServePort(args, 8080)); }
+            catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            catch (Exception e) { System.err.println("❌ 离线演示启动失败: " + e.getMessage()); System.exit(1); }
+            return;
+        }
         PaiCliConfig config = PaiCliConfig.load();
         LlmClient client = LlmClientFactory.createFromConfig(config);
         if (client == null) {
@@ -897,17 +900,22 @@ public class Main {
             System.exit(1);
         }
         int port = parseServePort(args, 8080);
-        try {
-            RuntimeThreadStore store = new RuntimeThreadStore(RuntimeThreadStore.defaultDbPath());
-            RuntimeApiServer server = new RuntimeApiServer(
-                    store,
-                    prompt -> runHeadlessTask(prompt, client),
-                    port,
-                    RuntimeApiServer.configuredApiKey());
+        Path changeRoot = com.paicli.change.ChangePlatform.defaultRoot();
+        try (RuntimeThreadStore store = new RuntimeThreadStore(RuntimeThreadStore.defaultDbPath());
+             com.paicli.change.ChangePlatform changes = new com.paicli.change.ChangePlatform(
+                     changeRoot, changeRoot.resolve("fixtures"),
+                     com.paicli.spec.FileChangeSpecModule.usingLlmClient(changeRoot, client), config,
+                     com.paicli.change.GitWorktreeWorkspaceProvisioner.createDefault(),
+                     new com.paicli.change.PaicliChangeWorkerRuntimeFactory(config),
+                     com.paicli.change.DeliveryHeadReader.localGit());
+             RuntimeApiServer server = new RuntimeApiServer(store, prompt -> runHeadlessTask(prompt, client),
+                     port, RuntimeApiServer.configuredApiKey(), changes.handler())) {
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 server.close();
+                changes.close();
                 store.close();
             }, "paicli-runtime-api-shutdown"));
+            changes.start();
             server.start();
             System.out.println("✅ PaiCLI Runtime API 已启动: http://127.0.0.1:" + server.port());
             System.out.println("   认证: Authorization: Bearer <PAICLI_RUNTIME_API_KEY>");

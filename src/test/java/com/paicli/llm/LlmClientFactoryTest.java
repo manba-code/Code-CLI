@@ -34,6 +34,18 @@ class LlmClientFactoryTest {
     }
 
     @Test
+    void routedModelOverridesSharedProviderModelWithoutMutatingConfig() {
+        PaiCliConfig config = new PaiCliConfig();
+        config.getProviders().put("glm",
+                new PaiCliConfig.ProviderConfig("test-glm-key", null, "configured-model"));
+
+        LlmClient client = LlmClientFactory.create("glm", "routed-model", config);
+
+        assertEquals("routed-model", client.getModelName());
+        assertEquals("configured-model", config.getModel("glm"));
+    }
+
+    @Test
     void createsStepClientFromConfiguredProvider() {
         PaiCliConfig config = new PaiCliConfig();
         config.getProviders().put("step",

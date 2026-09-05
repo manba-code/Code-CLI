@@ -58,6 +58,12 @@ final class CliCommandParser {
     private CliCommandParser() {
     }
 
+    /** Process entry; the offline composition is opt-in via a JVM property, not a slash command. */
+    static boolean isRuntimeServeCommand(String[] args) {
+        return args != null && args.length >= 1 && "serve".equalsIgnoreCase(args[0])
+                && java.util.Arrays.stream(args).anyMatch("--http"::equalsIgnoreCase);
+    }
+
     static ParsedCommand parse(String input) {
         if (input == null) {
             return ParsedCommand.none();

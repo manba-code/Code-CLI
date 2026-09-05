@@ -22,6 +22,7 @@ public class PaiCliConfig {
 
     private String defaultProvider = "deepseek";
     private Map<String, ProviderConfig> providers = new LinkedHashMap<>();
+    private PaiChangeConfig paiChange = new PaiChangeConfig();
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class ProviderConfig {
@@ -54,10 +55,72 @@ public class PaiCliConfig {
         public void setMaxTokens(int maxTokens) { this.maxTokens = maxTokens; }
     }
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class PaiChangeConfig {
+        private boolean forbidRequesterSelfApprovalForMediumAndHigh = true;
+        private Map<String, PaiChangeRouteConfig> routes = new LinkedHashMap<>();
+
+        public boolean isForbidRequesterSelfApprovalForMediumAndHigh() {
+            return forbidRequesterSelfApprovalForMediumAndHigh;
+        }
+
+        public void setForbidRequesterSelfApprovalForMediumAndHigh(boolean value) {
+            this.forbidRequesterSelfApprovalForMediumAndHigh = value;
+        }
+
+        public Map<String, PaiChangeRouteConfig> getRoutes() {
+            return routes;
+        }
+
+        public void setRoutes(Map<String, PaiChangeRouteConfig> routes) {
+            this.routes = routes == null ? new LinkedHashMap<>() : new LinkedHashMap<>(routes);
+        }
+
+        public PaiChangeRouteConfig route(String riskLevel) {
+            if (riskLevel == null) {
+                return null;
+            }
+            PaiChangeRouteConfig direct = routes.get(riskLevel);
+            return direct != null ? direct : routes.get(riskLevel.toLowerCase());
+        }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class PaiChangeRouteConfig {
+        private String provider;
+        private String model;
+        private Boolean repairEnabled;
+        private Boolean deliveryApprovalRequired;
+        private String toolPolicy;
+
+        public String getProvider() { return provider; }
+        public void setProvider(String provider) { this.provider = provider; }
+        public String getModel() { return model; }
+        public void setModel(String model) { this.model = model; }
+        public Boolean getRepairEnabled() { return repairEnabled; }
+        public boolean isRepairEnabled() { return repairEnabled == null || repairEnabled; }
+        public void setRepairEnabled(boolean repairEnabled) { this.repairEnabled = repairEnabled; }
+        public Boolean getDeliveryApprovalRequired() { return deliveryApprovalRequired; }
+        public boolean isDeliveryApprovalRequired() {
+            return deliveryApprovalRequired == null || deliveryApprovalRequired;
+        }
+        public void setDeliveryApprovalRequired(boolean value) { this.deliveryApprovalRequired = value; }
+        public String getToolPolicy() { return toolPolicy; }
+        public void setToolPolicy(String toolPolicy) { this.toolPolicy = toolPolicy; }
+
+    }
+
     public String getDefaultProvider() { return defaultProvider; }
     public void setDefaultProvider(String defaultProvider) { this.defaultProvider = defaultProvider; }
     public Map<String, ProviderConfig> getProviders() { return providers; }
     public void setProviders(Map<String, ProviderConfig> providers) { this.providers = providers; }
+    public PaiChangeConfig getPaiChange() {
+        if (paiChange == null) paiChange = new PaiChangeConfig();
+        return paiChange;
+    }
+    public void setPaiChange(PaiChangeConfig paiChange) {
+        this.paiChange = paiChange == null ? new PaiChangeConfig() : paiChange;
+    }
 
     public String getApiKey(String provider) {
         ProviderConfig providerConfig = providers.get(provider);
