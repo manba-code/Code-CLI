@@ -1,0 +1,15 @@
+{
+  "idempotencyKey": "mock-local-001",
+  "sourceType": "mock_gitlab_issue",
+  "externalId": "LOCAL-001",
+  "title": "修复本地项目中的边界行为",
+  "description": "填写明确需求、允许修改的范围和可运行的验证命令。",
+  "labels": ["backend"],
+  "priority": "normal",
+  "requester": "developer-001",
+  "repository": {
+    "path": "/absolute/path/to/local/repository",
+    "baseRef": "main"
+  },
+  "sourceUrl": "mock://issues/LOCAL-001"
+}
