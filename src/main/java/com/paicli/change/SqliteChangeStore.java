@@ -346,6 +346,23 @@ public final class SqliteChangeStore implements ChangePersistence {
         }
     }
 
+    @Override public synchronized ChangeTaskMetrics metrics() {
+        try (Statement statement = connection.createStatement();
+             ResultSet row = statement.executeQuery("""
+                     SELECT COUNT(*),
+                       SUM(CASE WHEN state NOT IN ('COMPLETED','FAILED','REJECTED','CANCELED') THEN 1 ELSE 0 END),
+                       SUM(CASE WHEN state='FAILED' THEN 1 ELSE 0 END),
+                       SUM(CASE WHEN state='COMPLETED' THEN 1 ELSE 0 END),
+                       SUM(CASE WHEN state='DELIVERY_REVIEW' THEN 1 ELSE 0 END),
+                       (SELECT COUNT(*) FROM change_events WHERE event_type='dispatch.failed')
+                     FROM change_tasks
+                     """)) {
+            if (!row.next()) throw new SQLException("unexpected task metrics result");
+            return new ChangeTaskMetrics(row.getLong(1), row.getLong(2), row.getLong(3), row.getLong(4),
+                    row.getLong(5), row.getLong(6));
+        } catch (SQLException e) { throw persistenceFailure("读取 SQLite PaiChange 指标失败", e); }
+    }
+
     @Override
     public synchronized ProjectToolPolicy policy(String projectId) {
         try (PreparedStatement statement = connection.prepareStatement(

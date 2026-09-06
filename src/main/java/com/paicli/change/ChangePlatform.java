@@ -33,6 +33,7 @@ public final class ChangePlatform implements AutoCloseable {
     private String storageBackend;
     private WorkerIsolation isolation;
     private ChangeApiHandler handler;
+    private ChangeOperations operations;
     private boolean closed;
     private boolean started;
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -80,6 +81,16 @@ public final class ChangePlatform implements AutoCloseable {
             Path database = root.resolve("changes.db");
             ProductionStorageSettings production = !offlineDemo && ProductionStorageSettings.enabled()
                     ? ProductionStorageSettings.fromProcess() : null;
+            ProductionOperationsSettings productionOperations = null;
+            OidcSettings productionIdentities = null;
+            GitLabSettings productionGitlab = null;
+            if (production != null) {
+                productionOperations = ProductionOperationsSettings.fromProcess();
+                productionIdentities = OidcSettings.fromProcess();
+                if (!GitLabSettings.enabled()) throw new IllegalStateException("M7b 生产模式要求 PAICHANGE_SCM=gitlab");
+                productionGitlab = GitLabSettings.fromProcess();
+                ProductionStartupValidator.validate(production, productionOperations, productionIdentities, productionGitlab);
+            }
             if (production == null) {
                 store = new SqliteChangeStore(database);
                 evidenceStore = new TrustedEvidenceStore(database, root.resolve("evidence-archive"));
@@ -98,12 +109,11 @@ public final class ChangePlatform implements AutoCloseable {
             ChangeAuthorizer effectiveAuthorizer = authorizer;
             ProjectMemberService memberService = null;
             if (effectiveAuthorizer == null && production != null) {
-                OidcSettings identities = OidcSettings.fromProcess();
                 membershipDirectory = new PostgresProjectMembershipDirectory(
                         production.jdbcUrl(), production.user(), production.password());
                 effectiveAuthorizer = new ChangeAuthorizer(membershipDirectory);
                 memberService = new ProjectMemberService(membershipDirectory, effectiveAuthorizer,
-                        identities.bootstrapAdminSubject());
+                        productionIdentities.bootstrapAdminSubject());
             } else if (effectiveAuthorizer == null) {
                 effectiveAuthorizer = new ChangeAuthorizer(ProjectMembershipProvider.none());
             }
@@ -112,7 +122,7 @@ public final class ChangePlatform implements AutoCloseable {
             workflow = new DefaultChangeWorkflow(store, store, specs, config, Clock.systemUTC());
             WorkItemAdapter workItems;
             if (!offlineDemo && GitLabSettings.enabled()) {
-                GitLabSettings gitlab = GitLabSettings.fromProcess();
+                GitLabSettings gitlab = productionGitlab == null ? GitLabSettings.fromProcess() : productionGitlab;
                 scm = production == null ? new GitLabScmAdapter(database, gitlab)
                         : new GitLabScmAdapter(production.jdbcUrl(), production.user(), production.password(), gitlab);
                 workItems = new GitLabWorkItemAdapter(gitlab, workflow);
@@ -133,6 +143,7 @@ public final class ChangePlatform implements AutoCloseable {
             handler = new ChangeApiHandler(workflow, store, workItems,
                     new ChangeArtifactReader(evidenceStore, root, evidenceStore.root()), offlineDemo, effectiveAuthorizer,
                     toolApprovals, isolation.capabilities(), true, memberService);
+            operations = new ChangeOperations(store, jobs, evidenceStore, scm, productionOperations);
         } catch (Exception e) {
             close();
             throw e;
@@ -147,6 +158,8 @@ public final class ChangePlatform implements AutoCloseable {
     }
 
     public ChangeApiHandler handler() { return handler; }
+
+    public ChangeOperations operations() { return operations; }
 
     public StorageHealth storageHealth() {
         store.checkHealth(); jobs.checkHealth(); evidenceStore.checkHealth();
@@ -195,6 +208,7 @@ public final class ChangePlatform implements AutoCloseable {
     public synchronized void close() {
         if (closed) return;
         closed = true;
+        if (operations != null) operations.markClosed();
         scheduler.shutdownNow();
         try { scheduler.awaitTermination(5, TimeUnit.SECONDS); }
         catch (InterruptedException e) { Thread.currentThread().interrupt(); }

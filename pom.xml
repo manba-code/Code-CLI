@@ -277,6 +277,63 @@
         </profile>
 
         <profile>
+            <id>paichange-m7b-it</id>
+            <properties>
+                <skipTests>false</skipTests>
+                <paichange.m7a.integration.enabled>true</paichange.m7a.integration.enabled>
+                <paichange.m7b.integration.enabled>true</paichange.m7b.integration.enabled>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <version>3.2.5</version>
+                        <configuration>
+                            <argLine>-Dfile.encoding=UTF-8</argLine>
+                            <includes>
+                                <include>**/change/M7aIdentityIntegrationTest.java</include>
+                                <include>**/change/GitLabScmEndToEndTest.java</include>
+                                <include>**/change/M7bOperationsIntegrationTest.java</include>
+                            </includes>
+                            <systemPropertyVariables>
+                                <paichange.m7a.integration.enabled>${paichange.m7a.integration.enabled}</paichange.m7a.integration.enabled>
+                                <paichange.m7b.integration.enabled>${paichange.m7b.integration.enabled}</paichange.m7b.integration.enabled>
+                                <paichange.m7a.test.jdbc>jdbc:postgresql://127.0.0.1:55434/paichange_identity</paichange.m7a.test.jdbc>
+                            </systemPropertyVariables>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <profile>
+            <id>paichange-m7b-recovery-it</id>
+            <properties>
+                <skipTests>false</skipTests>
+                <paichange.m7b.recovery.enabled>true</paichange.m7b.recovery.enabled>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <version>3.2.5</version>
+                        <configuration>
+                            <argLine>-Dfile.encoding=UTF-8</argLine>
+                            <includes>
+                                <include>**/change/M7bRecoveryVerificationTest.java</include>
+                            </includes>
+                            <systemPropertyVariables>
+                                <paichange.m7b.recovery.enabled>${paichange.m7b.recovery.enabled}</paichange.m7b.recovery.enabled>
+                            </systemPropertyVariables>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <profile>
             <id>phase16-smoke</id>
             <properties>
                 <skipTests>false</skipTests>

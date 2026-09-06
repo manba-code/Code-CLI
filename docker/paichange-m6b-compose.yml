@@ -1,0 +1,46 @@
+name: paichange-m6b-test
+
+services:
+  postgres:
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_DB: paichange
+      POSTGRES_USER: paichange
+      POSTGRES_PASSWORD: paichange-test-only
+    ports:
+      - "127.0.0.1:55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paichange -d paichange"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  minio:
+    image: minio/minio:RELEASE.2025-07-23T15-54-02Z
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: paichange-test
+      MINIO_ROOT_PASSWORD: paichange-test-secret
+    ports:
+      - "127.0.0.1:59000:9000"
+      - "127.0.0.1:59001:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+    tmpfs:
+      - /data
+
+  create-bucket:
+    image: minio/mc:RELEASE.2025-07-21T05-28-08Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - mc alias set local http://minio:9000 paichange-test paichange-test-secret && mc mb --ignore-existing local/paichange-evidence
+

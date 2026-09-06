@@ -912,7 +912,7 @@ public class Main {
                      new com.paicli.change.PaicliChangeWorkerRuntimeFactory(config),
                      com.paicli.change.DeliveryHeadReader.localGit());
              RuntimeApiServer server = new RuntimeApiServer(store, prompt -> runHeadlessTask(prompt, client),
-                     port, identities, changes.handler())) {
+                     port, identities, changes.handler(), changes.operations())) {
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 server.close();
                 changes.close();

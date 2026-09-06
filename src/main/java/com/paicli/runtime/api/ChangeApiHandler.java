@@ -161,6 +161,25 @@ public final class ChangeApiHandler implements HttpHandler {
             write(exchange, 200, Map.of("audit", members.audit(routeParts[4], principal)));
             return;
         }
+        if (routeParts.length == 8 && routeParts[1].equals("v1") && routeParts[2].equals("changes")
+                && routeParts[3].equals("projects") && routeParts[5].equals("members")
+                && routeParts[6].equals("audit") && routeParts[7].equals("export") && method.equals("GET")) {
+            if (members == null) throw new ChangeValidationException("生产成员目录未装配");
+            if (exchange.getRequestURI().getRawQuery() != null) {
+                throw new IllegalArgumentException("成员审计导出当前不接受查询参数");
+            }
+            ProjectMemberAuditExport export = members.exportAudit(routeParts[4], principal);
+            byte[] bytes = export.content();
+            exchange.getResponseHeaders().set("Content-Type", "application/x-ndjson; charset=utf-8");
+            exchange.getResponseHeaders().set("Content-Disposition", "attachment; filename=paichange-member-audit.jsonl");
+            exchange.getResponseHeaders().set("Cache-Control", "no-store");
+            exchange.getResponseHeaders().set("X-Content-SHA256", export.sha256());
+            exchange.getResponseHeaders().set("X-Record-Count", Long.toString(export.recordCount()));
+            exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (var out = exchange.getResponseBody()) { out.write(bytes); }
+            return;
+        }
         if (routeParts.length == 6 && routeParts[1].equals("v1") && routeParts[2].equals("changes")
                 && routeParts[3].equals("projects") && routeParts[5].equals("tool-policy")) {
             if (toolApprovals == null) throw new ChangeValidationException("工具策略服务未装配");

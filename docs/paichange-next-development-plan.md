@@ -1,9 +1,10 @@
 # PaiChange 后续开发计划
 
 > 编制日期：2026-09-04  
-> 状态：M1、M2、M3、M5 已完成；M6a 代码与目标主机验收已完成；M4 单一 GitLab 代码与本地假服务闭环已完成，真实实例验收因当前无法提供专用测试 project 而暂缓；M6b PostgreSQL/持久化队列/S3-compatible 对象存储最小切片已完成本地容器验收；M7a 单 issuer OIDC/JWKS + PostgreSQL 成员目录已完成本地假 IdP/数据库闭环；生产运维与真实 IdP 验收未完成
+> 状态：M1、M2、M3、M5 已完成；M6a 代码与目标主机验收已完成；M4 单一 GitLab 代码与本地假服务闭环已完成，真实实例验收因当前无法提供专用测试 project 而暂缓；M6b PostgreSQL/持久化队列/S3-compatible 对象存储最小切片已完成本地容器验收；M7a 单 issuer OIDC/JWKS + PostgreSQL 成员目录已完成本地假 IdP/数据库闭环；M7b 健康/指标、启动校验、成员审计导出和 PostgreSQL+S3 备份恢复/故障注入已完成本地容器闭环；真实 IdP/GitLab、目标环境备份恢复、容量与监控阈值验收仍未完成
 > 基线：Phase 1–6 本地后端、最小 Web、离线 Mock 演示已完成  
 > 前置文档：[平台改造计划](paichange-platform-refactoring-plan.md)、[项目路线图](../ROADMAP.md)
+> 简历发布收口：[M8 GitHub / GitLab 与简历发布收口计划](paichange-m8-resume-release-plan.md)
 
 ## 1. 目标与范围
 
@@ -245,8 +246,8 @@
 验收：
 
 - [x] 相同存储契约测试在 SQLite 与 PostgreSQL 通过；真实 PostgreSQL/MinIO 容器中已核对历史 Spec digest、Spec/Delivery Approval、事件和 Evidence 引用迁移。
-- [ ] 至少一次备份恢复与部署回滚演练，恢复结果满足已确定的 RPO/RTO。
-- [ ] 重复投递、Worker 丢失、对象存储故障和远程发布部分成功均完成故障演练。
+- [x] 本地 M7b 已完成一次真实 `pg_dump/pg_restore` + 独立 MinIO S3→S3 备份恢复演练，小 fixture 从停写恢复点计算的实测 RPO 2 秒/RTO 2 秒、备份耗时 1 秒，满足本地声明 300/600 秒；目标环境仍须重测，部署二进制回滚按 V2 无 schema 变更手册验收。
+- [x] 本地 M7b 已覆盖重复投递、Worker 过期租约、对象存储/JWKS/数据库/SCM 故障和 GitLab 响应不明对账；真实 GitLab/目标基础设施仍须复演。
 - [ ] 按确定的并发负载完成容量验证，监控能够定位排队、Draft、LLM、工具、验证和发布耗时。
 
 ## 10. 验证与交付约定

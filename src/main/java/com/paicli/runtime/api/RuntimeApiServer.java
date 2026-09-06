@@ -8,6 +8,8 @@ import com.paicli.runtime.auth.LocalApiKeyPrincipalAdapter;
 import com.paicli.runtime.auth.Principal;
 import com.paicli.runtime.auth.PrincipalAdapter;
 import com.paicli.runtime.task.TaskRunner;
+import com.paicli.change.ChangeOperations;
+import com.paicli.change.ChangeJson;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
@@ -27,6 +29,7 @@ public class RuntimeApiServer implements AutoCloseable {
     private final TaskRunner runner;
     private final PrincipalAdapter identities;
     private final HttpServer server;
+    private final ChangeOperations operations;
     private final ExecutorService executor = Executors.newCachedThreadPool(r -> {
         Thread thread = new Thread(r, "paicli-runtime-api");
         thread.setDaemon(true);
@@ -49,11 +52,28 @@ public class RuntimeApiServer implements AutoCloseable {
 
     public RuntimeApiServer(RuntimeThreadStore store, TaskRunner runner, int port,
                             PrincipalAdapter identities, ChangeApiHandler changes) throws IOException {
+        this(store, runner, port, identities, changes, null);
+    }
+
+    public RuntimeApiServer(RuntimeThreadStore store, TaskRunner runner, int port, String apiKey,
+                            ChangeApiHandler changes, ChangeOperations operations) throws IOException {
+        this(store, runner, port, new LocalApiKeyPrincipalAdapter(apiKey), changes, operations);
+    }
+
+    public RuntimeApiServer(RuntimeThreadStore store, TaskRunner runner, int port,
+                            PrincipalAdapter identities, ChangeApiHandler changes,
+                            ChangeOperations operations) throws IOException {
         this.store = store;
         this.runner = runner;
         this.identities = java.util.Objects.requireNonNull(identities, "identities");
+        this.operations = operations;
         this.server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
         this.server.createContext("/v1/threads", this::handleThreads);
+        if (operations != null) {
+            this.server.createContext("/health/live", this::handleLiveness);
+            this.server.createContext("/health/ready", this::handleReadiness);
+            this.server.createContext("/metrics", this::handleMetrics);
+        }
         if (changes != null) {
             this.server.createContext("/changes", new ChangeWebHandler());
             this.server.createContext("/v1/changes", exchange -> {
@@ -80,6 +100,30 @@ public class RuntimeApiServer implements AutoCloseable {
 
     public int port() {
         return server.getAddress().getPort();
+    }
+
+    private void handleLiveness(HttpExchange exchange) throws IOException {
+        if (!"/health/live".equals(exchange.getRequestURI().getPath())) { writeJson(exchange, 404, "{\"error\":\"not_found\"}"); return; }
+        if (!"GET".equals(exchange.getRequestMethod())) { writeJson(exchange, 405, "{\"error\":\"method_not_allowed\"}"); return; }
+        ChangeOperations.HealthSnapshot health = operations.liveness();
+        writeJson(exchange, health.status().equals("UP") ? 200 : 503, ChangeJson.MAPPER.writeValueAsString(health));
+    }
+
+    private void handleReadiness(HttpExchange exchange) throws IOException {
+        if (!"/health/ready".equals(exchange.getRequestURI().getPath())) { writeJson(exchange, 404, "{\"error\":\"not_found\"}"); return; }
+        if (!"GET".equals(exchange.getRequestMethod())) { writeJson(exchange, 405, "{\"error\":\"method_not_allowed\"}"); return; }
+        ChangeOperations.HealthSnapshot health = operations.readiness(identities);
+        writeJson(exchange, health.status().equals("UP") ? 200 : 503, ChangeJson.MAPPER.writeValueAsString(health));
+    }
+
+    private void handleMetrics(HttpExchange exchange) throws IOException {
+        if (!"/metrics".equals(exchange.getRequestURI().getPath())) { writeJson(exchange, 404, "{\"error\":\"not_found\"}"); return; }
+        if (!"GET".equals(exchange.getRequestMethod())) { writeJson(exchange, 405, "{\"error\":\"method_not_allowed\"}"); return; }
+        byte[] bytes = operations.prometheus(identities).getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
+        exchange.getResponseHeaders().set("Cache-Control", "no-store");
+        exchange.sendResponseHeaders(200, bytes.length);
+        try (OutputStream os = exchange.getResponseBody()) { os.write(bytes); }
     }
 
     private void handleThreads(HttpExchange exchange) throws IOException {
@@ -201,6 +245,7 @@ public class RuntimeApiServer implements AutoCloseable {
     private static void writeJson(HttpExchange exchange, int status, String body) throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
+        exchange.getResponseHeaders().set("Cache-Control", "no-store");
         exchange.sendResponseHeaders(status, bytes.length);
         try (OutputStream os = exchange.getResponseBody()) {
             os.write(bytes);

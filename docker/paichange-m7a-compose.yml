@@ -1,0 +1,18 @@
+name: paichange-m7a-test
+
+services:
+  postgres:
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_DB: paichange
+      POSTGRES_USER: paichange
+      POSTGRES_PASSWORD: paichange-test-only
+    ports:
+      - "127.0.0.1:55433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paichange -d paichange"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+    tmpfs:
+      - /var/lib/postgresql/data

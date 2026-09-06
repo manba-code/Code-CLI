@@ -131,7 +131,7 @@ public final class OfflineChangeDemo {
         try (ChangePlatform platform = create(root);
              RuntimeThreadStore threads = new RuntimeThreadStore(root.resolve("demo-threads.db"));
              RuntimeApiServer server = new RuntimeApiServer(threads, input -> "离线演示模式：threads 不调用模型。",
-                     port, key, platform.handler())) {
+                     port, key, platform.handler(), platform.operations())) {
             Runtime.getRuntime().addShutdownHook(new Thread(() -> { server.close(); platform.close(); threads.close(); }, "offline-demo-shutdown"));
             platform.start(); server.start();
             System.out.println("PaiChange 离线模拟执行 / Mock SCM: http://127.0.0.1:" + server.port() + "/changes");

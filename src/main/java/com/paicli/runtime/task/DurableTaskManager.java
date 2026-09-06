@@ -221,6 +221,37 @@ public class DurableTaskManager implements Closeable, WorkerJobScheduler {
         }
     }
 
+    @Override
+    public synchronized WorkerQueueMetrics metrics() {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                SELECT status, COUNT(*), COALESCE(SUM(recovery_count), 0), MIN(created_at)
+                FROM runtime_tasks WHERE job_type <> 'prompt' GROUP BY status
+                """)) {
+            long enqueued = 0, active = 0, completed = 0, failed = 0, canceled = 0, recoveries = 0, oldest = 0;
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    TaskStatus status = TaskStatus.from(rows.getString(1));
+                    long count = rows.getLong(2);
+                    recoveries += rows.getLong(3);
+                    switch (status) {
+                        case ENQUEUED -> {
+                            enqueued = count;
+                            Instant created = parseInstant(rows.getString(4));
+                            oldest = created == null ? 0 : Math.max(0, Instant.now().getEpochSecond() - created.getEpochSecond());
+                        }
+                        case RUNNING -> active = count;
+                        case COMPLETED -> completed = count;
+                        case FAILED -> failed = count;
+                        case CANCELED -> canceled = count;
+                    }
+                }
+            }
+            return new WorkerQueueMetrics(enqueued, active, completed, failed, canceled, recoveries, oldest);
+        } catch (SQLException e) {
+            throw new IllegalStateException("读取 SQLite Worker queue 指标失败: " + e.getMessage(), e);
+        }
+    }
+
     private void workerLoop() {
         while (running) {
             DurableTask task = null;

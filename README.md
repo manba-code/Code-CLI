@@ -301,6 +301,10 @@ M6b 增加显式生产存储装配：`ChangePersistence` 的 PostgreSQL adapter�
 
 M7a 在 M5/M6b seam 上补齐生产身份最小切片：单 issuer OIDC Bearer JWT 严格校验 issuer、audience、RS256/384/512 allowlist、JWKS、`exp` 和 `nbf`，未知 `kid` 或签名失败触发一次 JWKS 刷新后仍 fail closed；PostgreSQL V2 保存成员 principal type、roles、乐观版本、时间和 actor，并追加不可覆盖的成员审计。`GET/PUT/DELETE /v1/changes/projects/{projectId}/members` 与审计查询只允许 HUMAN `PROJECT_ADMIN`，SERVICE 不能管理成员，类型 claim 与目录不一致不授权；并发旧版本返回 409，不能移除最后一个 HUMAN 管理员。空目录只能由配置的 bootstrap subject 将自己初始化为首个管理员，完成后配置不再绕过数据库。生产 PostgreSQL 路径强制 OIDC + 持久化成员目录；默认 localhost 和离线 demo 继续固定 API Key。2026-09-06 已通过假 OIDC/JWKS + PostgreSQL 容器闭环、V1→V2 升级、M6b 复跑、975 项 quick 与 17 项 Web 回归。配置、API、迁移/回滚和容器验收见 [M7a 实施记录](docs/paichange-m7a-implementation.md)。
 
+M7b 在上述 seam 上增加运行保障 module，不改业务 Workflow/RBAC/OIDC/成员目录：`GET /health/live`、`GET /health/ready` 和 `/metrics` 分别提供进程存活、PostgreSQL/queue/S3/SCM/JWKS 分项 readiness 与无敏感 label 的 Prometheus 指标；生产启动要求远端 TLS、显式 RPO/RTO、有效 queue lease 和已存在的 GitLab checkout。成员管理员可从 `/v1/changes/projects/{projectId}/members/audit/export` 导出带 SHA-256/条数头的有界 JSONL，权限仍逐请求读取成员目录。`ProductionRecoveryVerifier` 对恢复后的 PostgreSQL V2、全部 S3 Evidence 内容/metadata/manifest、COMPLETED publication 和发布身份做 fail-closed 复核。本地脚本使用 PostgreSQL 17.6、主/备两个 MinIO、假 OIDC/JWKS 和假 GitLab，删除原数据库/bucket 后恢复；本机小 fixture 从停写恢复点计算的实测 RPO 2 秒、RTO 2 秒、备份耗时 1 秒（目标 300/600 秒），只构成本地演练证据。M7b 容器 profile 5 项、独立恢复 1 项、M6b 兼容容器 1 项及 quick 983 项（16 skipped）均通过。配置、指标/告警、脱敏、备份恢复、故障、升级/回滚和剩余真实环境验收见 [M7b 实施记录](docs/paichange-m7b-implementation.md)。
+
+简历发布版本剩余的必要开发限定为 GitHub Adapter、GitHub/GitLab 真实测试仓库闭环、公开 CI、Tag Release 和演示材料，不把 Jira、SCIM、HA/Kubernetes 等远期能力作为阻塞项；实施顺序与退出标准见 [M8 收口计划](docs/paichange-m8-resume-release-plan.md)。
+
 #### Web 与离线演示
 
 正常 `serve --http` 在同一端口提供 `/changes` 页面：任务创建/工单导入、列表、详情与事件时间线、Draft/锁定 Spec、revision diff、风险与路由、代码 diff、Verifier/Criteria/Evidence、逐项人工验收、两阶段审批及 delivery 历史。页面空壳不含任务数据；登录后显示服务端 Principal，列表按项目过滤，任务响应包含当前动作权限并据此隐藏无权按钮。隐藏只改善体验，服务端仍逐请求鉴权。凭据仅在当前页面内存中使用，不放入 URL、静态资源、浏览器存储或日志；401 会清除登录态和轮询，刷新页面需要重新登录。URL fragment 保留当前 changeId，登录后继续跟踪。后台状态采用 1–10 秒退避轮询，可暂停；页面隐藏、退出和待审批/终态在当前判断的 Check 发布对齐后停止轮询。
