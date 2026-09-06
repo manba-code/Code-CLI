@@ -256,11 +256,11 @@ v16.1 抽出 `Renderer` 接口 + 三个实现：
 - Runtime API 强制要求 `PAICLI_RUNTIME_API_KEY` 或 `-Dpaicli.runtime.api.key`
 - 详细文档见 `docs/phase-20-runtime-api.md`
 
-### PaiChange Phase 1–6 + M1/M2/M3/M5/M6a：本地 Web、Mock 交付与可选 Docker 执行隔离
+### PaiChange Phase 1–6 + M1/M2/M3/M4/M5/M6a：本地 Web、GitLab/Mock 交付与可选 Docker 隔离
 
-`serve --http` 现在同时装配 Change API 和原有 threads API。ChangeTask、事件、审批、Worker Job 和 Mock PR/Check 保存在 `~/.paichange/changes.db`，可通过 `PAICHANGE_DATA_DIR` / `-Dpaichange.data.dir` 指定数据目录；同一目录只允许一个平台进程。工作区位置继续使用 `PAICHANGE_WORKSPACE_DIR` / `-Dpaichange.workspace.dir`，必须在源仓库外。
+`serve --http` 现在同时装配 Change API 和原有 threads API。ChangeTask、事件、审批、Worker Job 以及 Mock/GitLab 发布记录保存在 `~/.paichange/changes.db`，可通过 `PAICHANGE_DATA_DIR` / `-Dpaichange.data.dir` 指定数据目录；同一目录只允许一个平台进程。工作区位置继续使用 `PAICHANGE_WORKSPACE_DIR` / `-Dpaichange.workspace.dir`，必须在源仓库外。
 
-- `POST /v1/changes`：以 `idempotencyKey` 幂等创建；必填 `title`、`requirement`、`repository.path/baseRef`。requester 来自服务端认证 Principal。
+- `POST /v1/changes`：本地请求以 `idempotencyKey` 幂等创建，必填 `title`、`requirement`、`repository.path/baseRef`；GitLab 模式以 `{"workItem":"<issue IID>"}` 导入服务端固定 project 的工单。requester 来自服务端认证 Principal。
 - `GET /v1/changes`、`GET /v1/changes/{changeId}`：列表与详情，包含当前 Spec、风险、route、run 和 Mock delivery。
 - `GET /v1/changes/{changeId}/events?after=0`：JSON 事件回放，`after` 是已读事件的 `sequence`，不包含该事件。
 - `POST /v1/changes/{changeId}/spec-decisions`：`APPROVE / SUPPLEMENT / REJECT`，校验 `expectedVersion + expectedDraftDigest`。
@@ -274,17 +274,36 @@ v16.1 抽出 `Renderer` 接口 + 三个实现：
 
 Mock 工单示例见 `docs/fixtures/paichange/local-issue.json`：修改本地仓库路径与需求后，复制到数据目录的 `fixtures/`，以 `POST /v1/changes` 请求体 `{"fixture":"local-issue.json"}` 创建。Fixture 仅接受该目录内的 JSON 文件名。
 
-发布前重新核对锁定 Spec、分支 head、持久化原始 Verdict/Evidence、当前交付判断和有效审批；HIGH 必须有 Delivery Approval。`NEEDS_HUMAN` 仅发布 pending，Delivery Approval 不能覆盖它；当前交付判断失败仅发布 failure。发布失败保持未完成状态，后台可安全重试。
+GitLab 模式默认关闭，必须在服务端显式配置后重启；Token 不从 Web/API 请求读取：
 
-当前同源 Web 已接入服务端 Principal、项目 RBAC、登录失效和 401/403 反馈。M3 将 `STANDARD / RESTRICTED / LOCKED_DOWN` 从 route 标签变为实际 Worker 策略，并支持项目版本规则：本地只读默认允许；STANDARD 的联网/MCP 与 RESTRICTED/LOCKED_DOWN 的写文件和命令需逐调用审批；未知工具默认拒绝。Agent 初次执行、一次修复和 command Verifier 共用 `GovernedToolRegistry`，批准后仍执行原 PathGuard/CommandGuard。审批只保存脱敏摘要和参数 SHA-256，绑定 change/run/call/cwd/Spec/策略版本，M5 的 `APPROVE_TOOL` 与执行前撤权重检生效。默认最多一个审批等待槽、300 秒超时；重启不会恢复或重放丢失的调用栈。仍不包含真实 Jira/GitLab/GitHub，也不构成安全沙箱。详见 [M3 实施记录](docs/paichange-m3-implementation.md)、[M5 实施记录](docs/paichange-m5-implementation.md) 和 `docs/paichange-platform-refactoring-plan.md` §27。
+```bash
+export PAICHANGE_SCM=gitlab
+export PAICHANGE_GITLAB_BASE_URL=https://gitlab.example.com
+export PAICHANGE_GITLAB_PROJECT_ID=group/project
+export PAICHANGE_GITLAB_TOKEN='<project access token>'
+export PAICHANGE_GITLAB_REPOSITORY=/absolute/path/to/local-checkout
+export PAICHANGE_GITLAB_BASE_REF=main          # 可省略
+export PAICHANGE_GITLAB_REMOTE=origin          # 可省略
+export PAICHANGE_GITLAB_TIMEOUT_SECONDS=15     # 可省略
+```
+
+本地 checkout 必须已存在，base ref 可解析，remote 指向同一 GitLab project；M4 不自动 clone、配置分支保护或合并 MR。HTTP(S) remote 不得在 URL 内嵌凭据。启用后 Web 创建区只要求 GitLab Issue IID，服务端读取工单快照并使用 `gitlab:<project>:issue:<iid>` 幂等导入。真实实例验收当前因无法提供专用测试 project 而暂缓；待后续单独提供测试 project、Issue、最小权限 Token、任务分支/合并门禁配置并授权真实写入后恢复，完整边界见 [M4 实施记录](docs/paichange-m4-implementation.md)。
+
+发布前重新核对锁定 Spec、分支 head、持久化原始 Verdict/Evidence、当前交付判断和有效审批；HIGH 必须有 Delivery Approval。`NEEDS_HUMAN` 仅发布 pending，Delivery Approval 不能覆盖它；当前交付判断失败仅发布 failure。发布失败保持未完成状态，后台可安全重试。M4 已提取最小 WorkItem/SCM 接口并接入单一 GitLab：推送 Worker 分支，按 source/target branch 创建或复用 MR，再发布绑定当前 head 的 commit status。MR/status 响应不明或远端成功后本地落账失败时会先对账，不盲目创建第二个 MR。
+
+当前同源 Web 已接入服务端 Principal、项目 RBAC、登录失效和 401/403 反馈。M3 将 `STANDARD / RESTRICTED / LOCKED_DOWN` 从 route 标签变为实际 Worker 策略，并支持项目版本规则：本地只读默认允许；STANDARD 的联网/MCP 与 RESTRICTED/LOCKED_DOWN 的写文件和命令需逐调用审批；未知工具默认拒绝。Agent 初次执行、一次修复和 command Verifier 共用 `GovernedToolRegistry`，批准后仍执行原 PathGuard/CommandGuard。审批只保存脱敏摘要和参数 SHA-256，绑定 change/run/call/cwd/Spec/策略版本，M5 的 `APPROVE_TOOL` 与执行前撤权重检生效。默认最多一个审批等待槽、300 秒超时；重启不会恢复或重放丢失的调用栈。M4 只支持 GitLab，不包含 Jira/GitHub、Webhook 或自动合并；本地假 GitLab 已验收，真实 GitLab 仍待单独授权。详见 [M3 实施记录](docs/paichange-m3-implementation.md)、[M4 实施记录](docs/paichange-m4-implementation.md)、[M5 实施记录](docs/paichange-m5-implementation.md) 和 `docs/paichange-platform-refactoring-plan.md` §27。
 
 M6a 增加可选 Docker 执行平面和默认启用的可信 Evidence 归档。共享试点必须设置 `PAICHANGE_DOCKER_ENABLED=true` 与本机已存在、固定 digest 的 `PAICHANGE_DOCKER_IMAGE`；Docker/镜像/网络检查失败时不降级到宿主命令。每个任务只挂载自己的 worktree，以非 root、只读根、无 capabilities/no-new-privileges 运行，并限制 CPU、内存、PID 与任务总时长；取消或超时用 `docker rm -f` 清理进程树。默认 `--network none`，显式出口只能使用带项目及策略摘要 label 的 Docker internal 代理网络，并同时注入大小写 HTTP(S) proxy 变量以兼容不同客户端。容器默认不注入 Secret；部署装配只能提供短期 `*_FILE` 租约，Secret tmpfs 绑定配置的非 root uid/gid，模型和 SCM 凭据留在控制面。
 
-Worker Evidence 会由控制面复制到 `evidence-archive`，以 `(changeId, runId)` 不可覆盖地保存对象大小、SHA-256 和 manifest 摘要；Artifact、人工判断、交付审批和发布前都会复核，篡改/缺失/额外对象或归档失败均不得 success。2026-09-06 的目标主机验收已实测双任务文件隔离、internal 假代理 ACL/审计、cgroup 资源限制、取消/异常/Secret 到期清理、应用级 orphan 恢复及 Evidence 重启复核；Docker Desktop daemon 重启故障注入仍需单独授权。该本地哈希归档不是 WORM 对象存储，Docker 也不是绝对安全边界。配置、威胁模型和验收入口见 [M6a 实施记录](docs/paichange-m6a-implementation.md)。
+Worker Evidence 会由控制面复制到 `evidence-archive`，以 `(changeId, runId)` 不可覆盖地保存对象大小、SHA-256 和 manifest 摘要；Artifact、人工判断、交付审批和发布前都会复核，篡改/缺失/额外对象或归档失败均不得 success。2026-09-06 的目标主机验收已实测双任务文件隔离、internal 假代理 ACL/审计、cgroup 资源限制、取消/异常/Secret 到期清理、应用级 orphan 恢复、Docker Desktop daemon 重启故障注入及 Evidence 重启复核。该本地哈希归档不是 WORM 对象存储，Docker 也不是绝对安全边界。配置、威胁模型和验收入口见 [M6a 实施记录](docs/paichange-m6a-implementation.md)。
+
+M6b 增加显式生产存储装配：`ChangePersistence` 的 PostgreSQL adapter、带租约/heartbeat/`SKIP LOCKED` 的 PostgreSQL reference-only Worker queue、S3-compatible 不可覆盖 Evidence 对象以及本地可信 cache。M6b 引入带 checksum 的 V1 migration；M7a 已将当前 schema 前向升级到 V2。GitLab publication ledger 同步进入 PostgreSQL。SQLite 和本地 Evidence 仍是默认及离线演示实现。生产模式当前要求 GitLab + PostgreSQL + 预建 S3 bucket，不提供双写、HA、多区域、Kubernetes、性能优化或跨资源事务。2026-09-06 验证：真实 PostgreSQL 17/MinIO 容器闭环 1 项、受影响 Java 回归 36 项、Node Web 17 项、quick 970 项（13 skipped）均通过，打包成功。配置、离线迁移/回滚边界和容器验收见 [M6b 实施记录](docs/paichange-m6b-implementation.md)。
+
+M7a 在 M5/M6b seam 上补齐生产身份最小切片：单 issuer OIDC Bearer JWT 严格校验 issuer、audience、RS256/384/512 allowlist、JWKS、`exp` 和 `nbf`，未知 `kid` 或签名失败触发一次 JWKS 刷新后仍 fail closed；PostgreSQL V2 保存成员 principal type、roles、乐观版本、时间和 actor，并追加不可覆盖的成员审计。`GET/PUT/DELETE /v1/changes/projects/{projectId}/members` 与审计查询只允许 HUMAN `PROJECT_ADMIN`，SERVICE 不能管理成员，类型 claim 与目录不一致不授权；并发旧版本返回 409，不能移除最后一个 HUMAN 管理员。空目录只能由配置的 bootstrap subject 将自己初始化为首个管理员，完成后配置不再绕过数据库。生产 PostgreSQL 路径强制 OIDC + 持久化成员目录；默认 localhost 和离线 demo 继续固定 API Key。2026-09-06 已通过假 OIDC/JWKS + PostgreSQL 容器闭环、V1→V2 升级、M6b 复跑、975 项 quick 与 17 项 Web 回归。配置、API、迁移/回滚和容器验收见 [M7a 实施记录](docs/paichange-m7a-implementation.md)。
 
 #### Web 与离线演示
 
-正常 `serve --http` 在同一端口提供 `/changes` 页面：任务创建/列表、详情与事件时间线、Draft/锁定 Spec、revision diff、风险与路由、代码 diff、Verifier/Criteria/Evidence、逐项人工验收、两阶段审批及 Mock PR Check 历史。页面空壳不含任务数据；登录后显示服务端 Principal，列表按项目过滤，任务响应包含当前动作权限并据此隐藏无权按钮。隐藏只改善体验，服务端仍逐请求鉴权。凭据仅在当前页面内存中使用，不放入 URL、静态资源、浏览器存储或日志；401 会清除登录态和轮询，刷新页面需要重新登录。URL fragment 保留当前 changeId，登录后继续跟踪。后台状态采用 1–10 秒退避轮询，可暂停；页面隐藏、退出和待审批/终态在当前判断的 Mock Check 发布对齐后停止轮询。
+正常 `serve --http` 在同一端口提供 `/changes` 页面：任务创建/工单导入、列表、详情与事件时间线、Draft/锁定 Spec、revision diff、风险与路由、代码 diff、Verifier/Criteria/Evidence、逐项人工验收、两阶段审批及 delivery 历史。页面空壳不含任务数据；登录后显示服务端 Principal，列表按项目过滤，任务响应包含当前动作权限并据此隐藏无权按钮。隐藏只改善体验，服务端仍逐请求鉴权。凭据仅在当前页面内存中使用，不放入 URL、静态资源、浏览器存储或日志；401 会清除登录态和轮询，刷新页面需要重新登录。URL fragment 保留当前 changeId，登录后继续跟踪。后台状态采用 1–10 秒退避轮询，可暂停；页面隐藏、退出和待审批/终态在当前判断的 Check 发布对齐后停止轮询。
 
 无需模型 Key、无需外网的演示（本机需要 JDK 17+ 和 Git）：
 
@@ -306,19 +325,19 @@ java -Dpaichange.demo=true -jar target/paicli-1.0-SNAPSHOT.jar serve --http --po
 
 M3 工具审批浏览器验收使用全新的演示目录，并在启动参数中增加 `-Dpaichange.demo.tool.approvals=true`。固定任务会改用 LOCKED_DOWN，在初次写入、首轮 command Verifier、一次修复写入和修复后 Verifier 分别等待一条精确审批；页面的 “Worker 工具审批” 与 Spec/Delivery 操作相互独立。该开关只用于离线确定性验收，默认演示仍走 STANDARD。
 
-新增只读接口：`GET /v1/changes/{changeId}/artifacts` 返回 `version`、Draft/锁定 Spec 正文、全部关联 revisions、最新 revision diff、Verifier/Criteria、最终代码 diff、Criterion Results、两轮验证与 Evidence。可用 `?fromRevision=1&toRevision=2` 比较已保存 revision；不存在返回 404。只接受 revision 整数参数，不接受文件路径；从任务关联和历史 digest 解析文件，拒绝目录遍历、符号链接及跨产物根访问，每文件限 4 MiB。代码 diff 是否被执行引擎截断会在页面标明；M6a 归档会额外显示 Evidence 完整性与 manifest digest。`GET /v1/changes/capabilities` 返回当前模拟执行、Mock SCM、Docker 隔离和 Evidence 校验状态。
+新增只读接口：`GET /v1/changes/{changeId}/artifacts` 返回 `version`、Draft/锁定 Spec 正文、全部关联 revisions、最新 revision diff、Verifier/Criteria、最终代码 diff、Criterion Results、两轮验证与 Evidence。可用 `?fromRevision=1&toRevision=2` 比较已保存 revision；不存在返回 404。只接受 revision 整数参数，不接受文件路径；从任务关联和历史 digest 解析文件，拒绝目录遍历、符号链接及跨产物根访问，每文件限 4 MiB。代码 diff 是否被执行引擎截断会在页面标明；M6a 归档会额外显示 Evidence 完整性与 manifest digest。`GET /v1/changes/capabilities` 返回当前模拟执行、Mock/GitLab SCM、Docker 隔离和 Evidence 校验状态。
 
 页面把 Spec、工单、diff 和 Evidence 全部作为纯文本渲染，并设置同源 CSP。Spec 审批携带当前 `expectedVersion + digest`；交付审批与人工验收携带 `expectedVersion + specDigest + runId + headSha + judgmentRevision`；409 会刷新内容、清除勾选并要求重新确认，不自动重放；400/401/403/404/422/500 分别提示，内容读取失败时禁用审批。生成/执行中采用 1–10 秒退避轮询，审批阶段保留用户所核对的快照。点击创建后立即显示提交和保存提示，按钮显示加载状态并禁用重复提交；201 后恢复按钮并展示后台生成状态，创建区提示随结果更新，HTTP 错误和草稿生成失败分别反馈。创建请求保留幂等键，响应不明时以同一请求重试；需不同需求时使用“新请求”。
 
 2026-09-04 验证：Phase 1–6 联合针对性 149 项全通过；`mvn test -Pquick` 为 899 项、0 failures/errors、5 skipped；浏览器完成创建、补充、双页面 409、注入防护、修复证据与 Mock success 交付验收。
 
-离线 fixture 位于 `src/main/resources/paichange-demo/`，仅替代 Draft 与 ReAct；验证实际运行本地 Java fixture，SCM 仅写本地 SQLite。演示模式只允许创建固定 `offline-refund.json`，不接受任意仓库创建请求。离线模式拥有 M3 工具策略、M5 本地 Principal 边界和 M6a Evidence 哈希归档，但默认不开 Docker；单 Key 和显式自批例外都不能用于共享部署。仍无真实 SCM、具体 OIDC 或 M6b 生产存储，不能把此演示描述为生产平台或真实模型提效证据。
+离线 fixture 位于 `src/main/resources/paichange-demo/`，仅替代 Draft 与 ReAct；验证实际运行本地 Java fixture，SCM 仅写本地 SQLite。演示模式只允许创建固定 `offline-refund.json`，不接受任意仓库创建请求，即使配置了 GitLab、M6b 生产存储或 M7a OIDC 也不会联网。离线模式拥有 M3 工具策略、M5 本地 Principal 边界和 M6a Evidence 哈希归档，但默认不开 Docker；单 Key 和显式自批例外都不能用于共享部署。M6b 存储和 M7a 身份均只完成本地容器最小闭环；真实 GitLab/IdP、目标环境备份恢复、监控和容量仍未验收，不能把离线演示描述为生产平台或真实模型提效证据。
 
 M1 已实现 Draft 异步生成、取消、失败重试和重启恢复。SQLite 自动增量添加 Draft 调度列；调度与任务/事件同事务，默认两个并发、每 generation 最多三次基础设施 attempt、每次 600 秒超时，失败退避 1/2 秒。内容资格纠错仍单独最多两次。HTTP 取消终止当前生成请求；不可取消实现的迟到结果不会覆盖当前版本。迁移、崩溃窗口和操作说明见 [M1 实施记录](docs/paichange-m1-implementation.md)。
 
 M2 已实现 Human Evidence 补录闭环。人工记录按 Criterion 追加，更正保留旧记录并使旧 Delivery Approval 失效；缺项/跳过仍为 NEEDS_HUMAN，确定性失败或异常不能由人工判断升级。全部通过后按风险路由进入独立交付审批，HIGH 仍需有效批准。Mock Check 支持 pending 到最终结论的版本化幂等发布，保存全部发布历史，拒绝迟到结果回退。页面分别显示原始 Run Verdict 与当前交付判断，人工入口只接受说明及当前任务已有 Artifact 引用；原固定退款 fixture 不含人工项。API、迁移、测试与浏览器验收详见 [M2 实施记录](docs/paichange-m2-implementation.md)。
 
-M5 已实现可信 Principal、可插拔 OIDC 验证边界、可测试本地身份 Adapter、四角色动作矩阵、真人/服务账号区分、项目列表过滤和跨项目读取保护。MEDIUM/HIGH 默认禁止 requester 自批，且 Spec 与 Delivery Approval 需要不同 subject，项目管理员也不豁免。具体 IdP、组织目录同步和持久化成员管理仍是部署边界；详见 [M5 实施记录](docs/paichange-m5-implementation.md)。
+M5 已实现可信 Principal、四角色动作矩阵、真人/服务账号区分、项目列表过滤和跨项目读取保护。MEDIUM/HIGH 默认禁止 requester 自批，且 Spec 与 Delivery Approval 需要不同 subject，项目管理员也不豁免。M7a 已为生产路径补齐单 issuer JWT/JWKS verifier 和 PostgreSQL 成员管理；登录页、Refresh Token、SCIM、组织同步和多 IdP 仍是部署边界。详见 [M5 实施记录](docs/paichange-m5-implementation.md)与 [M7a 实施记录](docs/paichange-m7a-implementation.md)。
 
 M3 已实现项目级版本工具策略、三 profile 强制执行、持久化精确调用审批、M5 工具审批权限、脱敏事件/Web、策略/权限变化失效、有界等待与重启不重放。默认矩阵、API、迁移和测试见 [M3 实施记录](docs/paichange-m3-implementation.md)。M3 本身没有提供沙箱；M6a 后续为 PaiChange Worker 增加上述有限 Docker 边界，普通 CLI 与未启用 Docker 的本地演示仍在宿主执行。
 
@@ -326,7 +345,9 @@ M3 已实现项目级版本工具策略、三 profile 强制执行、持久化�
 
 2026-09-05 M3 验证：M3 定向并包含 M1/M2/M5 的联合回归为 27 个测试类、168 项，Node Web 15 项通过；`mvn test -Pquick` 为 941 项、0 failures/errors、5 skipped。浏览器完成错误凭据 401、LOCKED_DOWN、初次写入/首轮 Verifier/修复写入/复验四条精确审批、正文脱敏、一次确定性修复、Delivery Approval 和 Mock success / COMPLETED；没有调用付费模型或真实 SCM。
 
-2026-09-06 M6a 目标主机验证：Docker Desktop 29.7.2 使用本机预置、digest 固定的 Alpine 镜像运行 7 条真实容器测试，全程 `--pull=never`。实测覆盖双任务 worktree 与宿主敏感路径隔离、默认断网、internal 假代理 ACL/审计及错误 label/digest fail closed、cgroup OOM/PID 拒绝、命令/任务超时、主动取消、异常退出、Secret 到期、应用级 orphan 恢复、进程树和失败清理；测试标签容器与网络均零遗留。除 Docker 29 的 mount 兼容问题外，又修复小写 proxy 变量、并发取消锁和 non-root Secret tmpfs 属主三项缺陷。最终 M6a 针对性 36 项、M1/M2/M3/M5 扩展回归 133 项、Node Web 16 项、quick 964 项（5 skipped）均 0 failures/errors，打包成功。浏览器完成一次修复到 Mock success / COMPLETED，并在应用重启后复核同一 `VERIFIED` Evidence manifest。Docker Desktop daemon 重启故障注入仍待单独授权；没有调用付费模型、连接真实 SCM 或实施 M4/M6b。
+2026-09-06 M6a 目标主机验证：Docker Desktop 29.7.2 使用本机预置、digest 固定的 Alpine 镜像运行 7 条真实容器测试，全程 `--pull=never`。实测覆盖双任务 worktree 与宿主敏感路径隔离、默认断网、internal 假代理 ACL/审计及错误 label/digest fail closed、cgroup OOM/PID 拒绝、命令/任务超时、主动取消、异常退出、Secret 到期、应用级 orphan 恢复、进程树和失败清理；测试标签容器与网络均零遗留。除 Docker 29 的 mount 兼容问题外，又修复小写 proxy 变量、并发取消锁和 non-root Secret tmpfs 属主三项缺陷。初次 M6a 针对性 36 项、M1/M2/M3/M5 扩展回归 133 项、Node Web 16 项、quick 964 项（5 skipped）均 0 failures/errors，打包成功。浏览器完成一次修复到 Mock success / COMPLETED，并在应用重启后复核同一 `VERIFIED` Evidence manifest。随后经单独授权重启 Docker Desktop：重启前无用户容器，唯一活动 M6a 验收命令以 255 退出并留下 `Exited (137)` 容器；daemon 恢复后平台按精确 owner 清理遗留，未知 Worker 结果不重放，原 Evidence manifest 仍为 `VERIFIED` 且摘要不变。重启后当前 M6a 针对性 39 项全部通过（含 7 条真实 Docker 用例），最终容器与验收网络均零遗留；M6a 验收没有调用付费模型或连接真实 SCM。
+
+2026-09-06 M4 本地验证：Java 针对性 39 项、Node Web 17 项、quick 967 项（12 skipped）均通过。`GitLabScmEndToEndTest` 只连接 `127.0.0.1` 假 GitLab，并向临时 bare remote 执行真实 Git push；覆盖重复 Issue 导入、MR/status 响应不明、完成事件事务失败、远端 head 不一致和 401/429。该次 M4 验收没有连接真实 GitLab、使用真实 Token、运行付费模型评测，也没有涉及随后实施的 M6b。
 
 ### 第二十一期：图片复制粘贴输入（MVP）
 

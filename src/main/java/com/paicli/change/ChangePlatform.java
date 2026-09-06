@@ -3,6 +3,9 @@ package com.paicli.change;
 import com.paicli.config.PaiCliConfig;
 import com.paicli.runtime.api.ChangeApiHandler;
 import com.paicli.runtime.task.DurableTaskManager;
+import com.paicli.runtime.task.PostgresWorkerJobScheduler;
+import com.paicli.runtime.task.WorkerJobScheduler;
+import com.paicli.runtime.auth.OidcSettings;
 import com.paicli.spec.ChangeSpecModule;
 
 import java.nio.channels.FileChannel;
@@ -19,13 +22,15 @@ import java.util.concurrent.TimeUnit;
 public final class ChangePlatform implements AutoCloseable {
     private final FileChannel lockChannel;
     private final FileLock lock;
-    private SqliteChangeStore store;
-    private MockScmAdapter scm;
-    private DurableTaskManager jobs;
+    private ChangePersistence store;
+    private ScmAdapter scm;
+    private WorkerJobScheduler jobs;
     private com.paicli.runtime.task.DraftJobRunner drafts;
     private DefaultChangeWorkflow workflow;
     private ToolApprovalCoordinator toolApprovals;
-    private TrustedEvidenceStore evidenceStore;
+    private EvidenceStore evidenceStore;
+    private ProjectMembershipDirectory membershipDirectory;
+    private String storageBackend;
     private WorkerIsolation isolation;
     private ChangeApiHandler handler;
     private boolean closed;
@@ -45,8 +50,8 @@ public final class ChangePlatform implements AutoCloseable {
     public ChangePlatform(Path root, Path fixtures, ChangeSpecModule specs, PaiCliConfig config,
                           WorkspaceProvisioner workspaces, ChangeWorkerRuntimeFactory runtimes,
                           DeliveryHeadReader heads, boolean offlineDemo) throws Exception {
-        this(root, fixtures, specs, config, workspaces, runtimes, heads, offlineDemo,
-                new ChangeAuthorizer(ProjectMembershipProvider.none()));
+        this(root, fixtures, specs, config, workspaces, runtimes, heads, offlineDemo, null,
+                EphemeralSecretProvider.none());
     }
 
     public ChangePlatform(Path root, Path fixtures, ChangeSpecModule specs, PaiCliConfig config,
@@ -73,16 +78,51 @@ public final class ChangePlatform implements AutoCloseable {
         lock = acquired;
         try {
             Path database = root.resolve("changes.db");
-            store = new SqliteChangeStore(database);
-            evidenceStore = new TrustedEvidenceStore(database, root.resolve("evidence-archive"));
+            ProductionStorageSettings production = !offlineDemo && ProductionStorageSettings.enabled()
+                    ? ProductionStorageSettings.fromProcess() : null;
+            if (production == null) {
+                store = new SqliteChangeStore(database);
+                evidenceStore = new TrustedEvidenceStore(database, root.resolve("evidence-archive"));
+                jobs = new DurableTaskManager(database, prompt -> {
+                    throw new IllegalStateException("PaiChange 队列只接受 reference-only Worker Job");
+                }, 2);
+            } else {
+                store = new PostgresChangeStore(production.jdbcUrl(), production.user(), production.password());
+                ObjectStorage objects = new S3ObjectStorage(production.objectEndpoint(), production.objectBucket(),
+                        production.objectRegion(), production.objectAccessKey(), production.objectSecretKey());
+                evidenceStore = new PostgresEvidenceStore(production.jdbcUrl(), production.user(), production.password(),
+                        objects, root.resolve("evidence-cache"));
+                jobs = new PostgresWorkerJobScheduler(production.jdbcUrl(), production.user(), production.password(),
+                        production.workerCount(), production.queueLeaseMillis(), production.queuePollMillis());
+            }
+            ChangeAuthorizer effectiveAuthorizer = authorizer;
+            ProjectMemberService memberService = null;
+            if (effectiveAuthorizer == null && production != null) {
+                OidcSettings identities = OidcSettings.fromProcess();
+                membershipDirectory = new PostgresProjectMembershipDirectory(
+                        production.jdbcUrl(), production.user(), production.password());
+                effectiveAuthorizer = new ChangeAuthorizer(membershipDirectory);
+                memberService = new ProjectMemberService(membershipDirectory, effectiveAuthorizer,
+                        identities.bootstrapAdminSubject());
+            } else if (effectiveAuthorizer == null) {
+                effectiveAuthorizer = new ChangeAuthorizer(ProjectMembershipProvider.none());
+            }
+            storageBackend = store.backend();
             isolation = DockerWorkerIsolation.fromConfig(root, config, secretProvider);
-            scm = new MockScmAdapter(database);
             workflow = new DefaultChangeWorkflow(store, store, specs, config, Clock.systemUTC());
-            toolApprovals = new ToolApprovalCoordinator(store, store, authorizer);
+            WorkItemAdapter workItems;
+            if (!offlineDemo && GitLabSettings.enabled()) {
+                GitLabSettings gitlab = GitLabSettings.fromProcess();
+                scm = production == null ? new GitLabScmAdapter(database, gitlab)
+                        : new GitLabScmAdapter(production.jdbcUrl(), production.user(), production.password(), gitlab);
+                workItems = new GitLabWorkItemAdapter(gitlab, workflow);
+            } else {
+                if (production != null) throw new IllegalStateException("M6b 生产存储当前要求 PAICHANGE_SCM=gitlab");
+                scm = new MockScmAdapter(database);
+                workItems = new MockWorkItemAdapter(fixtures, workflow);
+            }
+            toolApprovals = new ToolApprovalCoordinator(store, store, effectiveAuthorizer);
             drafts = new com.paicli.runtime.task.DraftJobRunner(workflow, store);
-            jobs = new DurableTaskManager(database, prompt -> {
-                throw new IllegalStateException("PaiChange 队列只接受 reference-only Worker Job");
-            }, 2);
             DefaultChangeWorker worker = new DefaultChangeWorker(workflow, workspaces, runtimes,
                     new ChangeWorkerRuntimeContext(toolApprovals), isolation, evidenceStore);
             new ChangeWorkerJobHandler(workflow, id -> {
@@ -90,9 +130,9 @@ public final class ChangePlatform implements AutoCloseable {
                 if (workflow.get(id).task().state() == ChangeState.QUEUED) worker.run(id);
             }, toolApprovals, isolation.capabilities().enabled()).register(jobs);
             workflow.connect(id -> jobs.enqueueWorkerJob(ChangeWorkerJobHandler.JOB_TYPE, id.value()), scm, heads);
-            handler = new ChangeApiHandler(workflow, store, new MockWorkItemAdapter(fixtures, workflow),
-                    new ChangeArtifactReader(evidenceStore, root, evidenceStore.root()), offlineDemo, authorizer,
-                    toolApprovals, isolation.capabilities(), true);
+            handler = new ChangeApiHandler(workflow, store, workItems,
+                    new ChangeArtifactReader(evidenceStore, root, evidenceStore.root()), offlineDemo, effectiveAuthorizer,
+                    toolApprovals, isolation.capabilities(), true, memberService);
         } catch (Exception e) {
             close();
             throw e;
@@ -108,10 +148,22 @@ public final class ChangePlatform implements AutoCloseable {
 
     public ChangeApiHandler handler() { return handler; }
 
+    public StorageHealth storageHealth() {
+        store.checkHealth(); jobs.checkHealth(); evidenceStore.checkHealth();
+        return new StorageHealth(storageBackend, store.schemaVersion(), "UP");
+    }
+
+    public record StorageHealth(String backend, int schemaVersion, String status) { }
+
     public synchronized void start() {
         if (closed) throw new IllegalStateException("ChangePlatform 已关闭");
         if (started) return;
         started = true;
+        try { storageHealth(); }
+        catch (RuntimeException e) {
+            started = false;
+            throw new IllegalStateException("PaiChange 存储或持久化队列启动检查失败", e);
+        }
         try { isolation.recoverOrphans(); }
         catch (Exception e) {
             started = false;
@@ -154,6 +206,7 @@ public final class ChangePlatform implements AutoCloseable {
             try { scm.close(); } catch (Exception e) { /* Already closing, cannot publish. */ }
         }
         if (evidenceStore != null) evidenceStore.close();
+        if (membershipDirectory != null) membershipDirectory.close();
         if (store != null) store.close();
         try { lock.release(); } catch (Exception e) { /* Channel close releases the lock too. */ }
         try { lockChannel.close(); } catch (Exception e) { /* Best effort shutdown. */ }

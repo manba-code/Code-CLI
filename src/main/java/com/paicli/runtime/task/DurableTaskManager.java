@@ -15,7 +15,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-public class DurableTaskManager implements Closeable {
+public class DurableTaskManager implements Closeable, WorkerJobScheduler {
     private final Path dbPath;
     private final TaskRunner runner;
     private final int workerCount;
@@ -210,6 +210,15 @@ public class DurableTaskManager implements Closeable {
 
     public Path dbPath() {
         return dbPath;
+    }
+
+    @Override
+    public synchronized void checkHealth() {
+        try (Statement statement = connection.createStatement(); ResultSet row = statement.executeQuery("SELECT 1")) {
+            if (!row.next() || row.getInt(1) != 1) throw new SQLException("unexpected probe result");
+        } catch (SQLException e) {
+            throw new IllegalStateException("SQLite Worker queue 健康检查失败: " + e.getMessage(), e);
+        }
     }
 
     private void workerLoop() {

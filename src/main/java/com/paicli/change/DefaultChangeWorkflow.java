@@ -26,7 +26,7 @@ public final class DefaultChangeWorkflow implements ChangeWorkflow, ChangeExecut
     private final ChangeSpecCodec specCodec;
     private final Clock clock;
     private java.util.function.Consumer<ChangeTaskId> dispatch;
-    private MockScmAdapter scm;
+    private ScmAdapter scm;
     private DeliveryHeadReader heads;
     private ChangeArtifactReader artifacts;
 
@@ -36,7 +36,7 @@ public final class DefaultChangeWorkflow implements ChangeWorkflow, ChangeExecut
 
     /** 单进程本地平台在启动 Worker 前装配；领域测试可保持显式逐阶段驱动。 */
     public synchronized void connect(java.util.function.Consumer<ChangeTaskId> dispatch,
-                                     MockScmAdapter scm, DeliveryHeadReader heads) {
+                                     ScmAdapter scm, DeliveryHeadReader heads) {
         if (this.dispatch != null) throw new IllegalStateException("ChangeWorkflow 已装配");
         this.dispatch = Objects.requireNonNull(dispatch);
         this.scm = Objects.requireNonNull(scm);
@@ -100,7 +100,7 @@ public final class DefaultChangeWorkflow implements ChangeWorkflow, ChangeExecut
         if (previous == null || !recorded) {
             ChangeTask checked = task.transition(task.state(), clock.instant());
             task = store.update(task.version(), checked, event(checked, "pr.check_published", "SYSTEM",
-                    "mock-scm", task.state(), checked.state(),
+                    scm.type().toLowerCase(java.util.Locale.ROOT), task.state(), checked.state(),
                     "{\"publicationKey\":\"" + publicationKey + "\",\"judgmentRevision\":" + task.judgmentRevision()
                             + ",\"runId\":\"" + json(run.runId()) + "\",\"pullRequestId\":\"" + json(delivery.pullRequestId())
                             + "\",\"headSha\":\"" + json(delivery.headSha())

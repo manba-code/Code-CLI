@@ -62,6 +62,17 @@ test('pending creation immediately shows feedback, blocks duplicates and recover
   assert.match(f.el('create-status').textContent, /Spec 草稿已生成/);
 });
 
+test('GitLab capability imports one configured issue IID without accepting repository fields', async () => {
+  const f = await fixture({capabilities:{offlineDemo:false,scm:'GITLAB'}});
+  assert.equal(f.el('normal-fields').hidden,true);
+  assert.equal(f.el('work-item-field').hidden,false);
+  assert.equal(f.el('idempotency-field').hidden,true);
+  assert.match(f.el('scm-badge').textContent,/GitLab/);
+  f.el('work-item').value = '42'; f.submit();
+  assert.deepEqual(JSON.parse(f.requests[0].body),{workItem:'42'});
+  await f.finish();
+});
+
 test('HTTP failure restores buttons and retry retains the same creation request', async () => {
   const f = await fixture(); f.submit(); await f.finish(500);
   assert.equal(f.el('create-button').disabled, false);

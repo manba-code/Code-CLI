@@ -1,9 +1,9 @@
 package com.paicli.change;
 
-import com.paicli.runtime.task.DurableTaskManager;
 import com.paicli.runtime.task.WorkerJob;
 import com.paicli.runtime.task.WorkerJobLifecycleListener;
 import com.paicli.runtime.task.WorkerJobRunner;
+import com.paicli.runtime.task.WorkerJobScheduler;
 
 import java.util.Objects;
 
@@ -33,13 +33,13 @@ public final class ChangeWorkerJobHandler implements WorkerJobRunner, WorkerJobL
         this.failClosedOnRecovery = failClosedOnRecovery;
     }
 
-    public void register(DurableTaskManager manager) {
+    public void register(WorkerJobScheduler manager) {
         Objects.requireNonNull(manager, "manager")
                 .registerWorkerJobHandler(JOB_TYPE, this, this);
     }
 
     /** READY -> QUEUED 后投递技术任务；失败时保留 QUEUED，调用方可安全重试投递。 */
-    public WorkerJob enqueue(DurableTaskManager manager, ChangeTaskId changeId, long expectedVersion) {
+    public WorkerJob enqueue(WorkerJobScheduler manager, ChangeTaskId changeId, long expectedVersion) {
         executionControl.queueForExecution(changeId, expectedVersion);
         return Objects.requireNonNull(manager, "manager")
                 .enqueueWorkerJob(JOB_TYPE, changeId.value());

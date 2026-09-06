@@ -995,7 +995,7 @@ sequenceDiagram
 
 ### Phase 7：生产化设计补全
 
-2026-09-04：六项后续能力已另行整理为[后续开发计划](paichange-next-development-plan.md)，包含优先级、依赖、实施切片与验收标准。随后 M1 Draft 异步生成与中断恢复已完成，见 [M1 实施记录](paichange-m1-implementation.md)；M2 Human Evidence 也已完成，见 [M2 实施记录](paichange-m2-implementation.md)；2026-09-05 又完成 M5 身份/RBAC 和 [M3 工具策略与审批](paichange-m3-implementation.md)；2026-09-06 完成 [M6a 最小执行隔离](paichange-m6a-implementation.md)代码及当前主机的非破坏性 Docker 验收，Docker Desktop daemon 重启故障注入待单独授权。M4/M6b 仍待开发。本文 Phase 7 继续保留为设计纲要；具体实施使用新计划的 M1–M6 编号。
+2026-09-04：六项后续能力已另行整理为[后续开发计划](paichange-next-development-plan.md)，包含优先级、依赖、实施切片与验收标准。随后 M1 Draft 异步生成与中断恢复已完成，见 [M1 实施记录](paichange-m1-implementation.md)；M2 Human Evidence 也已完成，见 [M2 实施记录](paichange-m2-implementation.md)；2026-09-05 又完成 M5 身份/RBAC 和 [M3 工具策略与审批](paichange-m3-implementation.md)；2026-09-06 完成 [M6a 最小执行隔离](paichange-m6a-implementation.md)代码及当前 Docker Desktop 目标主机验收，随后完成 [M4 单一 GitLab SCM](paichange-m4-implementation.md)代码与本地假服务闭环及 [M6b 生产存储最小闭环](paichange-m6b-implementation.md)的本地 PostgreSQL/MinIO 验收。真实 GitLab 和生产运维验收待后续授权/环境。本文 Phase 7 继续保留为设计纲要；具体实施使用新计划的 M1–M6 编号。
 
 只补文档，不作为 MVP 交付：
 
@@ -1333,6 +1333,6 @@ java -Dpaichange.demo=true -jar target/paicli-1.0-SNAPSHOT.jar serve --http --po
 - Docker 模式下，宿主崩溃前为 RUNNING 的 Worker 不再自动重跑，而是记录结果未知并中止，避免重放外部动作；已归档 Evidence 可跨进程复核。普通本地兼容模式保留 M1 恢复语义。
 - Web capabilities 和 Artifact 面板显示 Docker/宿主执行状态、Evidence 完整性及 manifest digest。离线演示默认不启用 Docker，但仍使用可信 Evidence 归档。
 
-M6a 不等于生产沙箱或 M6b：它信任 Docker daemon、宿主内核、控制面、预置镜像和代理，不能防 daemon/root/内核逃逸或同权限宿主篡改；本地 SQLite + 哈希目录也不是 WORM 对象存储或跨资源原子事务。目标主机已完成除 Docker daemon 重启外的真实验收，但这只证明当前主机、镜像和临时代理组合下的有限单机边界，不能外推为绝对安全或生产多租户隔离。M4 真实 SCM 与 M6b 存储部署均未实施。
+M6a 不等于生产沙箱：它信任 Docker daemon、宿主内核、控制面、预置镜像和代理，不能防 daemon/root/内核逃逸或同权限宿主篡改。当前 Docker Desktop 目标主机验收只证明当前主机、镜像和临时代理组合下的有限单机边界，不能外推为绝对安全或生产多租户隔离。M6b 已用 PostgreSQL/持久化租约队列/S3-compatible 对象存储替代生产装配中的本地 SQLite + 哈希目录，但跨 Git/SCM/对象存储仍依靠幂等和对账，不存在跨资源原子事务；本地 PostgreSQL/MinIO 测试也不等于生产 HA、备份恢复、监控或容量验收。M4 真实 GitLab project/Token/分支保护仍未验收。
 
-本次目标主机验收：Docker Desktop 29.7.2 上使用本机预置、digest 固定的 Alpine 镜像运行 7 条真实 Docker 测试。双任务只读写各自 worktree；宿主、metadata 和公网默认不可达；带精确 projectId/策略摘要的 internal 假代理执行 host allowlist 并记录 ALLOW/DENY，错误 label/digest 拒绝启动；cgroup 记录实际 OOM kill 与 PID 拒绝；命令/任务超时、主动取消、异常退出、Secret 到期和应用级 orphan 恢复均清理容器进程树；Evidence 在控制面重开后复核，篡改被阻断。实测又修复小写 proxy 变量、取消锁竞争和 non-root Secret tmpfs 属主三个缺陷。M6a 针对性 36 项、M1/M2/M3/M5 扩展回归 133 项、Node Web 16 项、quick 964 项（5 skipped）均 0 failures/errors，打包成功；浏览器从一次修复走到 Mock success / COMPLETED，应用重启后同一 Evidence manifest 仍为 `VERIFIED`。Docker Desktop daemon 重启仍待单独授权；M4/M6b、真实 SCM 和付费模型评测均未执行。
+本次目标主机验收：Docker Desktop 29.7.2 上使用本机预置、digest 固定的 Alpine 镜像运行 7 条真实 Docker 测试。双任务只读写各自 worktree；宿主、metadata 和公网默认不可达；带精确 projectId/策略摘要的 internal 假代理执行 host allowlist 并记录 ALLOW/DENY，错误 label/digest 拒绝启动；cgroup 记录实际 OOM kill 与 PID 拒绝；命令/任务超时、主动取消、异常退出、Secret 到期和应用级 orphan 恢复均清理容器进程树；Evidence 在控制面重开后复核，篡改被阻断。实测又修复小写 proxy 变量、取消锁竞争和 non-root Secret tmpfs 属主三个缺陷。初次 M6a 针对性 36 项、M1/M2/M3/M5 扩展回归 133 项、Node Web 16 项、quick 964 项（5 skipped）均 0 failures/errors，打包成功；浏览器从一次修复走到 Mock success / COMPLETED，应用重启后同一 Evidence manifest 仍为 `VERIFIED`。随后 Docker Desktop daemon 重启故障注入确认活动命令失败退出、`Exited (137)` 遗留容器由平台启动精确清理、未知隔离 Worker 结果安全取消且不重放、既有 Evidence manifest 摘要不变；重启后 M6a 针对性 39 项全通过并零遗留。M4 本地假 GitLab 已执行，真实 GitLab、M6b 和付费模型评测均未执行。

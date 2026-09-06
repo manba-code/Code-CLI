@@ -20,7 +20,7 @@ public final class DefaultChangeWorker implements ChangeWorker {
     private final ChangeWorkerRuntimeFactory runtimes;
     private final ChangeWorkerRuntimeContext runtimeContext;
     private final WorkerIsolation isolation;
-    private final TrustedEvidenceStore evidenceStore;
+    private final EvidenceStore evidenceStore;
     private final Clock clock;
 
     public DefaultChangeWorker(
@@ -40,7 +40,7 @@ public final class DefaultChangeWorker implements ChangeWorker {
 
     public DefaultChangeWorker(ChangeExecutionControl executionControl, WorkspaceProvisioner workspaces,
                                ChangeWorkerRuntimeFactory runtimes, ChangeWorkerRuntimeContext runtimeContext,
-                               WorkerIsolation isolation, TrustedEvidenceStore evidenceStore) {
+                               WorkerIsolation isolation, EvidenceStore evidenceStore) {
         this(executionControl, workspaces, runtimes, Clock.systemUTC(), runtimeContext, isolation, evidenceStore);
     }
 
@@ -71,7 +71,7 @@ public final class DefaultChangeWorker implements ChangeWorker {
             Clock clock,
             ChangeWorkerRuntimeContext runtimeContext,
             WorkerIsolation isolation,
-            TrustedEvidenceStore evidenceStore
+            EvidenceStore evidenceStore
     ) {
         this.executionControl = Objects.requireNonNull(executionControl, "executionControl");
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces");
@@ -126,7 +126,7 @@ public final class DefaultChangeWorker implements ChangeWorker {
             WorkspaceProvisioner.WorkspaceSnapshot snapshot = workspaces.seal(workspace);
             java.nio.file.Path evidencePath = result.artifacts().runDirectory();
             if (evidenceStore != null) {
-                TrustedEvidenceStore.Capture archived = evidenceStore.capture(
+                EvidenceStore.Capture archived = evidenceStore.capture(
                         task.id(), result.identity().runId(), result.artifacts().runDirectory());
                 evidencePath = archived.path();
                 evidenceStore.discardSource(result.artifacts().runDirectory());

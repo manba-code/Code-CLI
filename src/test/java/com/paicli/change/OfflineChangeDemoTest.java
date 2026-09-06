@@ -18,6 +18,19 @@ class OfflineChangeDemoTest {
     private final HttpClient client = HttpClient.newHttpClient();
     private String base;
 
+    @Test void productionIdentityAndStoragePropertiesCannotAffectOfflineComposition() throws Exception {
+        String storage = System.getProperty("paichange.storage");
+        String auth = System.getProperty("paichange.auth");
+        System.setProperty("paichange.storage", "postgresql");
+        System.setProperty("paichange.auth", "oidc");
+        try (var platform = OfflineChangeDemo.create(root.resolve("production-properties-ignored"))) {
+            assertEquals("sqlite", platform.storageHealth().backend());
+        } finally {
+            restore("paichange.storage", storage);
+            restore("paichange.auth", auth);
+        }
+    }
+
     @Test void webArtifactsRepairAndApprovalPublishOneMockCheck() throws Exception {
         try (var platform = OfflineChangeDemo.create(root);
              var threads = new RuntimeThreadStore(root.resolve("threads.db"));
@@ -197,5 +210,9 @@ class OfflineChangeDemoTest {
         var request = HttpRequest.newBuilder(URI.create(base + path)).timeout(Duration.ofSeconds(8));
         if (auth) request.header("Authorization", "Bearer test-only-key");
         return client.send(request.method(method, HttpRequest.BodyPublishers.ofString(body == null ? "":body)).build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private static void restore(String name, String value) {
+        if (value == null) System.clearProperty(name); else System.setProperty(name, value);
     }
 }

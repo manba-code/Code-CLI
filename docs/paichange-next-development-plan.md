@@ -1,7 +1,7 @@
 # PaiChange 后续开发计划
 
 > 编制日期：2026-09-04  
-> 状态：M1、M2、M3、M5 已完成；M6a 代码与目标主机非破坏性 Docker 验收已完成，Docker Desktop daemon 重启故障注入待单独授权；M4、M6b 未实施
+> 状态：M1、M2、M3、M5 已完成；M6a 代码与目标主机验收已完成；M4 单一 GitLab 代码与本地假服务闭环已完成，真实实例验收因当前无法提供专用测试 project 而暂缓；M6b PostgreSQL/持久化队列/S3-compatible 对象存储最小切片已完成本地容器验收；M7a 单 issuer OIDC/JWKS + PostgreSQL 成员目录已完成本地假 IdP/数据库闭环；生产运维与真实 IdP 验收未完成
 > 基线：Phase 1–6 本地后端、最小 Web、离线 Mock 演示已完成  
 > 前置文档：[平台改造计划](paichange-platform-refactoring-plan.md)、[项目路线图](../ROADMAP.md)
 
@@ -11,7 +11,7 @@
 
 本计划把前序讨论的六项开发内容拆成可验收的阶段。原平台计划 §19 的 Phase 7 仍是生产化设计纲要；本文使用 M1–M6 编号，避免把设计纲要误认为已批准的完整生产实施。
 
-原计划编制阶段仅整理文档；2026-09-04 已分别授权实施 M1 与 M2，2026-09-05 已授权并完成 M5，随后授权并完成 M3；2026-09-06 授权使用 Docker 实施 M6a。真实 SCM 写入、付费模型评测、M4 和 M6b 不在本次范围。不预设人力和日历工期；每阶段按验收退出，实际排期在进入阶段时结合实现规模确定。
+原计划编制阶段仅整理文档；2026-09-04 已分别授权实施 M1 与 M2，2026-09-05 已授权并完成 M5，随后授权并完成 M3；2026-09-06 授权使用 Docker 实施 M6a、M4 的单一 GitLab 最小实现与本地假服务测试，以及 M6b 生产存储最小切片。真实 GitLab 写入和付费模型评测仍不在授权范围。不预设人力和日历工期；每阶段按验收退出，实际排期在进入阶段时结合实现规模确定。
 
 ## 2. 当前基线与缺口
 
@@ -20,11 +20,11 @@
 | Draft | M1 已改为原子保存 Draft Job、后台领取生成并恢复；详见实施记录 | 异步 Draft Job、重试、取消、重启恢复 |
 | 人工验收 | M2 已增加逐项人工补录、判断版本与独立交付审批；缺项仍 pending | 人工证据、逐项判断、确定性重算 Verdict |
 | 工具治理 | M3 已将 route profile 和项目版本规则接入 Worker；逐调用审批持久化并复用 M5 RBAC | 生产策略目录/分发与 M6 执行隔离 |
-| SCM | SQLite Mock PR/Check；现有 Mock 类不能直接等同于通用 Adapter 接口 | 提取最小接口，接入一个真实 SCM |
-| 身份权限 | M5 已建立可信 Principal、项目 RBAC、统一鉴权和服务端 actor；具体 OIDC/成员持久化仍是部署 Adapter 边界 | 为 M3/M4 复用动作权限，选定 IdP 后实现具体 Adapter |
-| 生产运行 | M6a 已提供可选单机 Docker 命令/Verifier 隔离、短期 Secret seam 和控制面 Evidence 哈希归档；当前主机的双任务、代理、资源、清理与应用重启实测已完成，daemon 重启待单独授权 | M6b 存储/部署；共享试点前完成生产镜像、代理/DNS/TLS、daemon 与容量验收 |
+| SCM | 已提取最小 Adapter，Mock 保留；单一 GitLab Issue/branch/MR/status 已通过本地假服务 | 真实 GitLab 测试 project、Token 与分支保护验收 |
+| 身份权限 | M5 已建立可信 Principal/RBAC；M7a 已补单 issuer JWT/JWKS、PostgreSQL V2 成员目录、管理 API/审计和 bootstrap | 真实 IdP claim/TLS/rotation 验收；登录页、Refresh Token、SCIM/组织同步、多 IdP 另期 |
+| 生产运行 | M6a 已提供可选单机 Docker 隔离；M6b 已提供显式 PostgreSQL 装配、持久化租约队列、S3-compatible Evidence、版本迁移及 SQLite 离线迁移，并通过本地 PostgreSQL/MinIO 容器闭环 | 共享试点前仍须完成目标环境备份恢复、监控、容量、生产镜像、代理/DNS/TLS 与 daemon 加固验收 |
 
-以上已按 2026-09-06 的 M6a 实施再次核对；后续阶段仍应以届时代码和重新运行的测试为准，不用历史测试数量代替当前验证。
+以上已按 2026-09-06 的 M4/M6a 实施再次核对；后续阶段仍应以届时代码和重新运行的测试为准，不用历史测试数量代替当前验证。
 
 ## 3. 优先级与依赖
 
@@ -144,30 +144,34 @@
 
 ## 7. M4：接入一个真实 SCM 平台
 
+实施记录：[M4 单一 GitLab SCM 最小闭环](paichange-m4-implementation.md)。当前代码与本地 HTTP 假 GitLab 已完成，真实实例验收待单独授权。
+
 ### 7.1 目标与设计
 
-完成工单 → ChangeTask → 受控分支 → PR/MR → 绑定 head 的 Check。首期只支持一个平台；建议优先 GitLab，与既有 Mock GitLab Issue 方向一致。最终平台和认证方式在本阶段开始时根据实际仓库确定。
+完成工单 → ChangeTask → 受控分支 → PR/MR → 绑定 head 的 Check。首期平台已确定为 GitLab，只允许服务端配置的单一 project。
 
 - 从现有具体 Mock 实现提取最小 WorkItem/SCM 接口，业务资格仍由 ChangeWorkflow 决定；Adapter 不能自行把模型回答转为成功。
 - 第一版通过指定工单导入触发，不要求完整 Webhook 平台；持久化来源平台、项目、工单标识和内容快照，重复导入具备明确幂等语义。
-- 实现受控仓库拉取、任务分支推送、创建或复用 PR/MR、发布 Check。凭据来自服务端配置/Secret 引用，权限仅覆盖所需仓库与操作。
+- 使用预先配置的本地 checkout，完成任务分支推送、创建或复用 MR、发布 Check。凭据只来自服务端进程配置，权限仅覆盖所需仓库与操作；自动 clone/pull 不在最小切片。
 - 引入持久化发布意图和远程结果对账，处理限流、暂时性失败、超时结果不明、远程成功后本地保存失败。重试前查询已有远程资源，不盲目再创建。
 - success 必须绑定当前有效 specDigest、run、head、判断 revision 和审批。远程 head 前进后旧 Check 不能充当新 head 的通过结果；无通过结论的最新 head 应被分支保护阻止合并。
 - 保留 Mock 离线演示与原 Runtime threads 兼容；不加入自动合并、生产部署、跨平台同时接入或 Jira 全套集成。
 
 ### 7.2 实施切片与验收
 
-1. 提取接口和共用契约测试，Mock 行为保持可验证。
-2. 接入本地 HTTP 假服务，覆盖工单、分支、PR/MR、Check 与重试。
-3. M3、M5、M6a 完成后，在明确授权的测试仓库执行少量真实集成验收。
+1. [x] 提取接口和共用契约测试，Mock 行为保持可验证。
+2. [x] 接入本地 HTTP 假服务，覆盖工单、分支、PR/MR、Check 与重试。
+3. [ ] 真实集成验收暂缓：等待后续单独提供专用 GitLab 测试 project、Issue、最小权限 Token 和写入授权后再执行。
 
 主要落点：`MockWorkItemAdapter`、`MockScmAdapter`、`DefaultChangeWorkflow`、`DeliveryHeadReader`、`DeliveryRef`、`ChangePlatform` 和配置装配。
 
-- [ ] 工单重复导入、发布重复调用和结果不明后的重试不产生重复 PR/MR。
-- [ ] 验证失败只发布 failure，NEEDS_HUMAN 保持 pending，HIGH 缺少审批不发布 success。
-- [ ] 本地/远程 head 不一致或审批过期时拒绝 success；真实测试仓库验证最新 head 的分支保护效果。
-- [ ] 远端 401/403、限流、断网、部分成功均有可恢复或明确失败状态，不显示 COMPLETED。
-- [ ] 日志、事件、PR 内容和 Artifact 不包含凭据；Mock 模式仍可无外网运行。
+- [x] 本地假服务证明工单重复导入、发布重复调用和结果不明后的重试不产生重复 MR。
+- [x] Workflow 继续保证验证失败只发布 failure、NEEDS_HUMAN 保持 pending、HIGH 缺少审批不发布 success。
+- [x] 本地/远程 head 不一致或审批过期时拒绝 success；真实测试仓库的最新 head 分支保护效果仍待验收。
+- [x] 401/403、限流、断网与部分成功进入可重试或明确失败状态，不显示 COMPLETED；真实实例行为仍待验收。
+- [x] Token 不进入浏览器、命令参数、事件、PR 正文和 Artifact；Mock/离线 demo 仍可无外网运行。
+
+本轮验收证据：Java 针对性 39 tests、Node Web 17 tests、quick 967 tests（12 skipped）全部通过。本地假 GitLab 使用真实临时 bare remote，覆盖重复导入、真实分支 push、MR/status 两类结果不明、完成事件事务失败后的恢复、远端 head 冲突和 401/429；没有连接真实 GitLab、使用真实 Token或运行付费模型评测。
 
 ## 8. M5：身份认证与 RBAC（已完成）
 
@@ -226,9 +230,9 @@
 - [x] 两个同时运行的任务只能读写自己的 worktree；另一任务、源仓库、SQLite、Evidence、宿主用户目录、Docker socket 和测试 Secret 均不可见。
 - [x] `network=none` 阻断 host/metadata/公网；临时 internal 假代理只放行 allowlist，拒绝其他 host，记录 ALLOW/DENY 审计；错误 egress label 或策略摘要 fail closed。
 - [x] 实测 cgroup 内存 OOM/PID 拒绝、命令与任务总超时、用户取消、容器异常、Secret 到期、应用级 orphan 恢复和进程树清理，并跨应用重开复核 Evidence/篡改阻断。
-- [ ] Docker Desktop daemon 本身的重启故障注入仍待单独授权；此项会中断本机其他 Docker 工作负载，不能由测试静默执行。
+- [x] 经单独授权执行 Docker Desktop daemon 重启故障注入；重启前确认无用户容器，活动命令失败关闭，平台启动清理精确 owner 遗留，未知结果不重放，Evidence 跨 daemon 重启复核通过。
 
-2026-09-06 目标主机验收：使用 digest 固定的本地 Alpine 镜像运行 7 条真实容器用例，全程 `--pull=never`，测试资源以随机 name/owner label 创建并在 `finally` 清理。新增实测发现并修复三项缺陷：HTTP proxy 需同时提供大小写变量以兼容 BusyBox，阻塞 `docker exec` 不能持有阻止 `abort()` 的 session 锁，Secret tmpfs 必须归配置的非 root uid/gid 所有。最终 M6a 针对性 36 项、M1/M2/M3/M5 扩展回归 133 项、Node Web 16 项、quick 964 项（5 skipped）均 0 failures/errors，`mvn package -DskipTests` 成功。浏览器用全新离线目录完成一次修复到 Mock success / COMPLETED，并在应用重启后回读同一 `VERIFIED` Evidence manifest。Docker daemon 重启故障注入仍未执行，M4/M6b 也未实施。
+2026-09-06 目标主机验收：使用 digest 固定的本地 Alpine 镜像运行 7 条真实容器用例，全程 `--pull=never`，测试资源以随机 name/owner label 创建并在 `finally` 清理。新增实测发现并修复三项缺陷：HTTP proxy 需同时提供大小写变量以兼容 BusyBox，阻塞 `docker exec` 不能持有阻止 `abort()` 的 session 锁，Secret tmpfs 必须归配置的非 root uid/gid 所有。初次 M6a 针对性 36 项、M1/M2/M3/M5 扩展回归 133 项、Node Web 16 项、quick 964 项（5 skipped）均 0 failures/errors，`mvn package -DskipTests` 成功。浏览器用全新离线目录完成一次修复到 Mock success / COMPLETED，并在应用重启后回读同一 `VERIFIED` Evidence manifest。随后经单独授权完成 daemon 重启故障注入：无用户容器，活动命令退出、遗留容器精确清理、未知结果不重放和 Evidence 复核均通过；重启后当前 M6a 针对性 39 项全通过，含 7 条真实 Docker 用例，最终无测试资源遗留。M4 与 M6b 的后续最小代码切片已分别交付，验收边界见各自实施记录。
 
 ### 9.2 M6b：存储、部署与运维
 
@@ -240,7 +244,7 @@
 
 验收：
 
-- [ ] 相同存储契约测试在 SQLite 与目标数据库通过，历史 Spec/digest/审批/事件/Evidence 引用迁移后可核对。
+- [x] 相同存储契约测试在 SQLite 与 PostgreSQL 通过；真实 PostgreSQL/MinIO 容器中已核对历史 Spec digest、Spec/Delivery Approval、事件和 Evidence 引用迁移。
 - [ ] 至少一次备份恢复与部署回滚演练，恢复结果满足已确定的 RPO/RTO。
 - [ ] 重复投递、Worker 丢失、对象存储故障和远程发布部分成功均完成故障演练。
 - [ ] 按确定的并发负载完成容量验证，监控能够定位排队、Draft、LLM、工具、验证和发布耗时。
@@ -249,7 +253,7 @@
 
 每阶段交付代码、存储/API 迁移说明、相关文档、可重复的验收步骤和测试结果。完成定义是验收项有证据，不是勾选实现文件数量。
 
-默认验证使用本地 stub、Mock HTTP 和临时仓库。M1/M2 已扩展 Workflow、Store、API、EndToEnd 与 Web 测试；M3 已增加 `ProjectToolPolicyTest`、`ToolApprovalCoordinatorTest`、SQLite/API/Web 与离线完整闭环；M4 增加 Adapter 契约与故障测试；M5 已增加权限矩阵测试；M6 增加隔离、迁移和恢复验证。
+默认验证使用本地 stub、Mock HTTP 和临时仓库。M1/M2 已扩展 Workflow、Store、API、EndToEnd 与 Web 测试；M3 已增加 `ProjectToolPolicyTest`、`ToolApprovalCoordinatorTest`、SQLite/API/Web 与离线完整闭环；M4 已增加 `GitLabScmEndToEndTest`，用本地 HTTP 假 GitLab、真实临时 bare remote 和 Web capability 回归覆盖 Adapter、幂等与故障恢复；M5 已增加权限矩阵测试；M6 增加隔离、迁移和恢复验证。
 
 现有基础回归入口：
 
@@ -265,7 +269,7 @@ mvn test -Pquick
 
 ## 11. M1 执行清单（已完成）
 
-本节是 **M1：Draft 异步生成与中断恢复** 的历史执行清单；M2、M5、M3 与 M6a 代码切片已随后完成，M4/M6b 未启动：
+本节是 **M1：Draft 异步生成与中断恢复** 的历史执行清单；M2、M5、M3、M6a、M4 本地假 GitLab 和 M6b 生产存储最小切片已随后完成：
 
 1. 核对现有 Worker Job 与 ChangeStore 的事务边界，完成 Draft Job 状态表和四类崩溃窗口设计。
 2. 确定创建响应、取消、重试、SUPPLEMENT 重新生成及 generation 失效契约。
@@ -273,4 +277,4 @@ mvn test -Pquick
 4. 接通页面进度与操作，验证刷新、取消、失败、重启和迟到结果。
 5. 同步 README、AGENTS 和实施记录；验收通过后再更新 ROADMAP 为已完成。
 
-M3 已落实默认一个审批等待槽和可配置 1–3,600 秒超时。M6a 已在当前 Docker Desktop 主机完成除 daemon 重启外的真实验收；生产镜像扫描、生产代理/DNS/TLS、宿主与 daemon 加固、容量和故障恢复指标仍需在部署环境实测。仍待进入相应阶段时确定：M4 实际 SCM/测试仓库与认证方式、具体身份提供方部署、M6b 存储/部署与容量目标。
+M3 已落实默认一个审批等待槽和可配置 1–3,600 秒超时。M6a 已在当前 Docker Desktop 主机完成含 daemon 重启故障注入的真实验收；生产镜像扫描、生产代理/DNS/TLS、宿主与 daemon 加固、容量、长期压力、宿主整机重启和异常断电恢复仍需在部署环境实测。M4 已确定 GitLab API/HTTP Basic Git push 的最小认证实现，仍待授权提供专用测试 project、最小权限 Token、base/remote 与分支保护配置。M6b 已完成 PostgreSQL/持久化队列/S3-compatible 对象存储及离线迁移的本地容器闭环；具体身份提供方部署、目标环境备份恢复、监控和容量目标仍待确定。

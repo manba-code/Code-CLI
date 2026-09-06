@@ -86,6 +86,13 @@
             <version>3.49.1.0</version>
         </dependency>
 
+        <!-- PaiChange M6b production control-plane storage and persistent queue -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>42.7.7</version>
+        </dependency>
+
         <!-- Java AST 解析 -->
         <dependency>
             <groupId>com.github.javaparser</groupId>
@@ -211,6 +218,58 @@
                                 <exclude>**/tool/ToolRegistryTest.java</exclude>
                                 <exclude>**/web/WebFetcherTest.java</exclude>
                             </excludes>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <profile>
+            <id>paichange-m6b-it</id>
+            <properties>
+                <skipTests>false</skipTests>
+                <paichange.m6b.integration.enabled>true</paichange.m6b.integration.enabled>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <version>3.2.5</version>
+                        <configuration>
+                            <argLine>-Dfile.encoding=UTF-8</argLine>
+                            <includes>
+                                <include>**/change/M6bStorageIntegrationTest.java</include>
+                            </includes>
+                            <systemPropertyVariables>
+                                <paichange.m6b.integration.enabled>${paichange.m6b.integration.enabled}</paichange.m6b.integration.enabled>
+                            </systemPropertyVariables>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <profile>
+            <id>paichange-m7a-it</id>
+            <properties>
+                <skipTests>false</skipTests>
+                <paichange.m7a.integration.enabled>true</paichange.m7a.integration.enabled>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <version>3.2.5</version>
+                        <configuration>
+                            <argLine>-Dfile.encoding=UTF-8</argLine>
+                            <includes>
+                                <include>**/change/M7aIdentityIntegrationTest.java</include>
+                            </includes>
+                            <systemPropertyVariables>
+                                <paichange.m7a.integration.enabled>${paichange.m7a.integration.enabled}</paichange.m7a.integration.enabled>
+                            </systemPropertyVariables>
                         </configuration>
                     </plugin>
                 </plugins>

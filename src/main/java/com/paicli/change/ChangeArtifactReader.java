@@ -18,13 +18,13 @@ public final class ChangeArtifactReader {
     private static final int MAX_BYTES = 4 * 1024 * 1024;
     private record Root(Path configured, Path real) { }
     private final List<Root> roots;
-    private final TrustedEvidenceStore integrity;
+    private final EvidenceStore integrity;
 
     public ChangeArtifactReader(Path... roots) throws IOException {
         this(null, roots);
     }
 
-    public ChangeArtifactReader(TrustedEvidenceStore integrity, Path... roots) throws IOException {
+    public ChangeArtifactReader(EvidenceStore integrity, Path... roots) throws IOException {
         this.integrity = integrity;
         List<Root> trusted = new ArrayList<>();
         for (Path root : roots) {

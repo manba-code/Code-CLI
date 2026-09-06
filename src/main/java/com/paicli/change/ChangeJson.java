@@ -31,6 +31,12 @@ public final class ChangeJson {
                 g.writeString(v.toString());
             }
         });
+        module.addDeserializer(Path.class, new JsonDeserializer<Path>() {
+            @Override public Path deserialize(com.fasterxml.jackson.core.JsonParser p, DeserializationContext c) throws IOException {
+                String value = p.getValueAsString();
+                return value == null || value.isBlank() ? null : Path.of(value).toAbsolutePath().normalize();
+            }
+        });
         return new ObjectMapper().registerModule(module)
                 .enable(com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
                 .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);

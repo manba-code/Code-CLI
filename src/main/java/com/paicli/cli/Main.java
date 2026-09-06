@@ -901,6 +901,9 @@ public class Main {
         }
         int port = parseServePort(args, 8080);
         Path changeRoot = com.paicli.change.ChangePlatform.defaultRoot();
+        com.paicli.runtime.auth.PrincipalAdapter identities = com.paicli.change.ProductionStorageSettings.enabled()
+                ? com.paicli.runtime.auth.OidcSettings.fromProcess().principalAdapter()
+                : new com.paicli.runtime.auth.LocalApiKeyPrincipalAdapter(RuntimeApiServer.configuredApiKey());
         try (RuntimeThreadStore store = new RuntimeThreadStore(RuntimeThreadStore.defaultDbPath());
              com.paicli.change.ChangePlatform changes = new com.paicli.change.ChangePlatform(
                      changeRoot, changeRoot.resolve("fixtures"),
@@ -909,7 +912,7 @@ public class Main {
                      new com.paicli.change.PaicliChangeWorkerRuntimeFactory(config),
                      com.paicli.change.DeliveryHeadReader.localGit());
              RuntimeApiServer server = new RuntimeApiServer(store, prompt -> runHeadlessTask(prompt, client),
-                     port, RuntimeApiServer.configuredApiKey(), changes.handler())) {
+                     port, identities, changes.handler())) {
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 server.close();
                 changes.close();
@@ -918,7 +921,7 @@ public class Main {
             changes.start();
             server.start();
             System.out.println("✅ PaiCLI Runtime API 已启动: http://127.0.0.1:" + server.port());
-            System.out.println("   认证: Authorization: Bearer <PAICLI_RUNTIME_API_KEY>");
+            System.out.println("   认证: Authorization: Bearer <" + identities.mode() + ">");
             new CountDownLatch(1).await();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

@@ -1,7 +1,7 @@
 'use strict';
 (() => {
   const $ = id => document.getElementById(id);
-  let key = '', principal = null, selected = null, snapshot = null, busy = false, demo = false, creation = null, creationId = null, generation = 0;
+  let key = '', principal = null, selected = null, snapshot = null, busy = false, demo = false, scm = 'MOCK', creation = null, creationId = null, generation = 0;
   let pollTimer = null, pollDelay = 1000, polling = true, lastVersion = null;
   const terminal = new Set(['SPEC_REVIEW', 'DELIVERY_REVIEW', 'COMPLETED', 'FAILED', 'REJECTED', 'CANCELED']);
   const messages = {400:'请求字段有误，请检查输入。',401:'登录态无效或已过期，请重新登录。',403:'当前身份缺少该项目的动作权限，或职责分离规则拒绝了操作。',404:'任务或产物不存在，请刷新列表。',409:'内容已变化。已刷新，请重新核对并确认；未重放审批。',422:'不满足业务条件，不能通过普通交付审批覆盖 Verdict。',500:'服务处理失败。请刷新任务和事件确认已持久化进度，勿假定操作成功。'};
@@ -278,10 +278,11 @@
   function newRequest() {
     creation = null; creationId = null;
     $('idempotency').value = demo ? 'offline-refund-v1' : crypto.randomUUID();
+    if (scm === 'GITLAB') $('work-item').value = '';
     $('create-status').hidden = true;
     $('create-status').textContent = '';
   }
-  $('connect').addEventListener('submit', async event => { event.preventDefault(); if (busy) return; key = $('key').value; $('key').value = ''; await guarded(async () => { const cap = await api('/capabilities'); demo = cap.offlineDemo; principal = cap.principal; $('mode').textContent = (demo?'离线模拟执行':'真实模型执行') + ' · ' + (cap.executionIsolation?'Docker 隔离':'宿主本地执行') + ' · ' + (cap.evidenceIntegrity?'Evidence 哈希校验':'普通 Evidence') + ' · ' + principal.displayName + ' · ' + principal.type; $('normal-fields').hidden = demo; $('demo-info').hidden = !demo; newRequest(); await list();
+  $('connect').addEventListener('submit', async event => { event.preventDefault(); if (busy) return; key = $('key').value; $('key').value = ''; await guarded(async () => { const cap = await api('/capabilities'); demo = cap.offlineDemo; scm = cap.scm || 'MOCK'; principal = cap.principal; const gitlab = scm === 'GITLAB'; $('mode').textContent = (demo?'离线模拟执行':'真实模型执行') + ' · ' + (cap.executionIsolation?'Docker 隔离':'宿主本地执行') + ' · ' + (cap.evidenceIntegrity?'Evidence 哈希校验':'普通 Evidence') + ' · ' + principal.displayName + ' · ' + principal.type; $('normal-fields').hidden = demo || gitlab; $('work-item-field').hidden = !gitlab; $('idempotency-field').hidden = gitlab; $('title').disabled = demo || gitlab; $('requirement').disabled = demo || gitlab; $('repository').disabled = demo || gitlab; $('base-ref').disabled = demo || gitlab; $('work-item').disabled = !gitlab; $('work-item').required = gitlab; $('demo-info').hidden = !demo; $('scm-badge').textContent = gitlab ? 'GitLab SCM · 单一项目' : 'Mock SCM · localhost'; $('scm-footer').textContent = gitlab ? 'GitLab MR + commit status · 不自动合并或部署' : '本地演示 · Mock Check 不构成真实分支保护 · 不自动部署'; newRequest(); await list();
     const restored = location.hash.slice(1);
     if (/^change_[A-Za-z0-9_-]+$/.test(restored)) await load(restored);
     notice((cap.localTrustedMode?'本地单操作者兼容模式；该 API Key 不是共享部署身份方案。':'已按项目成员关系登录。') + (demo?' Draft / ReAct 为确定性替身，无真实模型调用。':' 创建或执行任务可能调用已配置模型。')); }); });
@@ -289,7 +290,7 @@
   $('refresh').addEventListener('click',() => guarded(async () => { await list(); if (selected) await load(selected); notice('已刷新，请重新确认审批内容。'); }));
   $('new-request').addEventListener('click',() => { if (!busy) { newRequest(); notice('已准备新请求；离线 fixture 仍按固定键幂等。'); } });
   $('create').addEventListener('submit',event => { event.preventDefault(); guarded(async () => {
-    if (!creation) creation = demo?{fixture:'offline-refund.json'}:{idempotencyKey:$('idempotency').value,title:$('title').value,requirement:$('requirement').value,repository:{path:$('repository').value,baseRef:$('base-ref').value}};
+    if (!creation) creation = demo?{fixture:'offline-refund.json'}:(scm === 'GITLAB'?{workItem:$('work-item').value}:{idempotencyKey:$('idempotency').value,title:$('title').value,requirement:$('requirement').value,repository:{path:$('repository').value,baseRef:$('base-ref').value}});
     setCreating(true);
     creationNotice('正在提交并保存任务，请稍候。Spec 草稿将在后台生成。');
     let saved = false;

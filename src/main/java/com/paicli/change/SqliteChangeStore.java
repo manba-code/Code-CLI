@@ -16,7 +16,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
-public final class SqliteChangeStore implements ChangeStore, ChangeEventStore, ToolGovernanceStore, AutoCloseable {
+public final class SqliteChangeStore implements ChangePersistence {
+    private static final int SCHEMA_VERSION = 1;
     private static final ObjectMapper JSON = ChangeJson.MAPPER;
     private final Connection connection;
 
@@ -186,6 +187,15 @@ public final class SqliteChangeStore implements ChangeStore, ChangeEventStore, T
     private void initTables() throws SQLException {
         try (Statement statement = connection.createStatement()) {
             statement.execute("PRAGMA foreign_keys = ON");
+            statement.execute("PRAGMA busy_timeout = 5000");
+            statement.execute("""
+                    CREATE TABLE IF NOT EXISTS paichange_schema_migrations (
+                        version INTEGER PRIMARY KEY,
+                        description TEXT NOT NULL,
+                        checksum TEXT NOT NULL,
+                        installed_at TEXT NOT NULL
+                    )
+                    """);
             statement.execute("""
                     CREATE TABLE IF NOT EXISTS change_tasks (
                         id TEXT PRIMARY KEY,
@@ -300,6 +310,40 @@ public final class SqliteChangeStore implements ChangeStore, ChangeEventStore, T
         ensureColumn("change_approvals", "judgment_revision", "INTEGER NOT NULL DEFAULT 0");
         ensureColumn("human_review_json", "TEXT");
         ensureColumn("delivery_binding_json", "TEXT");
+        recordSchemaVersion();
+    }
+
+    private void recordSchemaVersion() throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                INSERT OR IGNORE INTO paichange_schema_migrations(version, description, checksum, installed_at)
+                VALUES (?, ?, ?, ?)
+                """)) {
+            statement.setInt(1, SCHEMA_VERSION);
+            statement.setString(2, "M6b versioned SQLite control-plane schema");
+            statement.setString(3, "sqlite-control-plane-v1");
+            statement.setString(4, Instant.now().toString());
+            statement.executeUpdate();
+        }
+    }
+
+    @Override public String backend() { return "sqlite"; }
+
+    @Override public int schemaVersion() {
+        try (Statement statement = connection.createStatement();
+             ResultSet row = statement.executeQuery("SELECT COALESCE(MAX(version), 0) FROM paichange_schema_migrations")) {
+            return row.next() ? row.getInt(1) : 0;
+        } catch (SQLException e) {
+            throw persistenceFailure("读取存储迁移版本失败", e);
+        }
+    }
+
+    @Override public void checkHealth() {
+        try (Statement statement = connection.createStatement();
+             ResultSet row = statement.executeQuery("SELECT 1")) {
+            if (!row.next() || row.getInt(1) != 1) throw new SQLException("unexpected probe result");
+        } catch (SQLException e) {
+            throw persistenceFailure("SQLite 健康检查失败", e);
+        }
     }
 
     @Override

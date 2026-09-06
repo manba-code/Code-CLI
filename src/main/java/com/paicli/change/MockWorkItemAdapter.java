@@ -8,7 +8,7 @@ import java.nio.file.Path;
 import java.util.Objects;
 
 /** 从固定本地 fixture 目录读取模拟工单，不访问外部工单系统。 */
-public final class MockWorkItemAdapter {
+public final class MockWorkItemAdapter implements WorkItemAdapter {
     private final Path fixtures;
     private final ChangeWorkflow workflow;
 
@@ -21,6 +21,7 @@ public final class MockWorkItemAdapter {
         return submit(fixture, null, null);
     }
 
+    @Override
     public ChangeTaskId submit(String fixture, String actorId, String actorType) throws IOException {
         if (fixture == null || !fixture.matches("[A-Za-z0-9_-]+\\.json")) {
             throw new IllegalArgumentException("fixture 必须是本地 JSON 文件名");
@@ -48,4 +49,6 @@ public final class MockWorkItemAdapter {
         return workflow.submit(ChangeJson.request(body, requester,
                 actorType == null || actorType.isBlank() ? "LEGACY" : actorType));
     }
+
+    @Override public String type() { return "MOCK"; }
 }

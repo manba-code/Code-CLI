@@ -5,7 +5,7 @@ import java.sql.*;
 import java.util.*;
 
 /** Local current Check projection plus immutable publication history. Never contacts a real SCM. */
-public final class MockScmAdapter implements AutoCloseable {
+public final class MockScmAdapter implements ScmAdapter {
     private final Connection connection;
 
     public MockScmAdapter(Path database) throws SQLException {
@@ -50,18 +50,10 @@ public final class MockScmAdapter implements AutoCloseable {
         }
     }
 
-    public String publicationKey(ChangeTask task) {
-        try {
-            String identity = ChangeJson.MAPPER.writeValueAsString(List.of(task.id().value(), task.run().specDigest(),
-                    task.run().headSha(), task.run().runId(), task.judgmentRevision(),
-                    task.deliveryApproval() == null ? "" : task.deliveryApproval().id()));
-            return HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
-                    .digest(identity.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-        } catch (Exception e) { throw new IllegalStateException(e); }
-    }
+    @Override public String publicationKey(ChangeTask task) { return ScmPublicationKey.compute(task); }
 
     // Only ChangeWorkflow chooses eligibility and conclusion. Same identity is immutable and idempotent.
-    synchronized DeliveryRef publish(ChangeTask task, String conclusion) {
+    @Override public synchronized DeliveryRef publish(ChangeTask task, String conclusion) {
         if (!Set.of("pending", "success", "failure").contains(conclusion)) throw new IllegalArgumentException("未知 Check 结论");
         RunRef run = Objects.requireNonNull(task.run());
         String key = publicationKey(task);
@@ -128,7 +120,7 @@ public final class MockScmAdapter implements AutoCloseable {
         }
     }
 
-    public synchronized Optional<DeliveryRef> find(ChangeTask task) {
+    @Override public synchronized Optional<DeliveryRef> find(ChangeTask task) {
         if (task.run() == null) return Optional.empty();
         List<DeliveryRef> history = history(task.id());
         if (history.isEmpty()) return Optional.empty();
@@ -137,7 +129,7 @@ public final class MockScmAdapter implements AutoCloseable {
                 && latest.runId().equals(task.run().runId()) ? Optional.of(latest) : Optional.empty();
     }
 
-    public synchronized List<DeliveryRef> history(ChangeTaskId id) {
+    @Override public synchronized List<DeliveryRef> history(ChangeTaskId id) {
         try (PreparedStatement s = connection.prepareStatement("""
                 SELECT p.pr_id, h.* FROM mock_check_history h JOIN mock_pull_requests p USING(change_id)
                 WHERE change_id = ? ORDER BY task_version, h.rowid
@@ -153,6 +145,8 @@ public final class MockScmAdapter implements AutoCloseable {
             return List.copyOf(result);
         } catch (SQLException e) { throw new IllegalStateException("读取 Mock Check 历史失败", e); }
     }
+
+    @Override public String type() { return "MOCK"; }
 
     @Override public synchronized void close() throws SQLException { connection.close(); }
 }

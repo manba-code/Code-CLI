@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PaiChange · 本地交付台</title><link rel="stylesheet" href="/changes/style.css"><script src="/changes/app.js" defer></script></head>
 <body>
-<header><div><span class="mark">π</span><strong>PaiChange</strong><span class="muted"> / 本地交付台</span></div><span class="badge">Mock SCM · localhost</span></header>
+<header><div><span class="mark">π</span><strong>PaiChange</strong><span class="muted"> / 本地交付台</span></div><span id="scm-badge" class="badge">SCM 未连接</span></header>
 <main>
 <section class="intro"><div><p class="eyebrow">CHANGE DELIVERY</p><h1>每次交付，都有据可查。</h1><p>确认契约 → 执行与验证 → 审批交付 → 发布 Mock Check</p></div><span id="mode" class="badge">尚未连接</span></section>
 <p class="boundary">组织工具策略与 Worker 逐调用审批已经启用；批准仍不能绕过 PathGuard / CommandGuard。M6a 可显式启用有限 Docker 执行边界，当前状态以登录后的 capability 为准；容器不是绝对安全边界。按钮可见性只改善体验，服务端始终重新鉴权。</p>
@@ -12,9 +12,10 @@
 <aside><div class="section-head"><h2>任务</h2><button id="refresh" class="secondary" type="button">刷新</button></div><button id="poll-toggle" class="secondary" type="button">暂停自动更新</button><div id="list"><p class="muted">连接后读取本地任务。</p></div>
 <details id="create-panel"><summary>创建 ChangeTask</summary><form id="create">
 <p id="demo-info" hidden>离线退款 fixture：首次边界验证失败 → 一次修复通过。同一 fixture 重复创建返回同一任务；重演请使用新数据目录。</p>
+<div id="work-item-field" hidden><label>GitLab Issue IID<input id="work-item" inputmode="numeric" pattern="[1-9][0-9]*" placeholder="例如 42"></label><p class="muted">仓库、base ref 与 GitLab project 均来自服务端配置。</p></div>
 <div id="normal-fields"><label>标题<input id="title" value="修复退款超时规则" required></label><label>需求<textarea id="requirement" required>退款超过 24 小时进入人工审核，不影响自动取消流程。</textarea></label><label>本地仓库<input id="repository" placeholder="/absolute/path/to/repository"></label><label>Base ref<input id="base-ref" value="main"></label><p class="muted">发起人由当前服务端认证身份确定。</p></div>
-<label>幂等键<input id="idempotency" readonly></label><button id="create-button">创建任务</button><button id="new-request" type="button" class="secondary">新请求</button></form><p id="create-status" class="creation-status" role="status" aria-live="polite" hidden></p></details>
+<label id="idempotency-field">幂等键<input id="idempotency" readonly></label><button id="create-button">创建任务</button><button id="new-request" type="button" class="secondary">新请求</button></form><p id="create-status" class="creation-status" role="status" aria-live="polite" hidden></p></details>
 </aside>
 <article id="detail"><div class="empty"><h2>选择一条变更</h2><p>查看锁定契约、代码差异和验证证据。</p></div></article>
-</div></main><footer>本地演示 · Mock Check 不构成真实分支保护 · 不自动部署</footer>
+</div></main><footer id="scm-footer">当前 SCM 能力以登录后的 capability 为准 · 不自动合并或部署</footer>
 </body></html>

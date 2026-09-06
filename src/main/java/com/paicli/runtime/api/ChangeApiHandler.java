@@ -19,40 +19,50 @@ public final class ChangeApiHandler implements HttpHandler {
     private static final int MAX_BODY = 1_048_576;
     private final ChangeWorkflow workflow;
     private final ChangeStore queries;
-    private final MockWorkItemAdapter workItems;
+    private final WorkItemAdapter workItems;
     private final ChangeArtifactReader artifacts;
     private final boolean offlineDemo;
     private final ChangeAuthorizer authorizer;
     private final ToolApprovalCoordinator toolApprovals;
     private final WorkerIsolation.Capabilities isolationCapabilities;
     private final boolean evidenceIntegrity;
+    private final ProjectMemberService members;
 
-    public ChangeApiHandler(ChangeWorkflow workflow, ChangeStore queries, MockWorkItemAdapter workItems) {
+    public ChangeApiHandler(ChangeWorkflow workflow, ChangeStore queries, WorkItemAdapter workItems) {
         this(workflow, queries, workItems, null, false);
     }
 
-    public ChangeApiHandler(ChangeWorkflow workflow, ChangeStore queries, MockWorkItemAdapter workItems,
+    public ChangeApiHandler(ChangeWorkflow workflow, ChangeStore queries, WorkItemAdapter workItems,
                             ChangeArtifactReader artifacts, boolean offlineDemo) {
         this(workflow, queries, workItems, artifacts, offlineDemo,
                 new ChangeAuthorizer(ProjectMembershipProvider.none()));
     }
 
-    public ChangeApiHandler(ChangeWorkflow workflow, ChangeStore queries, MockWorkItemAdapter workItems,
+    public ChangeApiHandler(ChangeWorkflow workflow, ChangeStore queries, WorkItemAdapter workItems,
                             ChangeArtifactReader artifacts, boolean offlineDemo, ChangeAuthorizer authorizer) {
         this(workflow, queries, workItems, artifacts, offlineDemo, authorizer, null);
     }
 
-    public ChangeApiHandler(ChangeWorkflow workflow, ChangeStore queries, MockWorkItemAdapter workItems,
+    public ChangeApiHandler(ChangeWorkflow workflow, ChangeStore queries, WorkItemAdapter workItems,
                             ChangeArtifactReader artifacts, boolean offlineDemo, ChangeAuthorizer authorizer,
                             ToolApprovalCoordinator toolApprovals) {
         this(workflow, queries, workItems, artifacts, offlineDemo, authorizer, toolApprovals,
                 WorkerIsolation.Capabilities.disabled(), false);
     }
 
-    public ChangeApiHandler(ChangeWorkflow workflow, ChangeStore queries, MockWorkItemAdapter workItems,
+    public ChangeApiHandler(ChangeWorkflow workflow, ChangeStore queries, WorkItemAdapter workItems,
                             ChangeArtifactReader artifacts, boolean offlineDemo, ChangeAuthorizer authorizer,
                             ToolApprovalCoordinator toolApprovals,
                             WorkerIsolation.Capabilities isolationCapabilities, boolean evidenceIntegrity) {
+        this(workflow, queries, workItems, artifacts, offlineDemo, authorizer, toolApprovals,
+                isolationCapabilities, evidenceIntegrity, null);
+    }
+
+    public ChangeApiHandler(ChangeWorkflow workflow, ChangeStore queries, WorkItemAdapter workItems,
+                            ChangeArtifactReader artifacts, boolean offlineDemo, ChangeAuthorizer authorizer,
+                            ToolApprovalCoordinator toolApprovals,
+                            WorkerIsolation.Capabilities isolationCapabilities, boolean evidenceIntegrity,
+                            ProjectMemberService members) {
         this.artifacts = artifacts;
         this.offlineDemo = offlineDemo;
         this.authorizer = java.util.Objects.requireNonNull(authorizer, "authorizer");
@@ -60,6 +70,7 @@ public final class ChangeApiHandler implements HttpHandler {
         this.isolationCapabilities = isolationCapabilities == null
                 ? WorkerIsolation.Capabilities.disabled() : isolationCapabilities;
         this.evidenceIntegrity = evidenceIntegrity;
+        this.members = members;
         if (artifacts != null && workflow instanceof DefaultChangeWorkflow concrete) concrete.connectArtifacts(artifacts);
         this.workflow = java.util.Objects.requireNonNull(workflow);
         this.queries = java.util.Objects.requireNonNull(queries);
@@ -91,10 +102,11 @@ public final class ChangeApiHandler implements HttpHandler {
         String method = exchange.getRequestMethod();
         if (path.equals("/v1/changes/capabilities") && method.equals("GET")) {
             var response = ChangeJson.MAPPER.createObjectNode();
-            response.put("offlineDemo", offlineDemo).put("scm", "MOCK")
+            response.put("offlineDemo", offlineDemo).put("scm", workItems.type())
                     .put("toolPolicyEnforced", toolApprovals != null).put("workerHitl", toolApprovals != null)
                     .put("executionIsolation", isolationCapabilities.enabled())
                     .put("evidenceIntegrity", evidenceIntegrity)
+                    .put("memberDirectory", members != null)
                     .set("isolation", ChangeJson.MAPPER.valueToTree(isolationCapabilities));
             response
                     .put("authMode", String.valueOf(exchange.getAttribute(RuntimeApiServer.AUTH_MODE_ATTRIBUTE)))
@@ -110,6 +122,45 @@ public final class ChangeApiHandler implements HttpHandler {
             return;
         }
         String[] routeParts = path.split("/", -1);
+        if (routeParts.length == 6 && routeParts[1].equals("v1") && routeParts[2].equals("changes")
+                && routeParts[3].equals("projects") && routeParts[5].equals("members")) {
+            if (members == null) throw new ChangeValidationException("生产成员目录未装配");
+            String projectId = routeParts[4];
+            if (method.equals("GET")) {
+                write(exchange, 200, Map.of("members", members.list(projectId, principal)));
+                return;
+            }
+            if (method.equals("PUT")) {
+                JsonNode request = body(exchange);
+                strictFields(request, java.util.Set.of("subjectId", "principalType", "roles", "expectedVersion"));
+                JsonNode rolesNode = request.path("roles");
+                if (!rolesNode.isArray() || rolesNode.isEmpty()) throw new IllegalArgumentException("roles 必须是非空数组");
+                java.util.EnumSet<ProjectRole> roles = java.util.EnumSet.noneOf(ProjectRole.class);
+                for (JsonNode role : rolesNode) {
+                    if (!role.isTextual()) throw new IllegalArgumentException("role 必须是字符串");
+                    roles.add(ProjectRole.valueOf(role.asText()));
+                }
+                ProjectMember result = members.put(projectId, ChangeJson.text(request, "subjectId"),
+                        com.paicli.runtime.auth.PrincipalType.valueOf(ChangeJson.text(request, "principalType")),
+                        roles, nonNegative(request, "expectedVersion"), principal);
+                write(exchange, result.version() == 1 ? 201 : 200, result);
+                return;
+            }
+            if (method.equals("DELETE")) {
+                JsonNode request = body(exchange);
+                strictFields(request, java.util.Set.of("subjectId", "expectedVersion"));
+                write(exchange, 200, members.remove(projectId, ChangeJson.text(request, "subjectId"),
+                        nonNegative(request, "expectedVersion"), principal));
+                return;
+            }
+        }
+        if (routeParts.length == 7 && routeParts[1].equals("v1") && routeParts[2].equals("changes")
+                && routeParts[3].equals("projects") && routeParts[5].equals("members")
+                && routeParts[6].equals("audit") && method.equals("GET")) {
+            if (members == null) throw new ChangeValidationException("生产成员目录未装配");
+            write(exchange, 200, Map.of("audit", members.audit(routeParts[4], principal)));
+            return;
+        }
         if (routeParts.length == 6 && routeParts[1].equals("v1") && routeParts[2].equals("changes")
                 && routeParts[3].equals("projects") && routeParts[5].equals("tool-policy")) {
             if (toolApprovals == null) throw new ChangeValidationException("工具策略服务未装配");
@@ -144,6 +195,12 @@ public final class ChangeApiHandler implements HttpHandler {
                 if (body.has("fixture")) {
                     if (!principal.localTrusted()) throw new ChangeForbiddenException("fixture 仅允许本地可信模式");
                     id = workItems.submit(ChangeJson.text(body, "fixture"), principal.subjectId(), principal.actorType());
+                } else if (body.has("workItem")) {
+                    if (body.size() != 1) throw new IllegalArgumentException("workItem 导入请求只接受 workItem 字段");
+                    RepositoryRef repository = workItems.repository()
+                            .orElseThrow(() -> new IllegalArgumentException("当前未配置远程工单导入"));
+                    authorizer.require(principal, ChangeProject.id(repository), ChangePermission.CREATE_TASK);
+                    id = workItems.submit(ChangeJson.text(body, "workItem"), principal.subjectId(), principal.actorType());
                 } else {
                     requireCompatibleActor(body, principal);
                     ChangeRequest request = ChangeJson.request(body, principal.subjectId(), principal.actorType());
@@ -318,6 +375,12 @@ public final class ChangeApiHandler implements HttpHandler {
             throw new IllegalArgumentException(field + " 必须是非负整数");
         }
         return version.longValue();
+    }
+
+    private static void strictFields(JsonNode body, java.util.Set<String> allowed) {
+        body.fieldNames().forEachRemaining(field -> {
+            if (!allowed.contains(field)) throw new IllegalArgumentException("未知字段: " + field);
+        });
     }
 
     private ObjectNode view(ChangeTaskView view, Principal principal) {

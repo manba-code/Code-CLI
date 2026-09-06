@@ -346,7 +346,7 @@ PaiChange Worker 必须使用 `GovernedToolRegistry` 统一覆盖 Agent 初次�
 
 ### PaiChange M5 身份与 RBAC
 
-`RuntimeApiServer` 通过 `PrincipalAdapter` 建立服务端可信 subject，`ChangeApiHandler` 不接受客户端选择 actor。项目边界由持久化 repository 派生，`ChangeAuthorizer` 每请求读取 `ProjectMembershipProvider` 并执行 VIEWER / DEVELOPER / APPROVER / PROJECT_ADMIN 动作权限；服务账号不能获得真人或工具审批动作。MEDIUM/HIGH 的 requester、Spec approver、Delivery approver 按稳定 subject 做职责分离，管理员不豁免。默认 API Key 只映射固定 `local-user`，仅限 localhost 单操作者兼容；具体 OIDC IdP 和生产成员目录没有实现。详见 [M5 实施记录](paichange-m5-implementation.md)。
+`RuntimeApiServer` 通过 `PrincipalAdapter` 建立服务端可信 subject，`ChangeApiHandler` 不接受客户端选择 actor。项目边界由持久化 repository 派生，`ChangeAuthorizer` 每请求读取 `ProjectMembershipProvider` 并执行 VIEWER / DEVELOPER / APPROVER / PROJECT_ADMIN 动作权限；服务账号不能获得真人或工具审批动作。MEDIUM/HIGH 的 requester、Spec approver、Delivery approver 按稳定 subject 做职责分离，管理员不豁免。默认 API Key 只映射固定 `local-user`，仅限 localhost 单操作者兼容。M7a 的 PostgreSQL 生产路径改用严格 JWT/JWKS 验证和 PostgreSQL V2 成员目录；成员管理仅限 HUMAN PROJECT_ADMIN，并保留版本与 actor 审计。详见 [M5 实施记录](paichange-m5-implementation.md)与 [M7a 实施记录](paichange-m7a-implementation.md)。
 
 ### PaiChange M6a 最小执行隔离
 
