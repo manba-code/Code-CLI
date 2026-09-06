@@ -145,7 +145,7 @@ class MockScmAdapterTest {
             Path evidence = task.run().evidencePath().resolve("result.json");
             String saved = Files.readString(evidence);
             Files.writeString(evidence, saved.replace("PASSED", "FAILED"));
-            assertThrows(ChangeValidationException.class, () -> workflow.advance(task.id()));
+            assertThrows(ChangeConflictException.class, () -> workflow.advance(task.id()));
             Files.writeString(evidence, saved);
             ChangeTask publishing = workflow.get(task.id()).task();
             // Simulate a corrupt/reconstructed state: HIGH must be guarded again at publication.
@@ -174,6 +174,7 @@ class MockScmAdapterTest {
 
     private DefaultChangeWorkflow connected(SqliteChangeStore store, MockScmAdapter scm, DeliveryHeadReader heads) {
         DefaultChangeWorkflow workflow = new DefaultChangeWorkflow(store, store, ChangeTestSupport.specs(root));
+        assertDoesNotThrow(() -> workflow.connectArtifacts(new ChangeArtifactReader(root)));
         workflow.connect(id -> { }, scm, heads);
         return workflow;
     }

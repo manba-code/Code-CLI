@@ -47,7 +47,7 @@ class ChangePlatformEndToEndTest {
             String path = "/v1/changes/" + id;
             assertEquals(id, send(base, "POST", "/v1/changes", "{\"fixture\":\"local.json\"}", 201).path("changeId").asText());
             review = await(base, path, "SPEC_REVIEW");
-            String decision = ChangeApiHandlerTest.specDecision(review, "lead");
+            String decision = specDecision(review);
             send(base, "POST", path + "/spec-decisions", decision, 200);
             send(base, "POST", path + "/spec-decisions", decision, 409);
             JsonNode delivery = await(base, path, "DELIVERY_REVIEW");
@@ -55,6 +55,8 @@ class ChangePlatformEndToEndTest {
             assertTrue(delivery.path("delivery").isNull());
             assertEquals(1, repairs.get());
             Path evidence = Path.of(delivery.path("run").path("evidencePath").asText());
+            assertTrue(evidence.startsWith(data.resolve("evidence-archive").toRealPath()));
+            assertTrue(Files.isRegularFile(evidence.resolve("manifest.json")));
             JsonNode result = ChangeJson.MAPPER.readTree(Files.readString(evidence.resolve("result.json")));
             assertEquals(2, result.path("verificationAttempts").size());
             String approval = deliveryDecision(delivery);
@@ -100,7 +102,7 @@ class ChangePlatformEndToEndTest {
             }
             review = send(base, "GET", path, "", 200);
             assertEquals("QUEUED", send(base, "POST", path + "/spec-decisions",
-                    ChangeApiHandlerTest.specDecision(review, "lead"), 200).path("state").asText());
+                    specDecision(review), 200).path("state").asText());
             assertEquals(0, runtimes.get());
         }
         try (ChangePlatform platform = platform(data, true);
@@ -141,8 +143,37 @@ class ChangePlatformEndToEndTest {
         }
     }
 
+    @Test
+    void tamperedTrustedEvidenceCannotPublishSuccess() throws Exception {
+        Path repo = repository(), data = root.resolve("tampered-evidence");
+        try (ChangePlatform platform = platform(data, false);
+             RuntimeThreadStore threads = new RuntimeThreadStore(root.resolve("threads-tamper.db"));
+             RuntimeApiServer api = new RuntimeApiServer(threads, p -> p, 0, "secret", platform.handler())) {
+            platform.start(); api.start();
+            String base = "http://127.0.0.1:" + api.port();
+            JsonNode review = send(base, "POST", "/v1/changes", request(repo, "tamper"), 201);
+            String path = "/v1/changes/" + review.path("changeId").asText();
+            review = await(base, path, "SPEC_REVIEW");
+            send(base, "POST", path + "/spec-decisions", specDecision(review), 200);
+            JsonNode delivery = await(base, path, "DELIVERY_REVIEW");
+            Path result = Path.of(delivery.path("run").path("evidencePath").asText()).resolve("result.json");
+            try {
+                Files.setPosixFilePermissions(result, java.util.Set.of(
+                        java.nio.file.attribute.PosixFilePermission.OWNER_READ,
+                        java.nio.file.attribute.PosixFilePermission.OWNER_WRITE));
+            } catch (UnsupportedOperationException ignored) { }
+            Files.writeString(result, "{\"tampered\":true}");
+
+            send(base, "POST", path + "/delivery-decisions", deliveryDecision(delivery), 409);
+            JsonNode unchanged = send(base, "GET", path, "", 200);
+            assertEquals("DELIVERY_REVIEW", unchanged.path("state").asText());
+            assertTrue(unchanged.path("delivery").isNull());
+        }
+    }
+
     private ChangePlatform platform(Path data, boolean exempt) throws Exception {
         PaiCliConfig config = new PaiCliConfig();
+        config.getPaiChange().setForbidRequesterSelfApprovalForMediumAndHigh(false);
         if (exempt) {
             var low = new PaiCliConfig.PaiChangeRouteConfig();
             low.setDeliveryApprovalRequired(false);
@@ -192,11 +223,17 @@ class ChangePlatformEndToEndTest {
 
     private static String request(Path repo, String key) throws Exception {
         return ChangeJson.MAPPER.writeValueAsString(Map.of("idempotencyKey", key, "title", "Local fix",
-                "requirement", "Fix output", "actorId", "requester", "repository", Map.of("path", repo.toString(), "baseRef", "main")));
+                "requirement", "Fix output", "repository", Map.of("path", repo.toString(), "baseRef", "main")));
+    }
+
+    private static String specDecision(JsonNode task) throws Exception {
+        return ChangeJson.MAPPER.writeValueAsString(Map.of("decision", "APPROVE",
+                "expectedVersion", task.path("version").asLong(),
+                "expectedDraftDigest", task.path("spec").path("digest").asText()));
     }
 
     private static String deliveryDecision(JsonNode task) throws Exception {
-        return ChangeJson.MAPPER.writeValueAsString(Map.of("decision", "APPROVE", "actorId", "lead",
+        return ChangeJson.MAPPER.writeValueAsString(Map.of("decision", "APPROVE",
                 "expectedVersion", task.path("version").asLong(), "expectedSpecDigest", task.path("spec").path("digest").asText(),
                 "expectedRunId", task.path("run").path("runId").asText(), "expectedJudgmentRevision", task.path("judgmentRevision").asLong(),
                 "expectedHeadSha", task.path("run").path("headSha").asText()));

@@ -23,7 +23,8 @@ async function fixture(options = {}) {
   const el = id => { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); };
   const requests = [], timers = new Map(); let timerId = 0;
   const location = {hash:options.hash || ""}, documentEvents = {}, windowEvents = {};
-  let finishCreate, posts = 0, task = {changeId:'change_test',version:2,state:'SPEC_REVIEW',title:'Test',requirement:'Test',spec:{revision:1,digest:'digest'}};
+  let finishCreate, posts = 0, task = {changeId:'change_test',version:2,state:'SPEC_REVIEW',title:'Test',requirement:'Test',spec:{revision:1,digest:'digest'},
+    permissions:['CREATE_TASK','READ_TASK','READ_EVENTS','READ_ARTIFACTS','CANCEL_DRAFT','RETRY_DRAFT','SUPPLEMENT_SPEC','APPROVE_SPEC','RECORD_HUMAN_EVIDENCE','APPROVE_DELIVERY','APPROVE_TOOL']};
   if (options.task) Object.assign(task, options.task);
   const reply = (value, status = 200) => ({ok:status < 400,status,json:async () => value});
   vm.runInNewContext(source, {
@@ -33,9 +34,10 @@ async function fixture(options = {}) {
     crypto:{randomUUID:() => 'same-key'},setInterval() {},
     fetch:async (url, requestOptions) => {
       if (requestOptions.method === 'POST') { posts++; requests.push({url,body:requestOptions.body}); return new Promise(resolve => { finishCreate = resolve; }); }
-      if (url.endsWith('/capabilities')) return reply({offlineDemo:true});
+      if (url.endsWith('/capabilities')) return reply({offlineDemo:true,localTrustedMode:true,principal:{subjectId:'local-user',displayName:'Local operator',type:'HUMAN'},...options.capabilities}, options.capabilityStatus || 200);
       if (url.endsWith('/artifacts')) return reply({version:task.version,revisions:[],criteria:[],verifiers:[],criterionResults:[],verificationAttempts:[],evidence:[],...options.artifacts});
       if (url.endsWith('/events')) return reply({events:[]});
+      if (url.endsWith('/tool-approvals')) return reply({toolApprovals:options.toolApprovals || []});
       return reply(url === '/v1/changes' ? {changes:[task]} : task);
     }
   });
@@ -112,7 +114,7 @@ test('failure shows safe text and retry binds version/generation; conflict refre
   const pending = retry.events.click();
   assert.equal(f.posts(),1);
   assert.equal(f.requests[0].url,'/v1/changes/change_test/draft-retry');
-  assert.deepEqual(JSON.parse(f.requests[0].body),{expectedVersion:2,expectedGeneration:'g1',actorId:'owner'});
+  assert.deepEqual(JSON.parse(f.requests[0].body),{expectedVersion:2,expectedGeneration:'g1'});
   await f.finish(409, 'SPEC_REVIEW'); await pending;
   assert.match(f.el('notice').textContent,/重新核对/);
   assert.equal(f.posts(),1);
@@ -138,7 +140,7 @@ test('human evidence submits exact identity and artifact IDs; duplicate clicks a
   assert.equal(save.disabled,true); save.events.click(); assert.equal(f.posts(),1);
   const body = JSON.parse(f.requests[0].body);
   assert.deepEqual(body,{expectedVersion:2,expectedSpecDigest:'digest',expectedRunId:'run-1',expectedHeadSha:'head-1',
-    expectedJudgmentRevision:0,criterionId:'AC-H1',decision:'PASS',reason:'<script>alert(1)</script> observed',actorId:'reviewer',artifactRefs:['code-diff']});
+    expectedJudgmentRevision:0,criterionId:'AC-H1',decision:'PASS',reason:'<script>alert(1)</script> observed',artifactRefs:['code-diff']});
   assert.equal(f.requests[0].url,'/v1/changes/change_test/human-evidence');
   f.setTask({version:3,judgmentRevision:1}); await f.finish(200,'DELIVERY_REVIEW'); await pending;
   assert.match(f.el('notice').textContent,/人工验收已保存/);
@@ -177,4 +179,57 @@ test('human text renders literally and a publishing failure is never shown as co
   assert.match(allText(f.el('detail')),/<img src=x onerror=alert/);
   assert.match(allText(f.el('detail')),/等待发布/); assert.doesNotMatch(allText(f.el('detail')),/发布完成/);
   assert.equal(fillHuman(f).disabled,false);
+});
+test('expired login is cleared and renders a distinct 401 message', async () => {
+  const f = await fixture({capabilityStatus:401});
+  assert.match(f.el('notice').textContent,/登录态.*过期/);
+  assert.equal(f.el('mode').textContent,'登录态已失效');
+  assert.equal(f.timers.size,0);
+});
+test('forbidden action renders a distinct 403 permission message', async () => {
+  const f = await fixture({hash:'#change_test'});
+  const reason = byText(f.el('detail'),'审批理由 / 补充要求').children[0]; reason.value = 'reviewed';
+  const check = byText(f.el('detail'),'我已核对当前契约、diff、Evidence 和绑定身份。').children[0];
+  check.checked = true; check.events.change();
+  const pending = findButton(f.el('detail'),'Spec APPROVE').events.click();
+  await f.finish(403,'SPEC_REVIEW'); await pending;
+  assert.match(f.el('notice').textContent,/当前身份缺少.*权限/);
+  assert.doesNotMatch(f.el('notice').textContent,/登录态.*过期/);
+});
+test('read-only task hides mutation buttons while explaining server-backed permission', async () => {
+  const f = await fixture({hash:'#change_test',task:{permissions:['READ_TASK','READ_EVENTS','READ_ARTIFACTS']}});
+  assert.equal(findButton(f.el('detail'),'Spec APPROVE'),undefined);
+  assert.equal(findButton(f.el('detail'),'Spec SUPPLEMENT'),undefined);
+  assert.match(allText(f.el('detail')),/没有此阶段的决策权限/);
+});
+
+test('tool approval renders only redacted preview and submits exact immutable identity', async () => {
+  const approval = {id:'tool_approval_1',toolName:'write_file',status:'PENDING',runId:'run-1',callId:'call-1',
+    policyVersion:3,profile:'LOCKED_DOWN',argumentsPreview:'{"path":"src/X.java","content":"<redacted payload: 42 chars>"}',
+    argumentsDigest:'sha256-exact',workingDirectory:'/workspace',specDigest:'digest'};
+  const f = await fixture({hash:'#change_test',task:{state:'RUNNING',route:{toolPolicy:'LOCKED_DOWN'}},toolApprovals:[approval]});
+  assert.match(allText(f.el('detail')),/<redacted payload: 42 chars>/);
+  assert.doesNotMatch(allText(f.el('detail')),/secret-value/);
+  const check = byText(f.el('detail'),'我已核对脱敏摘要、digest、run、Spec 与策略版本。').children[0];
+  check.checked = true; check.events.change();
+  const approve = findButton(f.el('detail'),'Tool APPROVE'); assert.equal(approve.disabled,false);
+  const pending = approve.events.click();
+  assert.equal(f.posts(),1);
+  assert.equal(f.requests[0].url,'/v1/changes/change_test/tool-approvals/tool_approval_1/decisions');
+  assert.deepEqual(JSON.parse(f.requests[0].body),{decision:'APPROVE',reason:'',expectedPolicyVersion:3,
+    expectedArgumentsDigest:'sha256-exact',expectedCallId:'call-1',expectedRunId:'run-1',expectedSpecDigest:'digest'});
+  await f.finish(409,'RUNNING'); await pending;
+  assert.equal(f.posts(),1);
+  assert.match(f.el('notice').textContent,/重新核对/);
+});
+
+test('Docker capability and trusted Evidence manifest are displayed as separate facts', async () => {
+  const f = await fixture({hash:'#change_test',task:humanTask,
+    capabilities:{executionIsolation:true,evidenceIntegrity:true},
+    artifacts:{...humanArtifacts,evidenceIntegrity:'VERIFIED',evidenceManifestSha256:'abc123'}});
+  assert.match(f.el('mode').textContent,/Docker 隔离/);
+  assert.match(f.el('mode').textContent,/Evidence 哈希校验/);
+  assert.match(allText(f.el('detail')),/Evidence 完整性/);
+  assert.match(allText(f.el('detail')),/VERIFIED/);
+  assert.match(allText(f.el('detail')),/abc123/);
 });

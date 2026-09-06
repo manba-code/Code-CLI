@@ -10,8 +10,12 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class SqliteChangeStoreTest {
@@ -119,6 +123,46 @@ class SqliteChangeStoreTest {
             assertEquals(ApprovalRecord.Stage.DELIVERY, task.deliveryApproval().stage());
             assertEquals("abcdef0123456789", task.deliveryApproval().headSha());
             assertEquals(task.spec().digest(), task.deliveryApproval().specDigest());
+        }
+    }
+
+    @Test
+    void toolPolicyApprovalsAndRedactedEventsSurviveReopen() throws Exception {
+        Path database = tempDir.resolve("tool-governance.db");
+        ChangeTaskId id;
+        String approvalId = "tool_approval_sql";
+        String projectId;
+        Instant expires = NOW.plusSeconds(60);
+        try (SqliteChangeStore store = new SqliteChangeStore(database)) {
+            DefaultChangeWorkflow workflow = (DefaultChangeWorkflow) workflow(store);
+            id = ChangeTestSupport.submitAndDraft(workflow, request());
+            ChangeTask review = workflow.get(id).task();
+            ChangeTask ready = workflow.decide(id, new ChangeDecision.ApproveSpec(
+                    review.version(), review.spec().digest(), "lead", "ok")).task();
+            projectId = ChangeProject.id(ready.repository());
+            ProjectToolPolicy.Rule rule = new ProjectToolPolicy.Rule("approve-write", Set.of(
+                    ExecutionRoute.ToolPolicyProfile.RESTRICTED), ProjectToolPolicy.Effect.REQUIRE_APPROVAL,
+                    "write_file", "", "", "", tempDir.toString(), Map.of("path", "src/.*"));
+            assertEquals(2, store.updatePolicy(projectId, 1, List.of(rule), NOW, "admin", "HUMAN").version());
+            ToolApproval pending = new ToolApproval(approvalId, id, projectId, "run-sql", "call-sql",
+                    "write_file", "sha256", "{\"path\":\"src/X.java\",\"content\":\"<redacted payload>\"}",
+                    tempDir.toString(), ready.spec().specId(), ready.spec().revision(), ready.spec().digest(),
+                    ExecutionRoute.ToolPolicyProfile.RESTRICTED, 2, "approve-write", ToolApproval.Status.PENDING,
+                    "", "", "", false, NOW, null, expires);
+            store.createApproval(pending);
+            store.updateApproval(pending.decide(ToolApproval.Status.APPROVED, "reviewed", "approver",
+                    "HUMAN", false, NOW.plusSeconds(1)), ToolApproval.Status.PENDING);
+        }
+
+        try (SqliteChangeStore reopened = new SqliteChangeStore(database)) {
+            assertEquals(2, reopened.policy(projectId).version());
+            ToolApproval approval = reopened.findApproval(approvalId).orElseThrow();
+            assertEquals(ToolApproval.Status.APPROVED, approval.status());
+            assertEquals("approver", approval.approverId());
+            assertEquals(1, reopened.approvals(id).size());
+            var events = reopened.events(id);
+            assertEquals("tool.approval_approved", events.get(events.size() - 1).type());
+            assertFalse(events.get(events.size() - 1).payloadJson().contains("secret-value"));
         }
     }
 

@@ -137,7 +137,8 @@ public final class DefaultChangeWorkflow implements ChangeWorkflow, ChangeExecut
                 throw new ChangeValidationException("发布 success 需要有效 Delivery Approval");
             }
             if (task.deliveryApproval() != null) {
-                approvalPolicy.requireAllowed(task, task.risk().level(), task.deliveryApproval().approverId());
+                approvalPolicy.requireAllowed(task, task.risk().level(), task.deliveryApproval().approverId(),
+                        ApprovalRecord.Stage.DELIVERY);
             }
         }
         requireVersion(load(task.id()), task.version());
@@ -147,6 +148,8 @@ public final class DefaultChangeWorkflow implements ChangeWorkflow, ChangeExecut
         SpecRef spec = task.spec();
         RunRef run = task.run();
         try {
+            if (artifacts == null) throw new ChangeValidationException("发布前可信 Artifact 校验未装配");
+            var content = artifacts.read(new ChangeTaskView(task, eventStore.events(task.id())), null, null);
             ChangeSpecDocument locked = specCodec.decode(Files.readString(spec.lockedPath()));
             if (!locked.specDigest().equals(spec.digest()) || !locked.spec().id().equals(spec.specId())
                     || locked.spec().revision() != spec.revision()) {
@@ -154,8 +157,7 @@ public final class DefaultChangeWorkflow implements ChangeWorkflow, ChangeExecut
             }
             if (task.humanReview() != null && task.humanReview().latest() != null) {
                 var judgment = task.humanReview().latest();
-                if (!judgment.matches(spec, run) || artifacts == null) throw new ChangeConflictException("交付判断身份已失效");
-                var content = artifacts.read(new ChangeTaskView(task, eventStore.events(task.id())), null, null);
+                if (!judgment.matches(spec, run)) throw new ChangeConflictException("交付判断身份已失效");
                 var recomputed = DeliveryJudgmentReducer.reduce(task, locked.spec(), content.path("result"),
                         task.humanReview().entries(), judgment.revision(), judgment.createdAt());
                 if (!judgment.equals(recomputed)) throw new ChangeConflictException("交付判断依据已变化，不能发布或审批");
@@ -163,15 +165,14 @@ public final class DefaultChangeWorkflow implements ChangeWorkflow, ChangeExecut
             if (!run.headSha().equals(heads.currentHead(task))) {
                 throw new ChangeConflictException("发布前分支 headSha 已变化，需重新验证和审批");
             }
-            var persisted = new com.fasterxml.jackson.databind.ObjectMapper()
-                    .readTree(Files.readString(run.evidencePath().resolve("result.json")));
+            var persisted = content.path("result");
             if (persisted == null || !persisted.isObject() || !persisted.path("runId").asText().equals(run.runId())
                     || !persisted.path("spec").path("digest").asText().equals(spec.digest())
                     || !persisted.path("status").asText().equals(run.status().name())
                     || !persisted.path("verdict").asText().equals(run.verdict().name())
                     || !persisted.path("verificationAttempts").isArray()
                     || !persisted.path("criterionResults").isArray()
-                    || !Files.isRegularFile(run.evidencePath().resolve("change.diff"))) {
+                    || !content.path("codeDiff").isTextual()) {
                 throw new ChangeValidationException("发布前 Verdict/Evidence 未持久化或与当前执行不匹配");
             }
         } catch (IOException e) {
@@ -248,7 +249,7 @@ public final class DefaultChangeWorkflow implements ChangeWorkflow, ChangeExecut
             store.create(created, event(
                     created,
                     "change.created",
-                    "USER",
+                    request.actorType(),
                     request.actorId(),
                     null,
                     ChangeState.DRAFTING_SPEC,
@@ -416,7 +417,7 @@ public final class DefaultChangeWorkflow implements ChangeWorkflow, ChangeExecut
         store.update(current.version(), ready, event(
                 ready,
                 "spec.approved",
-                "USER",
+                decision.actorType(),
                 decision.actorId(),
                 current.state(),
                 ready.state(),
@@ -438,7 +439,7 @@ public final class DefaultChangeWorkflow implements ChangeWorkflow, ChangeExecut
                 previous.specId(), previous.revision() + 1, nextRequirement,
                 current.projectContext(), current.referencedContext()), clock.millis());
         ChangeTask drafting = current.withDraftJob(job, ChangeState.DRAFTING_SPEC, clock.instant());
-        store.update(current.version(), drafting, event(drafting, "spec.supplemented", "USER",
+        store.update(current.version(), drafting, event(drafting, "spec.supplemented", decision.actorType(),
                 decision.actorId(), current.state(), drafting.state(), draftPayload(job)));
         return get(current.id());
     }
@@ -458,7 +459,7 @@ public final class DefaultChangeWorkflow implements ChangeWorkflow, ChangeExecut
         store.update(current.version(), rejected, event(
                 rejected,
                 "spec.rejected",
-                "USER",
+                decision.actorType(),
                 decision.actorId(),
                 current.state(),
                 rejected.state(),
@@ -479,7 +480,7 @@ public final class DefaultChangeWorkflow implements ChangeWorkflow, ChangeExecut
         if (!route.deliveryApprovalRequired()) {
             throw new ChangeValidationException("当前 ExecutionRoute 不要求 Delivery Approval");
         }
-        approvalPolicy.requireAllowed(current, risk.level(), decision.actorId());
+        approvalPolicy.requireAllowed(current, risk.level(), decision.actorId(), ApprovalRecord.Stage.DELIVERY);
         if (heads != null) requirePersistedDeliveryIdentity(current);
         Instant now = clock.instant();
         ApprovalRecord approval = new ApprovalRecord(
@@ -495,7 +496,7 @@ public final class DefaultChangeWorkflow implements ChangeWorkflow, ChangeExecut
         store.update(current.version(), publishing, event(
                 publishing,
                 "delivery.approved",
-                "USER",
+                decision.actorType(),
                 decision.actorId(),
                 current.state(),
                 publishing.state(),
@@ -522,7 +523,7 @@ public final class DefaultChangeWorkflow implements ChangeWorkflow, ChangeExecut
         store.update(current.version(), rejected, event(
                 rejected,
                 "delivery.rejected",
-                "USER",
+                decision.actorType(),
                 decision.actorId(),
                 current.state(),
                 rejected.state(),
@@ -573,7 +574,7 @@ public final class DefaultChangeWorkflow implements ChangeWorkflow, ChangeExecut
             long revision = current.judgmentRevision() + 1;
             var entry = new HumanReview.Entry("human_" + UUID.randomUUID(), id.value(), current.spec().digest(),
                     current.run().runId(), current.run().headSha(), revision, input.criterionId(), input.decision(),
-                    input.reason(), input.artifactRefs(), input.actorId(), now);
+                    input.reason(), input.artifactRefs(), input.actorId(), input.actorType(), now);
             entries.add(entry);
             var judgment = DeliveryJudgmentReducer.reduce(current, spec, content.path("result"), entries, revision, now);
             judgments.add(judgment);
@@ -588,7 +589,7 @@ public final class DefaultChangeWorkflow implements ChangeWorkflow, ChangeExecut
             payload.set("entry", ChangeJson.MAPPER.valueToTree(entry));
             payload.set("judgment", ChangeJson.MAPPER.valueToTree(judgment));
             payload.put("invalidatedApprovalId", current.deliveryApproval() == null ? "" : current.deliveryApproval().id());
-            store.update(current.version(), updated, event(updated, "human.evidence_recorded", "USER", input.actorId(),
+            store.update(current.version(), updated, event(updated, "human.evidence_recorded", input.actorType(), input.actorId(),
                     current.state(), next, payload.toString()));
             // Publication is a separate, retryable workflow step; a saved observation is not a successful Check.
             return get(id);
@@ -694,22 +695,24 @@ public final class DefaultChangeWorkflow implements ChangeWorkflow, ChangeExecut
     }
 
     @Override
-    public synchronized ChangeTaskView cancelDraft(ChangeTaskId id, long version, String generation, String actor) {
+    public synchronized ChangeTaskView cancelDraft(ChangeTaskId id, long version, String generation,
+                                                   String actor, String actorType) {
         ChangeTask task = draftOperation(id, version, generation, actor);
         if (task.state() != ChangeState.DRAFTING_SPEC) throw new ChangeConflictException("当前状态不能取消 Draft");
         saveDraftJob(task, task.draftJob().finish(DraftJob.Status.CANCELED, 0, "用户取消"),
-                ChangeState.CANCELED, "spec.draft_canceled", actor);
+                ChangeState.CANCELED, "spec.draft_canceled", actor, actorType);
         return get(id);
     }
 
     @Override
-    public synchronized ChangeTaskView retryDraft(ChangeTaskId id, long version, String generation, String actor) {
+    public synchronized ChangeTaskView retryDraft(ChangeTaskId id, long version, String generation,
+                                                  String actor, String actorType) {
         ChangeTask task = draftOperation(id, version, generation, actor);
         if (task.state() != ChangeState.FAILED || task.draftJob().status() != DraftJob.Status.FAILED) {
             throw new ChangeConflictException("只有生成失败的 Draft 可以重试");
         }
         saveDraftJob(task, DraftJob.pending(task.draftJob().input(), clock.millis()),
-                ChangeState.DRAFTING_SPEC, "spec.draft_retried", actor);
+                ChangeState.DRAFTING_SPEC, "spec.draft_retried", actor, actorType);
         return get(id);
     }
 
@@ -724,9 +727,14 @@ public final class DefaultChangeWorkflow implements ChangeWorkflow, ChangeExecut
     }
 
     private void saveDraftJob(ChangeTask task, DraftJob job, ChangeState state, String type, String actor) {
+        saveDraftJob(task, job, state, type, actor,
+                type.equals("spec.draft_retried") || type.equals("spec.draft_canceled") ? "LEGACY" : "SYSTEM");
+    }
+
+    private void saveDraftJob(ChangeTask task, DraftJob job, ChangeState state, String type,
+                              String actor, String actorType) {
         ChangeTask next = task.withDraftJob(job, state, clock.instant());
-        store.update(task.version(), next, event(next, type,
-                type.equals("spec.draft_retried") || type.equals("spec.draft_canceled") ? "USER" : "SYSTEM",
+        store.update(task.version(), next, event(next, type, actorType,
                 actor, task.state(), state, draftPayload(job)));
     }
 

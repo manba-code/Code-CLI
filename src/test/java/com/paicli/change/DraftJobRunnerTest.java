@@ -39,7 +39,7 @@ class DraftJobRunnerTest {
                 runner.start(); server.start();
                 String base = "http://127.0.0.1:" + server.port() + "/v1/changes";
                 String body = ChangeJson.MAPPER.writeValueAsString(Map.of("idempotencyKey", "hanging",
-                        "title", "Async", "requirement", "Fix output", "actorId", "owner",
+                        "title", "Async", "requirement", "Fix output",
                         "repository", Map.of("path", root.toString(), "baseRef", "main")));
                 JsonNode created = send(base, body, 201); // 2s request timeout while stub remains blocked
                 assertEquals("DRAFTING_SPEC", created.path("state").asText());
@@ -148,7 +148,7 @@ class DraftJobRunnerTest {
     }
     private static String operation(JsonNode task) throws Exception {
         return ChangeJson.MAPPER.writeValueAsString(Map.of("expectedVersion", task.path("version").asLong(),
-                "expectedGeneration", task.path("draftJob").path("generation").asText(), "actorId", "owner"));
+                "expectedGeneration", task.path("draftJob").path("generation").asText()));
     }
     private JsonNode send(String url, String body, int status) throws Exception {
         var request = HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(2)).header("Authorization", "Bearer test-only");

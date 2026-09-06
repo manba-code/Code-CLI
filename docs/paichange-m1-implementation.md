@@ -10,7 +10,7 @@
 
 - `POST /v1/changes/{id}/draft-cancel`：仅接受 `DRAFTING_SPEC`，转为 `CANCELED`。
 - `POST /v1/changes/{id}/draft-retry`：仅接受 Draft 失败的 `FAILED`，创建新的 generation，保留原输入、目标 revision 和全部旧事件。
-- 两个操作请求体均为 `{"expectedVersion":2,"expectedGeneration":"任务详情中的 generation","actorId":"developer"}`。版本或 generation 过期返回 409；不支持复用旧版本自动重放。
+- M1 当时两个操作请求体包含 `expectedVersion + expectedGeneration + actorId`。M5 后 `actorId` 改为可选一致性断言，服务端以认证 Principal 为操作者；版本或 generation 过期仍返回 409，不支持复用旧版本自动重放。
 - 取消是终止本次任务；已取消任务不提供恢复执行入口，需要新幂等键重新创建。Spec 审批仍要求当前 version + digest，锁定后不再生成 Draft。
 - 详情和列表新增 `draftJob`：generation、revision、status、attempts、availableAt、deadlineAt、error。时间字段为 Unix 毫秒；内部输入快照和 lease 不出现在此对象的 HTTP 表示中。
 
@@ -77,4 +77,3 @@ mvn test -Pquick
 - Node Web 回归：6 tests 全通过；`mvn package -DskipTests` 成功。
 - 浏览器：使用独立临时目录和回环延迟/失败 stub，确认创建返回 DRAFTING_SPEC 并恢复提交按钮；资格失败显示失败原因和重试入口；新 generation 生成后进入 SPEC_REVIEW，旧失败事件保留；刷新清空 Key，重新连接自动回到 URL fragment 的任务；服务重启保留 attempt 并记录中断恢复；长耗时生成可取消并显示 CANCELED。含 HTML 片段的需求显示为文本。页面布局已检查。
 - 浏览器发现创建区提示可能停留在生成中，已让它跟随后台结果更新，并增加相应前端断言。浏览器辅助入口最初采用 Java source-file 运行，访问测试 helper 时触发类加载问题；改为编译后运行完成验收。辅助文件和数据仅留在系统临时目录，不进入产品或仓库。
-

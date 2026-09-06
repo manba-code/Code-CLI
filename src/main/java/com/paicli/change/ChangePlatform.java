@@ -24,6 +24,9 @@ public final class ChangePlatform implements AutoCloseable {
     private DurableTaskManager jobs;
     private com.paicli.runtime.task.DraftJobRunner drafts;
     private DefaultChangeWorkflow workflow;
+    private ToolApprovalCoordinator toolApprovals;
+    private TrustedEvidenceStore evidenceStore;
+    private WorkerIsolation isolation;
     private ChangeApiHandler handler;
     private boolean closed;
     private boolean started;
@@ -42,6 +45,21 @@ public final class ChangePlatform implements AutoCloseable {
     public ChangePlatform(Path root, Path fixtures, ChangeSpecModule specs, PaiCliConfig config,
                           WorkspaceProvisioner workspaces, ChangeWorkerRuntimeFactory runtimes,
                           DeliveryHeadReader heads, boolean offlineDemo) throws Exception {
+        this(root, fixtures, specs, config, workspaces, runtimes, heads, offlineDemo,
+                new ChangeAuthorizer(ProjectMembershipProvider.none()));
+    }
+
+    public ChangePlatform(Path root, Path fixtures, ChangeSpecModule specs, PaiCliConfig config,
+                          WorkspaceProvisioner workspaces, ChangeWorkerRuntimeFactory runtimes,
+                          DeliveryHeadReader heads, boolean offlineDemo, ChangeAuthorizer authorizer) throws Exception {
+        this(root, fixtures, specs, config, workspaces, runtimes, heads, offlineDemo, authorizer,
+                EphemeralSecretProvider.none());
+    }
+
+    public ChangePlatform(Path root, Path fixtures, ChangeSpecModule specs, PaiCliConfig config,
+                          WorkspaceProvisioner workspaces, ChangeWorkerRuntimeFactory runtimes,
+                          DeliveryHeadReader heads, boolean offlineDemo, ChangeAuthorizer authorizer,
+                          EphemeralSecretProvider secretProvider) throws Exception {
         Files.createDirectories(root);
         lockChannel = FileChannel.open(root.resolve("platform.lock"), StandardOpenOption.CREATE, StandardOpenOption.WRITE);
         FileLock acquired;
@@ -56,21 +74,25 @@ public final class ChangePlatform implements AutoCloseable {
         try {
             Path database = root.resolve("changes.db");
             store = new SqliteChangeStore(database);
+            evidenceStore = new TrustedEvidenceStore(database, root.resolve("evidence-archive"));
+            isolation = DockerWorkerIsolation.fromConfig(root, config, secretProvider);
             scm = new MockScmAdapter(database);
             workflow = new DefaultChangeWorkflow(store, store, specs, config, Clock.systemUTC());
+            toolApprovals = new ToolApprovalCoordinator(store, store, authorizer);
             drafts = new com.paicli.runtime.task.DraftJobRunner(workflow, store);
             jobs = new DurableTaskManager(database, prompt -> {
                 throw new IllegalStateException("PaiChange 队列只接受 reference-only Worker Job");
             }, 2);
-            DefaultChangeWorker worker = new DefaultChangeWorker(workflow, workspaces, runtimes);
+            DefaultChangeWorker worker = new DefaultChangeWorker(workflow, workspaces, runtimes,
+                    new ChangeWorkerRuntimeContext(toolApprovals), isolation, evidenceStore);
             new ChangeWorkerJobHandler(workflow, id -> {
                 // A recovered technical job may remain after its business result committed.
                 if (workflow.get(id).task().state() == ChangeState.QUEUED) worker.run(id);
-            }).register(jobs);
+            }, toolApprovals, isolation.capabilities().enabled()).register(jobs);
             workflow.connect(id -> jobs.enqueueWorkerJob(ChangeWorkerJobHandler.JOB_TYPE, id.value()), scm, heads);
-            Path artifacts = workspaces instanceof GitWorktreeWorkspaceProvisioner git ? git.artifactRoot() : root;
             handler = new ChangeApiHandler(workflow, store, new MockWorkItemAdapter(fixtures, workflow),
-                    new ChangeArtifactReader(root, artifacts), offlineDemo);
+                    new ChangeArtifactReader(evidenceStore, root, evidenceStore.root()), offlineDemo, authorizer,
+                    toolApprovals, isolation.capabilities(), true);
         } catch (Exception e) {
             close();
             throw e;
@@ -90,6 +112,12 @@ public final class ChangePlatform implements AutoCloseable {
         if (closed) throw new IllegalStateException("ChangePlatform 已关闭");
         if (started) return;
         started = true;
+        try { isolation.recoverOrphans(); }
+        catch (Exception e) {
+            started = false;
+            throw new IllegalStateException("M6a Docker 隔离启动检查或遗留容器清理失败", e);
+        }
+        toolApprovals.recoverPending();
         drafts.start();
         jobs.start();
         scheduler.scheduleWithFixedDelay(this::resumePending, 0, 250, TimeUnit.MILLISECONDS);
@@ -119,10 +147,13 @@ public final class ChangePlatform implements AutoCloseable {
         try { scheduler.awaitTermination(5, TimeUnit.SECONDS); }
         catch (InterruptedException e) { Thread.currentThread().interrupt(); }
         if (drafts != null) drafts.close();
+        if (toolApprovals != null) toolApprovals.close();
         if (jobs != null) jobs.close();
+        if (isolation != null) isolation.close();
         if (scm != null) {
             try { scm.close(); } catch (Exception e) { /* Already closing, cannot publish. */ }
         }
+        if (evidenceStore != null) evidenceStore.close();
         if (store != null) store.close();
         try { lock.release(); } catch (Exception e) { /* Channel close releases the lock too. */ }
         try { lockChannel.close(); } catch (Exception e) { /* Best effort shutdown. */ }

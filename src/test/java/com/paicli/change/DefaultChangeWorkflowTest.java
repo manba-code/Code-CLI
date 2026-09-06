@@ -241,11 +241,16 @@ class DefaultChangeWorkflowTest {
                         delivery.version(), delivery.spec().digest(), delivery.run().headSha(),
                         delivery.run().runId(), delivery.judgmentRevision(),
                         "requester", "self approve")));
+        assertThrows(ChangeForbiddenException.class, () -> workflow.decide(id,
+                new ChangeDecision.ApproveDelivery(
+                        delivery.version(), delivery.spec().digest(), delivery.run().headSha(),
+                        delivery.run().runId(), delivery.judgmentRevision(),
+                        "lead", "same actor as spec approval")));
 
         ChangeTask publishing = workflow.decide(id, new ChangeDecision.ApproveDelivery(
                 delivery.version(), delivery.spec().digest(), delivery.run().headSha(),
                         delivery.run().runId(), delivery.judgmentRevision(),
-                        "lead", "delivery ok")).task();
+                        "delivery-lead", "delivery ok")).task();
 
         assertEquals(ChangeState.PUBLISHING, publishing.state());
         assertEquals(ApprovalRecord.Stage.DELIVERY, publishing.deliveryApproval().stage());

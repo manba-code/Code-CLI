@@ -12,8 +12,18 @@ public record HumanReview(List<Entry> entries, List<Judgment> judgments) {
     }
     public record Entry(String id, String changeId, String specDigest, String runId, String headSha,
                         long judgmentRevision, String criterionId, SpecRunResult.HumanDecision decision,
-                        String reason, List<String> artifactRefs, String actorId, Instant createdAt) {
-        public Entry { artifactRefs = List.copyOf(artifactRefs); }
+                        String reason, List<String> artifactRefs, String actorId, String actorType,
+                        Instant createdAt) {
+        public Entry(String id, String changeId, String specDigest, String runId, String headSha,
+                     long judgmentRevision, String criterionId, SpecRunResult.HumanDecision decision,
+                     String reason, List<String> artifactRefs, String actorId, Instant createdAt) {
+            this(id, changeId, specDigest, runId, headSha, judgmentRevision, criterionId, decision,
+                    reason, artifactRefs, actorId, "LEGACY", createdAt);
+        }
+        public Entry {
+            artifactRefs = List.copyOf(artifactRefs);
+            actorType = actorType == null || actorType.isBlank() ? "LEGACY" : actorType;
+        }
     }
     public record Judgment(long revision, String specDigest, String runId, String headSha,
                            SpecRunResult.Verdict verdict, List<SpecRunResult.CriterionResult> criterionResults,

@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -59,6 +60,7 @@ public class PaiCliConfig {
     public static class PaiChangeConfig {
         private boolean forbidRequesterSelfApprovalForMediumAndHigh = true;
         private Map<String, PaiChangeRouteConfig> routes = new LinkedHashMap<>();
+        private DockerIsolationConfig dockerIsolation = new DockerIsolationConfig();
 
         public boolean isForbidRequesterSelfApprovalForMediumAndHigh() {
             return forbidRequesterSelfApprovalForMediumAndHigh;
@@ -82,6 +84,69 @@ public class PaiCliConfig {
             }
             PaiChangeRouteConfig direct = routes.get(riskLevel);
             return direct != null ? direct : routes.get(riskLevel.toLowerCase());
+        }
+
+        public DockerIsolationConfig getDockerIsolation() {
+            if (dockerIsolation == null) dockerIsolation = new DockerIsolationConfig();
+            return dockerIsolation;
+        }
+
+        public void setDockerIsolation(DockerIsolationConfig dockerIsolation) {
+            this.dockerIsolation = dockerIsolation == null ? new DockerIsolationConfig() : dockerIsolation;
+        }
+    }
+
+    /** Shared-pilot execution isolation. It intentionally contains no credential values. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class DockerIsolationConfig {
+        private boolean enabled;
+        private String image = "";
+        private double cpus = 1.0d;
+        private int memoryMb = 1024;
+        private int pidsLimit = 128;
+        private int taskTimeoutSeconds = 900;
+        private String user = "";
+        private Map<String, DockerEgressConfig> projectEgress = new LinkedHashMap<>();
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public String getImage() { return image; }
+        public void setImage(String image) { this.image = image == null ? "" : image; }
+        public double getCpus() { return cpus; }
+        public void setCpus(double cpus) { this.cpus = cpus; }
+        public int getMemoryMb() { return memoryMb; }
+        public void setMemoryMb(int memoryMb) { this.memoryMb = memoryMb; }
+        public int getPidsLimit() { return pidsLimit; }
+        public void setPidsLimit(int pidsLimit) { this.pidsLimit = pidsLimit; }
+        public int getTaskTimeoutSeconds() { return taskTimeoutSeconds; }
+        public void setTaskTimeoutSeconds(int taskTimeoutSeconds) { this.taskTimeoutSeconds = taskTimeoutSeconds; }
+        public String getUser() { return user; }
+        public void setUser(String user) { this.user = user == null ? "" : user; }
+        public Map<String, DockerEgressConfig> getProjectEgress() { return projectEgress; }
+        public void setProjectEgress(Map<String, DockerEgressConfig> projectEgress) {
+            this.projectEgress = projectEgress == null ? new LinkedHashMap<>() : new LinkedHashMap<>(projectEgress);
+        }
+    }
+
+    /** A pre-provisioned, operator-controlled proxy-only Docker network for one project. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class DockerEgressConfig {
+        private String network = "";
+        private String proxyUrl = "";
+        private List<String> allowedHosts = List.of();
+        private List<String> allowedTools = List.of();
+
+        public String getNetwork() { return network; }
+        public void setNetwork(String network) { this.network = network == null ? "" : network; }
+        public String getProxyUrl() { return proxyUrl; }
+        public void setProxyUrl(String proxyUrl) { this.proxyUrl = proxyUrl == null ? "" : proxyUrl; }
+        public List<String> getAllowedHosts() { return allowedHosts; }
+        public void setAllowedHosts(List<String> allowedHosts) {
+            this.allowedHosts = allowedHosts == null ? List.of() : List.copyOf(allowedHosts);
+        }
+        public List<String> getAllowedTools() { return allowedTools; }
+        public void setAllowedTools(List<String> allowedTools) {
+            this.allowedTools = allowedTools == null ? List.of() : List.copyOf(allowedTools);
         }
     }
 

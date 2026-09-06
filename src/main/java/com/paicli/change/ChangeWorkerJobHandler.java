@@ -13,10 +13,24 @@ public final class ChangeWorkerJobHandler implements WorkerJobRunner, WorkerJobL
 
     private final ChangeExecutionControl executionControl;
     private final ChangeWorker worker;
+    private final ToolApprovalCoordinator toolApprovals;
+    private final boolean failClosedOnRecovery;
 
     public ChangeWorkerJobHandler(ChangeExecutionControl executionControl, ChangeWorker worker) {
+        this(executionControl, worker, null, false);
+    }
+
+    public ChangeWorkerJobHandler(ChangeExecutionControl executionControl, ChangeWorker worker,
+                                  ToolApprovalCoordinator toolApprovals) {
+        this(executionControl, worker, toolApprovals, false);
+    }
+
+    public ChangeWorkerJobHandler(ChangeExecutionControl executionControl, ChangeWorker worker,
+                                  ToolApprovalCoordinator toolApprovals, boolean failClosedOnRecovery) {
         this.executionControl = Objects.requireNonNull(executionControl, "executionControl");
         this.worker = Objects.requireNonNull(worker, "worker");
+        this.toolApprovals = toolApprovals;
+        this.failClosedOnRecovery = failClosedOnRecovery;
     }
 
     public void register(DurableTaskManager manager) {
@@ -40,6 +54,16 @@ public final class ChangeWorkerJobHandler implements WorkerJobRunner, WorkerJobL
 
     @Override
     public void recovered(WorkerJob job) {
+        if (failClosedOnRecovery) {
+            executionControl.cancelExecution(changeId(job),
+                    "M6a 隔离 Worker 在进程重启前处于 RUNNING；执行结果未知，为避免重放外部动作而安全中止");
+            return;
+        }
+        if (toolApprovals != null && toolApprovals.hadInterruptedApproval(changeId(job))) {
+            executionControl.cancelExecution(changeId(job),
+                    "进程重启时存在未决工具审批；原执行栈已丢失，为避免重放副作用调用而安全中止");
+            return;
+        }
         executionControl.recoverExecution(
                 changeId(job),
                 "Worker Job 从 RUNNING 恢复到 ENQUEUED，recoveryCount=" + job.recoveryCount());

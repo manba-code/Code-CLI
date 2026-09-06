@@ -339,3 +339,19 @@ EMBEDDING_BASE_URL=http://localhost:11434
 ### PaiChange M2 人工验收
 
 `HumanEvidenceSubmission` 与 Delivery 决策均显式绑定任务 version、Spec digest、run、head 和判断 revision。Workflow 通过 `ChangeArtifactReader` 验证服务端 Artifact ID，`DeliveryJudgmentReducer` 只读原始 Run 最终确定性结果，追加人工记录/判断且清除旧交付审批；批准/发布前重算比对。SQLite 人工快照、审批失效和事件使用同一事务；Mock 的追加历史与当前 Check 投影使用另一幂等事务，按 publication key 补偿事件。详见 [M2 实施记录](paichange-m2-implementation.md)，不能让 Adapter 或页面自报成功，也不能覆盖原始 result.json。
+
+### PaiChange M3 工具策略与审批
+
+PaiChange Worker 必须使用 `GovernedToolRegistry` 统一覆盖 Agent 初次执行、Evidence 修复和 command Verifier。`ProjectToolPolicy` 将 route profile 与项目版本规则计算为 ALLOW / REQUIRE_APPROVAL / DENY；拒绝优先且未知工具默认拒绝。逐调用审批只存脱敏摘要和规范化参数摘要，绑定 change/run/call/cwd/Spec/策略版本，通过 M5 `APPROVE_TOOL` 授权；批准后还要重检权限、策略及原 PathGuard/CommandGuard。默认只允许一个 Worker 等待审批，超时、取消、关闭和重启均保守失败；重启遗留调用标为 INTERRUPTED 并中止原 Job，绝不重放丢失执行栈。详见 [M3 实施记录](paichange-m3-implementation.md)。这不是容器或网络沙箱。
+
+### PaiChange M5 身份与 RBAC
+
+`RuntimeApiServer` 通过 `PrincipalAdapter` 建立服务端可信 subject，`ChangeApiHandler` 不接受客户端选择 actor。项目边界由持久化 repository 派生，`ChangeAuthorizer` 每请求读取 `ProjectMembershipProvider` 并执行 VIEWER / DEVELOPER / APPROVER / PROJECT_ADMIN 动作权限；服务账号不能获得真人或工具审批动作。MEDIUM/HIGH 的 requester、Spec approver、Delivery approver 按稳定 subject 做职责分离，管理员不豁免。默认 API Key 只映射固定 `local-user`，仅限 localhost 单操作者兼容；具体 OIDC IdP 和生产成员目录没有实现。详见 [M5 实施记录](paichange-m5-implementation.md)。
+
+### PaiChange M6a 最小执行隔离
+
+共享试点只有在 `PAICHANGE_DOCKER_ENABLED=true` 且目标主机验收通过时才使用 M6a。`DockerWorkerIsolation` 为每个任务创建独立容器，唯一 bind mount 是当前 worktree；命令和 command Verifier 走容器，Java 编排、LLM、文件工具、策略/审批、SQLite 和可信 Evidence 留在宿主控制面。镜像必须 digest 固定且本机预置，创建使用 `--pull=never`；Docker 不可用不降级。容器使用非 root、只读根、cap-drop/no-new-privileges、CPU/内存/PID/总时限，并在取消/超时/异常/关闭时 `docker rm -f`。普通文件工具仍必须先通过 M3 及 PathGuard，隔离 session 关闭后不得继续调用。
+
+网络默认 `none`。显式出口只接受项目专属 Docker internal 网络，并核对 egress、projectId 和 allowlist 策略摘要 label；任务通过同网代理访问允许目标，宿主 Web/MCP 另做工具/host 判定。代理必须独立落实相同 ACL，Docker label 不是代理正确性的证明。默认不注入 Secret；可插拔 `EphemeralSecretProvider` 仅提供短期 `*_FILE` tmpfs 文件，模型/SCM 凭据留在控制面。
+
+`TrustedEvidenceStore` 从 Worker staging 有界采集 `result.json`/`change.diff`，由控制面生成对象哈希和 manifest，并以 change/run 不可覆盖记录存 SQLite。所有读取、人工判断、审批和发布前复核；不一致即拒绝 success。Docker 模式启动先清遗留容器，崩溃前 RUNNING 的 Worker 记录未知结果并中止，不自动重放。详见 [M6a 实施记录](paichange-m6a-implementation.md)。容器不防 daemon/root/内核逃逸，本地哈希归档也不是 WORM 或 M6b 对象存储。

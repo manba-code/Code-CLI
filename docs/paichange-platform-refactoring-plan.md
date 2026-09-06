@@ -995,7 +995,7 @@ sequenceDiagram
 
 ### Phase 7：生产化设计补全
 
-2026-09-04：六项后续能力已另行整理为[后续开发计划](paichange-next-development-plan.md)，包含优先级、依赖、实施切片与验收标准。随后 M1 Draft 异步生成与中断恢复已完成，见 [M1 实施记录](paichange-m1-implementation.md)；M2 Human Evidence 也已完成，见 [M2 实施记录](paichange-m2-implementation.md)；M3–M6 仍待开发。本文 Phase 7 继续保留为设计纲要；具体实施使用新计划的 M1–M6 编号。
+2026-09-04：六项后续能力已另行整理为[后续开发计划](paichange-next-development-plan.md)，包含优先级、依赖、实施切片与验收标准。随后 M1 Draft 异步生成与中断恢复已完成，见 [M1 实施记录](paichange-m1-implementation.md)；M2 Human Evidence 也已完成，见 [M2 实施记录](paichange-m2-implementation.md)；2026-09-05 又完成 M5 身份/RBAC 和 [M3 工具策略与审批](paichange-m3-implementation.md)；2026-09-06 完成 [M6a 最小执行隔离](paichange-m6a-implementation.md)代码及当前主机的非破坏性 Docker 验收，Docker Desktop daemon 重启故障注入待单独授权。M4/M6b 仍待开发。本文 Phase 7 继续保留为设计纲要；具体实施使用新计划的 M1–M6 编号。
 
 只补文档，不作为 MVP 交付：
 
@@ -1262,12 +1262,12 @@ MVP 只展示事实，不宣称降低 Reviewer 时间或提升成功率。真实
 
 剩余边界与对 Phase 4 记录的修正：
 
-- Phase 4 所写“继续复用 ToolRegistry/HITL”不能解释为平台工具审批已接通。实际 Worker 工厂当前创建原始 `ToolRegistry`，只有 PathGuard/CommandGuard；`STANDARD / RESTRICTED / LOCKED_DOWN` 仍是可审计 profile，尚无组织白名单映射、后台工具审批队列或交互 HITL Handler。该事实已在 README/AGENTS 明确标记；本地输入必须可信，worktree 不构成沙箱。
+- Phase 4 所写“继续复用 ToolRegistry/HITL”在当时不能解释为平台工具审批已接通。M3 随后新增 `GovernedToolRegistry`、项目版本策略和持久化后台审批，统一覆盖初次执行、修复与 command Verifier；批准后仍经过原 PathGuard/CommandGuard。该实现仍是本地控制面，本地输入必须可信，worktree 不构成沙箱，详见 [M3 实施记录](paichange-m3-implementation.md)。
 - 真实运行时仍使用所配置 provider/model，创建/补充 Draft 或运行 Worker 会消耗模型 Token；本次测试使用替身，未证明真实工单效果或提效收益。
 - M1 已将创建/补充 Draft 移到持久化后台任务，支持有界重试、取消和 CREATED/DRAFTING_SPEC 中断恢复；已保存的 SPEC_REVIEW 可跨进程审批，READY/QUEUED/PUBLISHING 继续恢复。当前列表/事件没有分页，不适合高容量服务。
 - M2 已提供 Human Criterion 补录/重算入口；缺项保持 pending，不能凭普通 Delivery Approval 自动转换为 PASSED。Check 与审批绑定封存分支身份；分支变化后阻止再次发布，当前没有重新验证新 head 的 API，需创建新任务。
 - 文件 Evidence 尚无内容哈希/不可变对象存储；发布前核对文件与结果身份，不构成防本地恶意篡改保证。SQLite 与 Git 之间没有跨资源事务，Check 绑定已读 head，不能宣称真实远程分支保护或分布式 exactly-once；单进程锁、业务 claim/CAS 与 Mock 唯一键覆盖本地重复请求和发布重试。
-- Phase 6 Web 页面、真实 Jira/GitLab/GitHub Adapter、RBAC、容器隔离、组织工具策略和生产队列仍未实现。因此当前只可表述为“Phase 1–5 本地后端与 Mock 链路完成”，不代表完整平台 MVP 或生产交付完成。
+- 本段为 2026-09-04 Phase 5 收束时的历史边界；Phase 6 Web、M5 RBAC 与 M3 本地项目工具策略/Worker HITL 已实现。真实 Jira/GitLab/GitHub Adapter、具体 OIDC/生产成员目录、容器隔离、生产策略分发和生产队列仍未实现，仍不代表生产交付完成。
 
 ### 2026-09-04：Phase 6 最小 Web 与显式离线演示完成
 
@@ -1282,7 +1282,7 @@ MVP 只展示事实，不宣称降低 Reviewer 时间或提升成功率。真实
 - `OfflineChangeDemo` 由 `-Dpaichange.demo=true` 显式装配，入口在正常 config/client 加载之前；不加载个人 provider 配置、不创建真实 LlmClient、不启动 MCP。未启用时默认行为不变；serve 识别逻辑集中到 CliCommandParser，未新增 `/demo` 或新 CLI flag。离线 `/v1/threads` 保持端点形状，但回复明确为模拟且不调用模型。
 - 本地 fixture 在 `src/main/resources/paichange-demo/`；初始化独立小型 Git 仓库及工单，不改用户仓库。Draft 替身生成固定可执行契约并保存补充文本；ReAct 首次写 `hours >= 24`，真实本地 Java command Verifier 校验 23/24/25 边界失败；SpecRunCoordinator 按原受控修复条件重入同一执行链路一次，写 `hours > 24`，验证通过后进入 Delivery Review。真实使用 ChangeWorkflow、队列、Worker、Git worktree/封存 head、SpecExecutionEngine、Verifier、Evidence 和 SQLite；Mock SCM 仅写本地数据库。离线创建只允许固定 `offline-refund.json`。
 - Risk 仍由原 RiskEngine 决定（退款目录得到 MEDIUM）；演示 route 明确为 `offline-demo / deterministic-fixture`。修正 ExecutionRouter 的默认模型回退为仅在 model 缺省时求值，避免显式替身 model 被真实 provider 默认值解析拦截；没有把替身注册成生产 LlmClient。
-- 所有生命周期、风险、审批和 Check conclusion 仍由 ChangeWorkflow 集中维护；HTTP Handler、前端和 Adapter 未新增状态写路径。页面明确 `toolPolicy` 只是记录的 profile，组织白名单/Worker HITL 尚未接通。
+- 所有生命周期、风险、审批和 Check conclusion 仍由 ChangeWorkflow 集中维护；HTTP Handler、前端和 Adapter 未新增状态写路径。Phase 6 当时页面明确 `toolPolicy` 只是记录的 profile；M3 后续已接通项目版本策略、Worker HITL 与独立工具审批页面，不改变 ChangeWorkflow 的业务状态所有权。
 
 启动及五分钟步骤：
 
@@ -1310,9 +1310,9 @@ java -Dpaichange.demo=true -jar target/paicli-1.0-SNAPSHOT.jar serve --http --po
 剩余边界：
 
 - 当前成果是本地可演示 MVP。确定性 Draft/ReAct 替身不证明真实工单理解、模型质量或提效收益；固定 fixture 的自然语言补充只进入确认记录，不能据此声称通用需求生成已离线实现。
-- 真实 Jira/GitLab/GitHub、RBAC、组织工具策略、后台 Worker HITL 仍未实现；Draft 中断恢复已在 M1 补齐，Human Evidence 已在 M2 补齐。HIGH 无有效 Delivery Approval 不得 success；NEEDS_HUMAN 仍 pending 且 APPROVE 为 422；失败 Verdict 仍 failure。
+- 真实 Jira/GitLab/GitHub、具体 OIDC/生产成员目录、容器/网络/Secret 隔离仍未实现；Draft 中断恢复已在 M1 补齐，Human Evidence 已在 M2 补齐，可信 Principal 与项目 RBAC 已在 M5 补齐，项目工具策略与后台 Worker HITL 已在 M3 补齐。HIGH 无有效 Delivery Approval 不得 success；NEEDS_HUMAN 仍 pending 且 APPROVE 为 422；失败 Verdict 仍 failure。
 - 页面没有高级代码编辑器、分页、SSE 或多用户会话管理；全部历史正文查询适合小规模本地演示。代码 diff 继承执行引擎的截断状态，界面显式标记。
-- 单 API Key/客户端 actorId 不构成身份体系；worktree 不是沙箱。产物目录检查不构成对本地恶意并发篡改的强隔离，文件 Evidence 尚无内容哈希/不可变对象存储；SQLite/Git 无跨资源事务，Mock Check 不构成真实远程分支保护。
+- M5 后客户端 actorId 不能决定身份；单 API Key 固定映射为 `local-user`，仍只构成本地单操作者兼容模式而非共享身份体系。worktree 不是沙箱。产物目录检查不构成对本地恶意并发篡改的强隔离，文件 Evidence 尚无内容哈希/不可变对象存储；SQLite/Git 无跨资源事务，Mock Check 不构成真实远程分支保护。
 
 ### 2026-09-04：创建任务等待反馈补齐
 
@@ -1320,3 +1320,19 @@ java -Dpaichange.demo=true -jar target/paicli-1.0-SNAPSHOT.jar serve --http --po
 - 响应后提示正在加载详情；SPEC_REVIEW 显示草稿已生成，HTTP 错误、已保存但详情加载失败、201 携带 FAILED 分别反馈；finally 恢复按钮。保持原请求幂等和 Workflow 状态语义不变。
 - 新增无依赖 Node 回归 `node --test src/test/js/change-web-creation.test.cjs`，执行实际页面事件处理器并挂起创建响应：修复前 3 项失败，修复后 3 项通过，覆盖即时反馈/重复提交、失败恢复/同请求重试、Draft 失败不误报成功。该前端测试单独执行，不包含在 Maven quick 计数内。
 - 浏览器使用仅监听 127.0.0.1 的延迟响应测试服务验收：等待阶段提示可见且两按钮禁用，响应后提示“Spec 草稿已生成”且按钮恢复。未调用真实模型或改动实际任务。`mvn package -DskipTests` 成功，需重启正在运行的 jar 服务并刷新页面加载新资源。
+
+### 2026-09-06：M6a 共享试点前最小执行隔离
+
+本节记录 Phase 7 设计纲要之后的 M6a 实际落地，完整配置、威胁模型与测试入口见 [M6a 实施记录](paichange-m6a-implementation.md)。它不追溯修改 D4“容器只做生产设计”的历史决策，而是说明该决策之后新增的有限单机执行边界。
+
+- 新增 `WorkerIsolation` / `DockerWorkerIsolation`。控制面仍在宿主；每个 ChangeTask 的 shell 与 command Verifier 使用独立 Docker 容器，唯一 bind mount 是当前 worktree。镜像须 digest 固定且本机预置，`image inspect + --pull=never` 禁止隐式拉取；Docker 不可用时 fail closed。
+- 容器使用非 root、只读根、`--init`、cap-drop/no-new-privileges、tmpfs 和 CPU/内存/PID/总时限。取消、超时、Secret 失效、异常退出、平台关闭和启动遗留恢复均以整容器移除为进程树边界；控制面接受结果前复核容器状态。
+- 默认网络为 `none`。项目放行只接受带 projectId 与策略摘要 label 的 Docker internal 代理网络；宿主 Web/MCP 还有工具与 host gate。部署代理必须落实同一 allowlist，Docker label 不能证明代理 ACL 正确。
+- 默认不向容器传 Secret。可插拔 `EphemeralSecretProvider` 只接受短期 `*_FILE` 内容，经 stdin 写入 tmpfs；值不进入 Docker argv、配置、Prompt 或 Evidence。模型/SCM 凭据留在控制面/发布组件。
+- 新增 `TrustedEvidenceStore`。控制面有界复制 Worker staging，对对象与 manifest 计算 SHA-256，以 change/run 不可覆盖记录写 SQLite；Artifact、人工判断、Delivery Approval、Check 与完成前都复核。篡改、缺失、额外对象、符号链接或归档失败不得 success。
+- Docker 模式下，宿主崩溃前为 RUNNING 的 Worker 不再自动重跑，而是记录结果未知并中止，避免重放外部动作；已归档 Evidence 可跨进程复核。普通本地兼容模式保留 M1 恢复语义。
+- Web capabilities 和 Artifact 面板显示 Docker/宿主执行状态、Evidence 完整性及 manifest digest。离线演示默认不启用 Docker，但仍使用可信 Evidence 归档。
+
+M6a 不等于生产沙箱或 M6b：它信任 Docker daemon、宿主内核、控制面、预置镜像和代理，不能防 daemon/root/内核逃逸或同权限宿主篡改；本地 SQLite + 哈希目录也不是 WORM 对象存储或跨资源原子事务。目标主机已完成除 Docker daemon 重启外的真实验收，但这只证明当前主机、镜像和临时代理组合下的有限单机边界，不能外推为绝对安全或生产多租户隔离。M4 真实 SCM 与 M6b 存储部署均未实施。
+
+本次目标主机验收：Docker Desktop 29.7.2 上使用本机预置、digest 固定的 Alpine 镜像运行 7 条真实 Docker 测试。双任务只读写各自 worktree；宿主、metadata 和公网默认不可达；带精确 projectId/策略摘要的 internal 假代理执行 host allowlist 并记录 ALLOW/DENY，错误 label/digest 拒绝启动；cgroup 记录实际 OOM kill 与 PID 拒绝；命令/任务超时、主动取消、异常退出、Secret 到期和应用级 orphan 恢复均清理容器进程树；Evidence 在控制面重开后复核，篡改被阻断。实测又修复小写 proxy 变量、取消锁竞争和 non-root Secret tmpfs 属主三个缺陷。M6a 针对性 36 项、M1/M2/M3/M5 扩展回归 133 项、Node Web 16 项、quick 964 项（5 skipped）均 0 failures/errors，打包成功；浏览器从一次修复走到 Mock success / COMPLETED，应用重启后同一 Evidence manifest 仍为 `VERIFIED`。Docker Desktop daemon 重启仍待单独授权；M4/M6b、真实 SCM 和付费模型评测均未执行。

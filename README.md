@@ -256,30 +256,35 @@ v16.1 抽出 `Renderer` 接口 + 三个实现：
 - Runtime API 强制要求 `PAICLI_RUNTIME_API_KEY` 或 `-Dpaicli.runtime.api.key`
 - 详细文档见 `docs/phase-20-runtime-api.md`
 
-### PaiChange Phase 1–6：本地 Web 演示与 Mock 交付
+### PaiChange Phase 1–6 + M1/M2/M3/M5/M6a：本地 Web、Mock 交付与可选 Docker 执行隔离
 
 `serve --http` 现在同时装配 Change API 和原有 threads API。ChangeTask、事件、审批、Worker Job 和 Mock PR/Check 保存在 `~/.paichange/changes.db`，可通过 `PAICHANGE_DATA_DIR` / `-Dpaichange.data.dir` 指定数据目录；同一目录只允许一个平台进程。工作区位置继续使用 `PAICHANGE_WORKSPACE_DIR` / `-Dpaichange.workspace.dir`，必须在源仓库外。
 
-- `POST /v1/changes`：以 `idempotencyKey` 幂等创建；必填 `title`、`requirement`、`actorId`、`repository.path/baseRef`。
+- `POST /v1/changes`：以 `idempotencyKey` 幂等创建；必填 `title`、`requirement`、`repository.path/baseRef`。requester 来自服务端认证 Principal。
 - `GET /v1/changes`、`GET /v1/changes/{changeId}`：列表与详情，包含当前 Spec、风险、route、run 和 Mock delivery。
 - `GET /v1/changes/{changeId}/events?after=0`：JSON 事件回放，`after` 是已读事件的 `sequence`，不包含该事件。
 - `POST /v1/changes/{changeId}/spec-decisions`：`APPROVE / SUPPLEMENT / REJECT`，校验 `expectedVersion + expectedDraftDigest`。
-- `POST /v1/changes/{changeId}/draft-cancel` / `draft-retry`：取消正在生成的 Draft / 显式重试生成失败；请求携带 `expectedVersion + expectedGeneration + actorId`，过期返回 409。详情的 `draftJob` 展示 generation、目标 revision、attempt、退避时间与安全失败原因。
+- `POST /v1/changes/{changeId}/draft-cancel` / `draft-retry`：取消正在生成的 Draft / 显式重试生成失败；请求携带 `expectedVersion + expectedGeneration`，过期返回 409。详情的 `draftJob` 展示 generation、目标 revision、attempt、退避时间与安全失败原因。
 - `POST /v1/changes/{changeId}/delivery-decisions`：`APPROVE / REJECT`，校验 `expectedVersion + expectedSpecDigest + expectedRunId + expectedHeadSha + expectedJudgmentRevision`。
-
 - `POST /v1/changes/{changeId}/human-evidence`：按 Human Criterion 追加 PASS/FAIL/SKIPPED、理由与当前 Artifact ID，绑定同样五项身份；详情返回原始 Run 和有版本的当前交付判断。
+- `GET /v1/changes/{changeId}/tool-approvals`、`POST /v1/changes/{changeId}/tool-approvals/{approvalId}/decisions`：查看脱敏 Worker 调用并以 policy version、参数 digest、callId、runId、specDigest 精确批准或拒绝。
+- `GET/PUT /v1/changes/projects/{projectId}/tool-policy`：按项目读取或 CAS 更新版本化工具规则；更新需要 `MANAGE_TOOL_POLICY`。
 
-两组端点共用 `127.0.0.1` 监听和 `Authorization: Bearer <key>` / `X-PaiCLI-API-Key` 校验。Draft 创建/补充请求只保存任务与调度意图，模型在后台运行；201 不代表草稿已就绪。服务重启恢复未完成 Draft，已锁定 Spec 不重新生成；普通启动不会自动创建新任务。真实提交请求会使用配置的模型并产生模型费用，确定性测试不调用模型。
+两组端点继续只监听 `127.0.0.1`。`RuntimeApiServer` 先通过可插拔 `PrincipalAdapter` 验证凭据，再由 Change API 按项目成员与动作权限强制鉴权。旧 `actorId` 仅是可选一致性字段：存在时必须等于认证 subject，不能决定操作者。默认 `Authorization: Bearer <key>` / `X-PaiCLI-API-Key` 进入固定 `local-user` 的单操作者本地可信模式；它不是共享部署身份方案。Draft 创建/补充请求只保存任务与调度意图，模型在后台运行；201 不代表草稿已就绪。服务重启恢复未完成 Draft，已锁定 Spec 不重新生成；普通启动不会自动创建新任务。真实提交请求会使用配置的模型并产生模型费用，确定性测试不调用模型。
 
 Mock 工单示例见 `docs/fixtures/paichange/local-issue.json`：修改本地仓库路径与需求后，复制到数据目录的 `fixtures/`，以 `POST /v1/changes` 请求体 `{"fixture":"local-issue.json"}` 创建。Fixture 仅接受该目录内的 JSON 文件名。
 
 发布前重新核对锁定 Spec、分支 head、持久化原始 Verdict/Evidence、当前交付判断和有效审批；HIGH 必须有 Delivery Approval。`NEEDS_HUMAN` 仅发布 pending，Delivery Approval 不能覆盖它；当前交付判断失败仅发布 failure。发布失败保持未完成状态，后台可安全重试。
 
-当前已提供最小同源 Web 页面，仍不包含真实 Jira/GitLab/GitHub、RBAC 或组织工具白名单。`toolPolicy` 只是已记录的路由 profile；当前 Worker 工厂使用 `ToolRegistry` 的 PathGuard/CommandGuard，未接组织 profile 白名单或交互 HITL Handler，不能将业务审批理解为工具审批或安全沙箱。完整实施记录、HTTP 示例和剩余边界见 `docs/paichange-platform-refactoring-plan.md` §27。
+当前同源 Web 已接入服务端 Principal、项目 RBAC、登录失效和 401/403 反馈。M3 将 `STANDARD / RESTRICTED / LOCKED_DOWN` 从 route 标签变为实际 Worker 策略，并支持项目版本规则：本地只读默认允许；STANDARD 的联网/MCP 与 RESTRICTED/LOCKED_DOWN 的写文件和命令需逐调用审批；未知工具默认拒绝。Agent 初次执行、一次修复和 command Verifier 共用 `GovernedToolRegistry`，批准后仍执行原 PathGuard/CommandGuard。审批只保存脱敏摘要和参数 SHA-256，绑定 change/run/call/cwd/Spec/策略版本，M5 的 `APPROVE_TOOL` 与执行前撤权重检生效。默认最多一个审批等待槽、300 秒超时；重启不会恢复或重放丢失的调用栈。仍不包含真实 Jira/GitLab/GitHub，也不构成安全沙箱。详见 [M3 实施记录](docs/paichange-m3-implementation.md)、[M5 实施记录](docs/paichange-m5-implementation.md) 和 `docs/paichange-platform-refactoring-plan.md` §27。
+
+M6a 增加可选 Docker 执行平面和默认启用的可信 Evidence 归档。共享试点必须设置 `PAICHANGE_DOCKER_ENABLED=true` 与本机已存在、固定 digest 的 `PAICHANGE_DOCKER_IMAGE`；Docker/镜像/网络检查失败时不降级到宿主命令。每个任务只挂载自己的 worktree，以非 root、只读根、无 capabilities/no-new-privileges 运行，并限制 CPU、内存、PID 与任务总时长；取消或超时用 `docker rm -f` 清理进程树。默认 `--network none`，显式出口只能使用带项目及策略摘要 label 的 Docker internal 代理网络，并同时注入大小写 HTTP(S) proxy 变量以兼容不同客户端。容器默认不注入 Secret；部署装配只能提供短期 `*_FILE` 租约，Secret tmpfs 绑定配置的非 root uid/gid，模型和 SCM 凭据留在控制面。
+
+Worker Evidence 会由控制面复制到 `evidence-archive`，以 `(changeId, runId)` 不可覆盖地保存对象大小、SHA-256 和 manifest 摘要；Artifact、人工判断、交付审批和发布前都会复核，篡改/缺失/额外对象或归档失败均不得 success。2026-09-06 的目标主机验收已实测双任务文件隔离、internal 假代理 ACL/审计、cgroup 资源限制、取消/异常/Secret 到期清理、应用级 orphan 恢复及 Evidence 重启复核；Docker Desktop daemon 重启故障注入仍需单独授权。该本地哈希归档不是 WORM 对象存储，Docker 也不是绝对安全边界。配置、威胁模型和验收入口见 [M6a 实施记录](docs/paichange-m6a-implementation.md)。
 
 #### Web 与离线演示
 
-正常 `serve --http` 在同一端口提供 `/changes` 页面：任务创建/列表、详情与事件时间线、Draft/锁定 Spec、revision diff、风险与路由、代码 diff、Verifier/Criteria/Evidence、逐项人工验收、两阶段审批及 Mock PR Check 历史。页面空壳不含任务数据；连接后所有数据与决策均使用原 API Key 校验。Key 仅在当前页面内存中使用，不放入 URL、静态资源、浏览器存储或日志，刷新页面需要重新连接；URL fragment 保留当前 changeId，连接后继续跟踪。后台状态采用 1–10 秒退避轮询，可暂停；页面隐藏、断开和待审批/终态在当前判断的 Mock Check 发布对齐后停止轮询。
+正常 `serve --http` 在同一端口提供 `/changes` 页面：任务创建/列表、详情与事件时间线、Draft/锁定 Spec、revision diff、风险与路由、代码 diff、Verifier/Criteria/Evidence、逐项人工验收、两阶段审批及 Mock PR Check 历史。页面空壳不含任务数据；登录后显示服务端 Principal，列表按项目过滤，任务响应包含当前动作权限并据此隐藏无权按钮。隐藏只改善体验，服务端仍逐请求鉴权。凭据仅在当前页面内存中使用，不放入 URL、静态资源、浏览器存储或日志；401 会清除登录态和轮询，刷新页面需要重新登录。URL fragment 保留当前 changeId，登录后继续跟踪。后台状态采用 1–10 秒退避轮询，可暂停；页面隐藏、退出和待审批/终态在当前判断的 Mock Check 发布对齐后停止轮询。
 
 无需模型 Key、无需外网的演示（本机需要 JDK 17+ 和 Git）：
 
@@ -295,21 +300,33 @@ java -Dpaichange.demo=true -jar target/paicli-1.0-SNAPSHOT.jar serve --http --po
 
 1. 展开“创建 ChangeTask”并创建退款 fixture；页面标记“离线模拟执行 · Mock SCM”。重复创建返回同一任务，重新演示请使用新的演示数据目录。
 2. 核对 Draft；可填写补充要求后勾选确认、点击 `Spec SUPPLEMENT`，查看 r1→r2 diff。离线 Draft 的可执行验收固定，补充文本只保留为确认记录，不模拟理解任意新需求。
-3. 勾选确认并点击 `Spec APPROVE`，默认审批人 `techlead`，发起人 `developer`。确定性 RiskEngine 得出 MEDIUM，路由明确标记 `offline-demo / deterministic-fixture`。
+3. 勾选确认并点击 `Spec APPROVE`。操作者由本地 Key 对应的 `local-user` 决定；离线固定演示显式关闭职责分离，仅用于单操作者模拟。正常服务对 MEDIUM/HIGH 默认禁止 requester 自批，并要求 Spec 与 Delivery 由不同主体完成。确定性 RiskEngine 得出 MEDIUM，路由明确标记 `offline-demo / deterministic-fixture`。
 4. Worker 使用真实 Git worktree、SpecExecutionEngine、Java command Verifier 和 SQLite。首次替身写入 `hours >= 24`，23/24/25 边界验收 FAIL；一次受控修复改为 `hours > 24` 后 PASS。检查两轮 Evidence、Criterion Results 和最终代码 diff。
 5. 在 `DELIVERY_REVIEW` 核对当前 version/digest/run/headSha/判断 revision，勾选确认并点击 `Delivery APPROVE`；只有 Mock Check 保存成功才显示发布完成。Spec/Delivery 均可拒绝；普通交付审批不能覆盖 NEEDS_HUMAN 或失败 Verdict。
 
-新增只读接口：`GET /v1/changes/{changeId}/artifacts` 返回 `version`、Draft/锁定 Spec 正文、全部关联 revisions、最新 revision diff、Verifier/Criteria、最终代码 diff、Criterion Results、两轮验证与 Evidence。可用 `?fromRevision=1&toRevision=2` 比较已保存 revision；不存在返回 404。只接受 revision 整数参数，不接受文件路径；从任务关联和历史 digest 解析文件，拒绝目录遍历、符号链接及跨产物根访问，每文件限 4 MiB。代码 diff 是否被执行引擎截断会在页面标明。`GET /v1/changes/capabilities` 返回当前模拟执行与 Mock SCM 标记。
+M3 工具审批浏览器验收使用全新的演示目录，并在启动参数中增加 `-Dpaichange.demo.tool.approvals=true`。固定任务会改用 LOCKED_DOWN，在初次写入、首轮 command Verifier、一次修复写入和修复后 Verifier 分别等待一条精确审批；页面的 “Worker 工具审批” 与 Spec/Delivery 操作相互独立。该开关只用于离线确定性验收，默认演示仍走 STANDARD。
+
+新增只读接口：`GET /v1/changes/{changeId}/artifacts` 返回 `version`、Draft/锁定 Spec 正文、全部关联 revisions、最新 revision diff、Verifier/Criteria、最终代码 diff、Criterion Results、两轮验证与 Evidence。可用 `?fromRevision=1&toRevision=2` 比较已保存 revision；不存在返回 404。只接受 revision 整数参数，不接受文件路径；从任务关联和历史 digest 解析文件，拒绝目录遍历、符号链接及跨产物根访问，每文件限 4 MiB。代码 diff 是否被执行引擎截断会在页面标明；M6a 归档会额外显示 Evidence 完整性与 manifest digest。`GET /v1/changes/capabilities` 返回当前模拟执行、Mock SCM、Docker 隔离和 Evidence 校验状态。
 
 页面把 Spec、工单、diff 和 Evidence 全部作为纯文本渲染，并设置同源 CSP。Spec 审批携带当前 `expectedVersion + digest`；交付审批与人工验收携带 `expectedVersion + specDigest + runId + headSha + judgmentRevision`；409 会刷新内容、清除勾选并要求重新确认，不自动重放；400/401/403/404/422/500 分别提示，内容读取失败时禁用审批。生成/执行中采用 1–10 秒退避轮询，审批阶段保留用户所核对的快照。点击创建后立即显示提交和保存提示，按钮显示加载状态并禁用重复提交；201 后恢复按钮并展示后台生成状态，创建区提示随结果更新，HTTP 错误和草稿生成失败分别反馈。创建请求保留幂等键，响应不明时以同一请求重试；需不同需求时使用“新请求”。
 
 2026-09-04 验证：Phase 1–6 联合针对性 149 项全通过；`mvn test -Pquick` 为 899 项、0 failures/errors、5 skipped；浏览器完成创建、补充、双页面 409、注入防护、修复证据与 Mock success 交付验收。
 
-离线 fixture 位于 `src/main/resources/paichange-demo/`，仅替代 Draft 与 ReAct；验证实际运行本地 Java fixture，SCM 仅写本地 SQLite。演示模式只允许创建固定 `offline-refund.json`，不接受任意仓库创建请求。仍无组织工具策略、RBAC、真实 SCM 或生产隔离；文件产物不是不可篡改对象存储，不能把此演示描述为生产平台或真实模型提效证据。
+离线 fixture 位于 `src/main/resources/paichange-demo/`，仅替代 Draft 与 ReAct；验证实际运行本地 Java fixture，SCM 仅写本地 SQLite。演示模式只允许创建固定 `offline-refund.json`，不接受任意仓库创建请求。离线模式拥有 M3 工具策略、M5 本地 Principal 边界和 M6a Evidence 哈希归档，但默认不开 Docker；单 Key 和显式自批例外都不能用于共享部署。仍无真实 SCM、具体 OIDC 或 M6b 生产存储，不能把此演示描述为生产平台或真实模型提效证据。
 
 M1 已实现 Draft 异步生成、取消、失败重试和重启恢复。SQLite 自动增量添加 Draft 调度列；调度与任务/事件同事务，默认两个并发、每 generation 最多三次基础设施 attempt、每次 600 秒超时，失败退避 1/2 秒。内容资格纠错仍单独最多两次。HTTP 取消终止当前生成请求；不可取消实现的迟到结果不会覆盖当前版本。迁移、崩溃窗口和操作说明见 [M1 实施记录](docs/paichange-m1-implementation.md)。
 
 M2 已实现 Human Evidence 补录闭环。人工记录按 Criterion 追加，更正保留旧记录并使旧 Delivery Approval 失效；缺项/跳过仍为 NEEDS_HUMAN，确定性失败或异常不能由人工判断升级。全部通过后按风险路由进入独立交付审批，HIGH 仍需有效批准。Mock Check 支持 pending 到最终结论的版本化幂等发布，保存全部发布历史，拒绝迟到结果回退。页面分别显示原始 Run Verdict 与当前交付判断，人工入口只接受说明及当前任务已有 Artifact 引用；原固定退款 fixture 不含人工项。API、迁移、测试与浏览器验收详见 [M2 实施记录](docs/paichange-m2-implementation.md)。
+
+M5 已实现可信 Principal、可插拔 OIDC 验证边界、可测试本地身份 Adapter、四角色动作矩阵、真人/服务账号区分、项目列表过滤和跨项目读取保护。MEDIUM/HIGH 默认禁止 requester 自批，且 Spec 与 Delivery Approval 需要不同 subject，项目管理员也不豁免。具体 IdP、组织目录同步和持久化成员管理仍是部署边界；详见 [M5 实施记录](docs/paichange-m5-implementation.md)。
+
+M3 已实现项目级版本工具策略、三 profile 强制执行、持久化精确调用审批、M5 工具审批权限、脱敏事件/Web、策略/权限变化失效、有界等待与重启不重放。默认矩阵、API、迁移和测试见 [M3 实施记录](docs/paichange-m3-implementation.md)。M3 本身没有提供沙箱；M6a 后续为 PaiChange Worker 增加上述有限 Docker 边界，普通 CLI 与未启用 Docker 的本地演示仍在宿主执行。
+
+2026-09-05 M5 验证：M1/M2/M5 联合针对性 98 项、Node Web 14 项通过；`mvn test -Pquick` 为 929 项、0 failures/errors、5 skipped。浏览器完成错误凭据 401、固定服务端 Principal、无 actor 输入创建、两阶段审批、一次确定性修复和 Mock success；没有调用付费模型或真实 SCM。
+
+2026-09-05 M3 验证：M3 定向并包含 M1/M2/M5 的联合回归为 27 个测试类、168 项，Node Web 15 项通过；`mvn test -Pquick` 为 941 项、0 failures/errors、5 skipped。浏览器完成错误凭据 401、LOCKED_DOWN、初次写入/首轮 Verifier/修复写入/复验四条精确审批、正文脱敏、一次确定性修复、Delivery Approval 和 Mock success / COMPLETED；没有调用付费模型或真实 SCM。
+
+2026-09-06 M6a 目标主机验证：Docker Desktop 29.7.2 使用本机预置、digest 固定的 Alpine 镜像运行 7 条真实容器测试，全程 `--pull=never`。实测覆盖双任务 worktree 与宿主敏感路径隔离、默认断网、internal 假代理 ACL/审计及错误 label/digest fail closed、cgroup OOM/PID 拒绝、命令/任务超时、主动取消、异常退出、Secret 到期、应用级 orphan 恢复、进程树和失败清理；测试标签容器与网络均零遗留。除 Docker 29 的 mount 兼容问题外，又修复小写 proxy 变量、并发取消锁和 non-root Secret tmpfs 属主三项缺陷。最终 M6a 针对性 36 项、M1/M2/M3/M5 扩展回归 133 项、Node Web 16 项、quick 964 项（5 skipped）均 0 failures/errors，打包成功。浏览器完成一次修复到 Mock success / COMPLETED，并在应用重启后复核同一 `VERIFIED` Evidence manifest。Docker Desktop daemon 重启故障注入仍待单独授权；没有调用付费模型、连接真实 SCM 或实施 M4/M6b。
 
 ### 第二十一期：图片复制粘贴输入（MVP）
 

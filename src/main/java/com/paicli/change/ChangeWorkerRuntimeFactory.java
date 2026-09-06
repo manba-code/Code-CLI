@@ -6,4 +6,9 @@ import com.paicli.spec.SpecExecutionEngine;
 @FunctionalInterface
 public interface ChangeWorkerRuntimeFactory {
     SpecExecutionEngine create(ChangeTask task, WorkspaceProvisioner.WorkspaceLease workspace);
+
+    default SpecExecutionEngine create(ChangeTask task, WorkspaceProvisioner.WorkspaceLease workspace,
+                                       ChangeWorkerRuntimeContext context) {
+        return create(task, workspace);
+    }
 }

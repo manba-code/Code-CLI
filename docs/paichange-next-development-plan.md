@@ -1,7 +1,7 @@
 # PaiChange 后续开发计划
 
 > 编制日期：2026-09-04  
-> 状态：M1、M2 已完成实施与验收；M3–M6 待开发，未授权扩展实施或生产上线  
+> 状态：M1、M2、M3、M5 已完成；M6a 代码与目标主机非破坏性 Docker 验收已完成，Docker Desktop daemon 重启故障注入待单独授权；M4、M6b 未实施
 > 基线：Phase 1–6 本地后端、最小 Web、离线 Mock 演示已完成  
 > 前置文档：[平台改造计划](paichange-platform-refactoring-plan.md)、[项目路线图](../ROADMAP.md)
 
@@ -11,7 +11,7 @@
 
 本计划把前序讨论的六项开发内容拆成可验收的阶段。原平台计划 §19 的 Phase 7 仍是生产化设计纲要；本文使用 M1–M6 编号，避免把设计纲要误认为已批准的完整生产实施。
 
-原计划编制阶段仅整理文档；2026-09-04 已分别授权实施 M1 与 M2。真实 SCM 写入、部署、付费模型评测及 M3–M6 不在本次范围。不预设人力和日历工期；每阶段按验收退出，实际排期在进入阶段时结合实现规模确定。
+原计划编制阶段仅整理文档；2026-09-04 已分别授权实施 M1 与 M2，2026-09-05 已授权并完成 M5，随后授权并完成 M3；2026-09-06 授权使用 Docker 实施 M6a。真实 SCM 写入、付费模型评测、M4 和 M6b 不在本次范围。不预设人力和日历工期；每阶段按验收退出，实际排期在进入阶段时结合实现规模确定。
 
 ## 2. 当前基线与缺口
 
@@ -19,12 +19,12 @@
 |---|---|---|
 | Draft | M1 已改为原子保存 Draft Job、后台领取生成并恢复；详见实施记录 | 异步 Draft Job、重试、取消、重启恢复 |
 | 人工验收 | M2 已增加逐项人工补录、判断版本与独立交付审批；缺项仍 pending | 人工证据、逐项判断、确定性重算 Verdict |
-| 工具治理 | Worker 使用原始 `ToolRegistry`；`toolPolicy` 是审计 profile | profile 实际执行、持久化工具审批 |
+| 工具治理 | M3 已将 route profile 和项目版本规则接入 Worker；逐调用审批持久化并复用 M5 RBAC | 生产策略目录/分发与 M6 执行隔离 |
 | SCM | SQLite Mock PR/Check；现有 Mock 类不能直接等同于通用 Adapter 接口 | 提取最小接口，接入一个真实 SCM |
-| 身份权限 | 单 API Key、客户端 `actorId`；已有业务职责分离规则 | 服务端可信身份、项目权限、统一鉴权 |
-| 生产运行 | 本地单进程、SQLite、worktree、本地 Evidence | 执行隔离、Secret 管理、证据完整性、部署与恢复 |
+| 身份权限 | M5 已建立可信 Principal、项目 RBAC、统一鉴权和服务端 actor；具体 OIDC/成员持久化仍是部署 Adapter 边界 | 为 M3/M4 复用动作权限，选定 IdP 后实现具体 Adapter |
+| 生产运行 | M6a 已提供可选单机 Docker 命令/Verifier 隔离、短期 Secret seam 和控制面 Evidence 哈希归档；当前主机的双任务、代理、资源、清理与应用重启实测已完成，daemon 重启待单独授权 | M6b 存储/部署；共享试点前完成生产镜像、代理/DNS/TLS、daemon 与容量验收 |
 
-以上是 2026-09-04 的代码核对结果，后续实施前应再次核对，不用历史测试数量代替当前验证。
+以上已按 2026-09-06 的 M6a 实施再次核对；后续阶段仍应以届时代码和重新运行的测试为准，不用历史测试数量代替当前验证。
 
 ## 3. 优先级与依赖
 
@@ -109,7 +109,9 @@
 
 验收证据：`HumanEvidenceWorkflowTest`、`HumanEvidenceApiTest`、既有 Mock/Workflow/Store/平台回归及 Web 测试；平台针对性 63 项通过，Node 11 项通过，quick 923 项（0 failures/errors，5 skipped）。浏览器完成补录、双页面 409、独立 HIGH 审批、更正失效、确定性失败阻断和服务重启。详见 [M2 实施记录](paichange-m2-implementation.md)。
 
-## 6. M3：组织工具策略与 Worker 工具审批
+## 6. M3：组织工具策略与 Worker 工具审批（已完成）
+
+实施记录：[M3 组织工具策略与审批执行](paichange-m3-implementation.md)。
 
 ### 6.1 目标与设计
 
@@ -124,17 +126,21 @@
 
 ### 6.2 实施切片与验收
 
-1. 策略模型与强制执行：覆盖 Agent、修复和 Verifier。
-2. 持久化工具审批与等待管理：接入 M5 身份及项目权限。
-3. Web 审批页和审计事件：分别展示工具审批、Spec 审批、Delivery Approval。
+1. [x] 策略模型与强制执行：覆盖 Agent、修复和 Verifier。
+2. [x] 持久化工具审批与等待管理：接入 M5 身份及项目权限。
+3. [x] Web 审批页和审计事件：分别展示工具审批、Spec 审批、Delivery Approval。
 
 主要落点：`PaicliChangeWorkerRuntimeFactory`、`ExecutionRoute`、`hitl/`、`policy/`、`ToolRegistry`、Change API、SQLite 和 Web。
 
-- [ ] 三类 profile 各有允许/确认/拒绝用例，参数或策略变更后旧批准不能使用。
-- [ ] 组织拒绝和底层 Guard 拒绝不能通过人工批准绕过。
-- [ ] command Verifier 和修复不会获得更宽权限；拒绝原因进入 Evidence/事件。
-- [ ] 超时、取消、进程重启不自动执行未确认调用，也不自动重放结果不明的副作用调用。
-- [ ] 无权限用户不能批准，审批页不泄漏 Secret；等待任务不阻塞其他可执行任务。
+- [x] 三类 profile 各有允许/确认/拒绝用例，参数或策略变更后旧批准不能使用。
+- [x] 组织拒绝和底层 Guard 拒绝不能通过人工批准绕过。
+- [x] command Verifier 和修复不会获得更宽权限；拒绝原因进入 Evidence/事件。
+- [x] 超时、取消、进程重启不自动执行未确认调用，也不自动重放结果不明的副作用调用。
+- [x] 无权限用户不能批准，审批页不泄漏 Secret；等待任务不阻塞其他可执行任务。
+
+实现采用项目级版本策略、默认最多一个等待槽和 300 秒超时；审批绑定 change/run/call/参数摘要/cwd/Spec/策略版本，批准后重检策略与权限。重启遗留 `PENDING` 统一标为 `INTERRUPTED` 并安全中止原 Job，不恢复或重放已丢失的执行栈。详细存储、API、默认 profile 矩阵、离线 LOCKED_DOWN 验收入口和剩余非沙箱边界见 [M3 实施记录](paichange-m3-implementation.md)。
+
+验收证据：M3 定向并包含 M1/M2/M5 的联合回归 27 个测试类、168 项通过；Node Web 15 项通过；quick 941 项（0 failures/errors，5 skipped）。浏览器完成 401、LOCKED_DOWN、四条精确工具审批、正文脱敏、首轮失败/一次修复/复验通过、Delivery Approval 与 Mock success / COMPLETED。未运行付费模型评测或真实 SCM。
 
 ## 7. M4：接入一个真实 SCM 平台
 
@@ -163,11 +169,13 @@
 - [ ] 远端 401/403、限流、断网、部分成功均有可恢复或明确失败状态，不显示 COMPLETED。
 - [ ] 日志、事件、PR 内容和 Artifact 不包含凭据；Mock 模式仍可无外网运行。
 
-## 8. M5：身份认证与 RBAC
+## 8. M5：身份认证与 RBAC（已完成）
+
+实施记录：[M5 身份认证与 RBAC](paichange-m5-implementation.md)。
 
 ### 8.1 目标与设计
 
-让任务访问和审批权限基于服务端验证的身份，而非用户可填写的 actorId。建议采用 OIDC 对接现有身份服务，具体提供方和会话方式在本期确定。
+让任务访问和审批权限基于服务端验证的身份，而非用户可填写的 actorId。共享部署建议通过可插拔 OIDC 边界对接既有身份服务；当前未指定提供方，因此本期只交付验证接口与本地可测试 Adapter，不虚构登录跳转或外部 IdP 集成。
 
 - 建立 Principal、项目成员与权限映射，最小角色为只读者、开发者、审批者和项目管理员；权限按动作定义，避免把所有写操作视为同一种权限。
 - 覆盖任务创建/读取、Artifact/事件访问、取消/重试、人工验收、Spec/Delivery/工具审批、连接与策略配置。
@@ -184,15 +192,19 @@
 
 主要落点：`RuntimeApiServer`、`ChangeApiHandler`、`ChangeApprovalPolicy`、各类审批记录和 Web；身份模型不耦合到 LLM。
 
-- [ ] 伪造 actorId 无法代替他人审批；未认证和权限不足分别返回清晰的 401/403。
-- [ ] 跨项目 ID、Artifact 和事件访问被拒绝，列表不泄漏无权查看的项目数据。
-- [ ] 同一服务端身份不能通过换展示名绕过职责分离；机器账号不能冒充真人验收。
-- [ ] 会话过期、权限撤销后敏感操作失效，审计可定位真实主体。
-- [ ] 原本地模式与 Runtime threads 的兼容行为有明确测试，不静默扩大网络监听范围。
+- [x] 伪造 actorId 无法代替他人审批；未认证和权限不足分别返回清晰的 401/403。
+- [x] 跨项目 ID、Artifact 和事件访问被拒绝，列表不泄漏无权查看的项目数据。
+- [x] 同一服务端身份不能通过换展示名绕过职责分离；机器账号不能冒充真人验收。
+- [x] 会话过期、权限撤销后敏感操作失效，审计可定位真实主体。
+- [x] 原本地模式与 Runtime threads 的兼容行为有明确测试，不静默扩大网络监听范围。
+
+验收证据：M1/M2/M5 联合针对性 98 项、Node Web 14 项通过；quick 929 项（0 failures/errors，5 skipped）。浏览器完成 401、可信 Principal、本地模式部署边界、服务端 actor 审计、Spec/Delivery 两阶段决策和 Mock success 闭环。没有运行付费模型评测或真实 SCM。
 
 ## 9. M6：生产隔离与存储部署
 
 ### 9.1 M6a：共享试点前的最小执行隔离
+
+实施记录：[M6a 共享试点前的最小执行隔离](paichange-m6a-implementation.md)。当前代码切片已完成；本节原验收标准保留，并区分确定性证据与目标 Docker 主机实测。
 
 - 将 Worker 执行移入独立容器，限制 CPU、内存、进程数和任务时间；禁止特权运行、Docker socket 与宿主私有目录挂载。
 - 只挂载任务工作区和必要产物位置，控制面数据库与其他任务的工作区不可访问；取消和超时清理整个执行进程树。
@@ -200,12 +212,23 @@
 - Secret 使用最小范围、短生命周期注入；模型凭据优先留在代理/控制面，SCM 写凭据留在发布组件；不得持久化进 Prompt、日志或 Evidence。
 - Evidence 由控制面可信采集路径入库，形成内容哈希和不可变版本；不能仅相信 Worker 自报 PASS 或自报哈希。正式威胁模型应明确容器能防什么、不能防什么，再决定是否需要更强隔离。
 
-验收：
+实现与确定性验收：
 
-- [ ] 两个任务之间和任务与控制面之间无法读取未授权文件、凭据和数据库。
-- [ ] 禁止网络出口被阻断，允许的依赖/模型访问正常；超时/取消无遗留执行进程。
-- [ ] Evidence 篡改或对象缺失被发现时拒绝 success；产物存储失败不显示完成。
-- [ ] 容器退出、宿主重启、Secret 失效有明确恢复或失败记录，不重复执行结果不明的外部操作。
+- [x] 每任务唯一容器和唯一 worktree mount；Docker socket、仓库、其他任务、Evidence/SQLite/控制面目录不进入 mount，文件工具继续绑定任务 PathGuard。
+- [x] 默认 `network=none`；放行只接受带项目/策略摘要的 internal 代理网络，宿主 Web/MCP 执行第二道工具/host gate。
+- [x] CPU/内存/PID/任务与命令/Secret 时限进入容器契约，超时/取消/异常使用 `docker rm -f`；真实 Docker opt-in 测试检查运行时参数和进程树。
+- [x] 默认零 Secret；可插拔 lease 只经 stdin 写入 tmpfs，以 `*_FILE` 暴露，过期清理且值不进入 argv/配置/Evidence。
+- [x] Evidence 篡改、对象缺失/增加、符号链接或可信归档失败时拒绝 success；重启后按 SQLite 哈希复核。
+- [x] Docker 模式启动先清遗留容器；崩溃前 RUNNING 的 Worker 记录未知结果并中止，不重放外部动作。
+
+目标主机验收（2026-09-06 使用 Docker Desktop 29.7.2 与本机预置 digest 镜像）：
+
+- [x] 两个同时运行的任务只能读写自己的 worktree；另一任务、源仓库、SQLite、Evidence、宿主用户目录、Docker socket 和测试 Secret 均不可见。
+- [x] `network=none` 阻断 host/metadata/公网；临时 internal 假代理只放行 allowlist，拒绝其他 host，记录 ALLOW/DENY 审计；错误 egress label 或策略摘要 fail closed。
+- [x] 实测 cgroup 内存 OOM/PID 拒绝、命令与任务总超时、用户取消、容器异常、Secret 到期、应用级 orphan 恢复和进程树清理，并跨应用重开复核 Evidence/篡改阻断。
+- [ ] Docker Desktop daemon 本身的重启故障注入仍待单独授权；此项会中断本机其他 Docker 工作负载，不能由测试静默执行。
+
+2026-09-06 目标主机验收：使用 digest 固定的本地 Alpine 镜像运行 7 条真实容器用例，全程 `--pull=never`，测试资源以随机 name/owner label 创建并在 `finally` 清理。新增实测发现并修复三项缺陷：HTTP proxy 需同时提供大小写变量以兼容 BusyBox，阻塞 `docker exec` 不能持有阻止 `abort()` 的 session 锁，Secret tmpfs 必须归配置的非 root uid/gid 所有。最终 M6a 针对性 36 项、M1/M2/M3/M5 扩展回归 133 项、Node Web 16 项、quick 964 项（5 skipped）均 0 failures/errors，`mvn package -DskipTests` 成功。浏览器用全新离线目录完成一次修复到 Mock success / COMPLETED，并在应用重启后回读同一 `VERIFIED` Evidence manifest。Docker daemon 重启故障注入仍未执行，M4/M6b 也未实施。
 
 ### 9.2 M6b：存储、部署与运维
 
@@ -226,7 +249,7 @@
 
 每阶段交付代码、存储/API 迁移说明、相关文档、可重复的验收步骤和测试结果。完成定义是验收项有证据，不是勾选实现文件数量。
 
-默认验证使用本地 stub、Mock HTTP 和临时仓库。M1/M2 优先扩展已有 Workflow、Store、API、EndToEnd 与 Web 测试；M3 增加工具策略/审批测试；M4 增加 Adapter 契约与故障测试；M5 增加权限矩阵测试；M6 增加隔离、迁移和恢复验证。新增测试名在实现时确定。
+默认验证使用本地 stub、Mock HTTP 和临时仓库。M1/M2 已扩展 Workflow、Store、API、EndToEnd 与 Web 测试；M3 已增加 `ProjectToolPolicyTest`、`ToolApprovalCoordinatorTest`、SQLite/API/Web 与离线完整闭环；M4 增加 Adapter 契约与故障测试；M5 已增加权限矩阵测试；M6 增加隔离、迁移和恢复验证。
 
 现有基础回归入口：
 
@@ -242,7 +265,7 @@ mvn test -Pquick
 
 ## 11. M1 执行清单（已完成）
 
-本次已完成 **M1：Draft 异步生成与中断恢复**。以下清单保留为实施记录；M2 已随后完成，M3 及后续阶段未启动：
+本节是 **M1：Draft 异步生成与中断恢复** 的历史执行清单；M2、M5、M3 与 M6a 代码切片已随后完成，M4/M6b 未启动：
 
 1. 核对现有 Worker Job 与 ChangeStore 的事务边界，完成 Draft Job 状态表和四类崩溃窗口设计。
 2. 确定创建响应、取消、重试、SUPPLEMENT 重新生成及 generation 失效契约。
@@ -250,4 +273,4 @@ mvn test -Pquick
 4. 接通页面进度与操作，验证刷新、取消、失败、重启和迟到结果。
 5. 同步 README、AGENTS 和实施记录；验收通过后再更新 ROADMAP 为已完成。
 
-阶段起始待落实项只在进入相应阶段时处理：M3 审批等待容量与超时、M4 实际 SCM/测试仓库与认证方式、M5 身份提供方、M6 运行环境与容量目标。它们不阻塞 M1 的开发设计。
+M3 已落实默认一个审批等待槽和可配置 1–3,600 秒超时。M6a 已在当前 Docker Desktop 主机完成除 daemon 重启外的真实验收；生产镜像扫描、生产代理/DNS/TLS、宿主与 daemon 加固、容量和故障恢复指标仍需在部署环境实测。仍待进入相应阶段时确定：M4 实际 SCM/测试仓库与认证方式、具体身份提供方部署、M6b 存储/部署与容量目标。

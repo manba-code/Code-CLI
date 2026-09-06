@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.paicli.change.*;
+import com.paicli.runtime.auth.Principal;
 import com.paicli.spec.ChangeSpecValidationException;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
@@ -21,6 +22,10 @@ public final class ChangeApiHandler implements HttpHandler {
     private final MockWorkItemAdapter workItems;
     private final ChangeArtifactReader artifacts;
     private final boolean offlineDemo;
+    private final ChangeAuthorizer authorizer;
+    private final ToolApprovalCoordinator toolApprovals;
+    private final WorkerIsolation.Capabilities isolationCapabilities;
+    private final boolean evidenceIntegrity;
 
     public ChangeApiHandler(ChangeWorkflow workflow, ChangeStore queries, MockWorkItemAdapter workItems) {
         this(workflow, queries, workItems, null, false);
@@ -28,8 +33,33 @@ public final class ChangeApiHandler implements HttpHandler {
 
     public ChangeApiHandler(ChangeWorkflow workflow, ChangeStore queries, MockWorkItemAdapter workItems,
                             ChangeArtifactReader artifacts, boolean offlineDemo) {
+        this(workflow, queries, workItems, artifacts, offlineDemo,
+                new ChangeAuthorizer(ProjectMembershipProvider.none()));
+    }
+
+    public ChangeApiHandler(ChangeWorkflow workflow, ChangeStore queries, MockWorkItemAdapter workItems,
+                            ChangeArtifactReader artifacts, boolean offlineDemo, ChangeAuthorizer authorizer) {
+        this(workflow, queries, workItems, artifacts, offlineDemo, authorizer, null);
+    }
+
+    public ChangeApiHandler(ChangeWorkflow workflow, ChangeStore queries, MockWorkItemAdapter workItems,
+                            ChangeArtifactReader artifacts, boolean offlineDemo, ChangeAuthorizer authorizer,
+                            ToolApprovalCoordinator toolApprovals) {
+        this(workflow, queries, workItems, artifacts, offlineDemo, authorizer, toolApprovals,
+                WorkerIsolation.Capabilities.disabled(), false);
+    }
+
+    public ChangeApiHandler(ChangeWorkflow workflow, ChangeStore queries, MockWorkItemAdapter workItems,
+                            ChangeArtifactReader artifacts, boolean offlineDemo, ChangeAuthorizer authorizer,
+                            ToolApprovalCoordinator toolApprovals,
+                            WorkerIsolation.Capabilities isolationCapabilities, boolean evidenceIntegrity) {
         this.artifacts = artifacts;
         this.offlineDemo = offlineDemo;
+        this.authorizer = java.util.Objects.requireNonNull(authorizer, "authorizer");
+        this.toolApprovals = toolApprovals;
+        this.isolationCapabilities = isolationCapabilities == null
+                ? WorkerIsolation.Capabilities.disabled() : isolationCapabilities;
+        this.evidenceIntegrity = evidenceIntegrity;
         if (artifacts != null && workflow instanceof DefaultChangeWorkflow concrete) concrete.connectArtifacts(artifacts);
         this.workflow = java.util.Objects.requireNonNull(workflow);
         this.queries = java.util.Objects.requireNonNull(queries);
@@ -56,12 +86,53 @@ public final class ChangeApiHandler implements HttpHandler {
     }
 
     private void route(HttpExchange exchange) throws IOException {
+        Principal principal = principal(exchange);
         String path = exchange.getRequestURI().getPath();
         String method = exchange.getRequestMethod();
         if (path.equals("/v1/changes/capabilities") && method.equals("GET")) {
-            write(exchange, 200, Map.of("offlineDemo", offlineDemo, "scm", "MOCK",
-                    "toolPolicyEnforced", false, "workerHitl", false));
+            var response = ChangeJson.MAPPER.createObjectNode();
+            response.put("offlineDemo", offlineDemo).put("scm", "MOCK")
+                    .put("toolPolicyEnforced", toolApprovals != null).put("workerHitl", toolApprovals != null)
+                    .put("executionIsolation", isolationCapabilities.enabled())
+                    .put("evidenceIntegrity", evidenceIntegrity)
+                    .set("isolation", ChangeJson.MAPPER.valueToTree(isolationCapabilities));
+            response
+                    .put("authMode", String.valueOf(exchange.getAttribute(RuntimeApiServer.AUTH_MODE_ATTRIBUTE)))
+                    .put("localTrustedMode", principal.localTrusted())
+                    .put("deploymentBoundary", principal.localTrusted()
+                            ? "Single-operator localhost compatibility mode; not a shared-deployment identity solution"
+                            : "Server-verified principals with per-project membership");
+            response.set("principal", ChangeJson.MAPPER.valueToTree(Map.of(
+                    "subjectId", principal.subjectId(), "displayName", principal.displayName(),
+                    "type", principal.type().name(), "issuer", principal.issuer())));
+            response.set("memberships", ChangeJson.MAPPER.valueToTree(authorizer.memberships(principal)));
+            write(exchange, 200, response);
             return;
+        }
+        String[] routeParts = path.split("/", -1);
+        if (routeParts.length == 6 && routeParts[1].equals("v1") && routeParts[2].equals("changes")
+                && routeParts[3].equals("projects") && routeParts[5].equals("tool-policy")) {
+            if (toolApprovals == null) throw new ChangeValidationException("工具策略服务未装配");
+            String projectId = routeParts[4];
+            if (method.equals("GET")) {
+                authorizer.require(principal, projectId, ChangePermission.READ_TASK);
+                write(exchange, 200, toolApprovals.policy(projectId));
+                return;
+            }
+            if (method.equals("PUT")) {
+                JsonNode request = body(exchange);
+                long expected = nonNegative(request, "expectedVersion");
+                if (!request.path("rules").isArray()) throw new IllegalArgumentException("rules 必须是数组");
+                java.util.List<ProjectToolPolicy.Rule> rules = new java.util.ArrayList<>();
+                for (JsonNode rule : request.path("rules")) {
+                    try { rules.add(ChangeJson.MAPPER.treeToValue(rule, ProjectToolPolicy.Rule.class)); }
+                    catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                        throw new IllegalArgumentException("tool policy rule 无效: " + e.getOriginalMessage(), e);
+                    }
+                }
+                write(exchange, 200, toolApprovals.updatePolicy(projectId, expected, rules, principal));
+                return;
+            }
         }
         if (path.equals("/v1/changes")) {
             if (method.equals("POST")) {
@@ -69,16 +140,28 @@ public final class ChangeApiHandler implements HttpHandler {
                 if (offlineDemo && (body.size() != 1 || !body.path("fixture").asText().equals("offline-refund.json"))) {
                     throw new IllegalArgumentException("离线演示仅接受 offline-refund.json fixture");
                 }
-                ChangeTaskId id = body.has("fixture")
-                        ? workItems.submit(ChangeJson.text(body, "fixture"))
-                        : workflow.submit(ChangeJson.request(body));
+                ChangeTaskId id;
+                if (body.has("fixture")) {
+                    if (!principal.localTrusted()) throw new ChangeForbiddenException("fixture 仅允许本地可信模式");
+                    id = workItems.submit(ChangeJson.text(body, "fixture"), principal.subjectId(), principal.actorType());
+                } else {
+                    requireCompatibleActor(body, principal);
+                    ChangeRequest request = ChangeJson.request(body, principal.subjectId(), principal.actorType());
+                    authorizer.require(principal, ChangeProject.id(request.repository()), ChangePermission.CREATE_TASK);
+                    id = workflow.submit(request);
+                }
                 exchange.getResponseHeaders().set("Location", "/v1/changes/" + id.value());
-                write(exchange, 201, view(workflow.get(id)));
+                write(exchange, 201, view(workflow.get(id), principal));
                 return;
             }
             if (method.equals("GET")) {
                 var items = ChangeJson.MAPPER.createArrayNode();
-                for (ChangeTask task : queries.list()) items.add(view(workflow.get(task.id())));
+                for (ChangeTask task : queries.list()) {
+                    if (authorizer.permissions(principal, ChangeProject.id(task.repository()))
+                            .contains(ChangePermission.READ_TASK)) {
+                        items.add(view(workflow.get(task.id()), principal));
+                    }
+                }
                 write(exchange, 200, Map.of("changes", items));
                 return;
             }
@@ -89,7 +172,9 @@ public final class ChangeApiHandler implements HttpHandler {
             return;
         }
         ChangeTaskId id = new ChangeTaskId(parts[3]);
-        if (method.equals("GET") && parts.length == 5 && parts[4].equals("artifacts") && artifacts != null) {
+        if (method.equals("GET") && parts.length == 5 && parts[4].equals("artifacts")) {
+            authorizeTask(id, principal, ChangePermission.READ_ARTIFACTS);
+            if (artifacts == null) throw new NoSuchFileException("Artifact reader unavailable");
             Integer from = null, to = null;
             String query = exchange.getRequestURI().getRawQuery();
             if (query != null) {
@@ -104,13 +189,41 @@ public final class ChangeApiHandler implements HttpHandler {
             return;
         }
         if (method.equals("GET") && parts.length == 4) {
-            write(exchange, 200, view(workflow.get(id)));
+            authorizeTask(id, principal, ChangePermission.READ_TASK);
+            write(exchange, 200, view(workflow.get(id), principal));
             return;
         }
         if (method.equals("GET") && parts.length == 5 && parts[4].equals("events")) {
+            authorizeTask(id, principal, ChangePermission.READ_EVENTS);
             long after = after(exchange.getRequestURI().getRawQuery());
             var events = workflow.get(id).events().stream().filter(e -> e.sequence() > after).toList();
             write(exchange, 200, Map.of("events", events));
+            return;
+        }
+        if (method.equals("GET") && parts.length == 5 && parts[4].equals("tool-approvals")) {
+            authorizeTask(id, principal, ChangePermission.READ_TASK);
+            if (toolApprovals == null) throw new ChangeValidationException("工具审批服务未装配");
+            write(exchange, 200, Map.of("toolApprovals", toolApprovals.approvals(id)));
+            return;
+        }
+        if (method.equals("POST") && parts.length == 7 && parts[4].equals("tool-approvals")
+                && parts[6].equals("decisions")) {
+            if (toolApprovals == null) throw new ChangeValidationException("工具审批服务未装配");
+            JsonNode request = body(exchange);
+            String decision = ChangeJson.text(request, "decision");
+            ToolApproval.Status status = switch (decision) {
+                case "APPROVE" -> ToolApproval.Status.APPROVED;
+                case "REJECT" -> ToolApproval.Status.REJECTED;
+                default -> throw new IllegalArgumentException("未知工具审批 decision");
+            };
+            ToolApproval result = toolApprovals.decide(id, parts[5], status,
+                    nonNegative(request, "expectedPolicyVersion"),
+                    ChangeJson.text(request, "expectedArgumentsDigest"),
+                    ChangeJson.text(request, "expectedCallId"),
+                    ChangeJson.text(request, "expectedRunId"),
+                    ChangeJson.text(request, "expectedSpecDigest"),
+                    ChangeJson.optionalText(request, "reason"), principal);
+            write(exchange, 200, result);
             return;
         }
         if (method.equals("POST") && parts.length == 5
@@ -118,11 +231,13 @@ public final class ChangeApiHandler implements HttpHandler {
             JsonNode body = body(exchange);
             long version = expectedVersion(body);
             String generation = ChangeJson.text(body, "expectedGeneration");
-            String actor = ChangeJson.text(body, "actorId");
+            requireCompatibleActor(body, principal);
+            authorizer.require(principal, project(id), parts[4].equals("draft-cancel")
+                    ? ChangePermission.CANCEL_DRAFT : ChangePermission.RETRY_DRAFT);
             ChangeTaskView result = parts[4].equals("draft-cancel")
-                    ? workflow.cancelDraft(id, version, generation, actor)
-                    : workflow.retryDraft(id, version, generation, actor);
-            write(exchange, 200, view(result));
+                    ? workflow.cancelDraft(id, version, generation, principal.subjectId(), principal.actorType())
+                    : workflow.retryDraft(id, version, generation, principal.subjectId(), principal.actorType());
+            write(exchange, 200, view(result, principal));
             return;
         }
         if (method.equals("POST") && parts.length == 5 && parts[4].equals("human-evidence")) {
@@ -130,6 +245,8 @@ public final class ChangeApiHandler implements HttpHandler {
             java.util.Set<String> fields = java.util.Set.of("expectedVersion", "expectedSpecDigest", "expectedRunId",
                     "expectedHeadSha", "expectedJudgmentRevision", "criterionId", "decision", "reason", "artifactRefs", "actorId");
             body.fieldNames().forEachRemaining(field -> { if (!fields.contains(field)) throw new IllegalArgumentException("未知人工验收字段: " + field); });
+            requireCompatibleActor(body, principal);
+            authorizer.require(principal, project(id), ChangePermission.RECORD_HUMAN_EVIDENCE);
             java.util.List<String> refs = new java.util.ArrayList<>();
             if (body.has("artifactRefs")) {
                 if (!body.path("artifactRefs").isArray()) throw new IllegalArgumentException("artifactRefs 必须是数组");
@@ -142,30 +259,38 @@ public final class ChangeApiHandler implements HttpHandler {
                     ChangeJson.text(body, "expectedRunId"), ChangeJson.text(body, "expectedHeadSha"),
                     nonNegative(body, "expectedJudgmentRevision"), ChangeJson.text(body, "criterionId"),
                     com.paicli.spec.SpecRunResult.HumanDecision.valueOf(ChangeJson.text(body, "decision")),
-                    ChangeJson.text(body, "reason"), refs, ChangeJson.text(body, "actorId"));
-            write(exchange, 200, view(workflow.recordHumanEvidence(id, input)));
+                    ChangeJson.text(body, "reason"), refs, principal.subjectId(), principal.actorType());
+            write(exchange, 200, view(workflow.recordHumanEvidence(id, input), principal));
             return;
         }
         if (method.equals("POST") && parts.length == 5
                 && (parts[4].equals("spec-decisions") || parts[4].equals("delivery-decisions"))) {
             JsonNode body = body(exchange);
-            write(exchange, 200, view(workflow.decide(id, decision(body, parts[4].equals("spec-decisions")))));
+            requireCompatibleActor(body, principal);
+            boolean spec = parts[4].equals("spec-decisions");
+            String decisionName = ChangeJson.text(body, "decision");
+            ChangePermission permission = spec && decisionName.equals("SUPPLEMENT")
+                    ? ChangePermission.SUPPLEMENT_SPEC
+                    : spec ? ChangePermission.APPROVE_SPEC : ChangePermission.APPROVE_DELIVERY;
+            authorizer.require(principal, project(id), permission);
+            write(exchange, 200, view(workflow.decide(id, decision(body, spec, principal)), principal));
             return;
         }
         error(exchange, 404, "not_found", "端点不存在");
     }
 
-    private static ChangeDecision decision(JsonNode body, boolean spec) {
+    private static ChangeDecision decision(JsonNode body, boolean spec, Principal principal) {
         long expected = expectedVersion(body);
-        String actor = ChangeJson.text(body, "actorId");
+        String actor = principal.subjectId();
+        String actorType = principal.actorType();
         String reason = ChangeJson.optionalText(body, "reason");
         String decision = ChangeJson.text(body, "decision");
         if (spec) {
             String digest = ChangeJson.text(body, "expectedDraftDigest");
             return switch (decision) {
-                case "APPROVE" -> new ChangeDecision.ApproveSpec(expected, digest, actor, reason);
-                case "REJECT" -> new ChangeDecision.RejectSpec(expected, digest, actor, reason);
-                case "SUPPLEMENT" -> new ChangeDecision.SupplementSpec(expected, digest, actor,
+                case "APPROVE" -> new ChangeDecision.ApproveSpec(expected, digest, actor, actorType, reason);
+                case "REJECT" -> new ChangeDecision.RejectSpec(expected, digest, actor, actorType, reason);
+                case "SUPPLEMENT" -> new ChangeDecision.SupplementSpec(expected, digest, actor, actorType,
                         ChangeJson.text(body, "supplement"));
                 default -> throw new IllegalArgumentException("未知 Spec decision");
             };
@@ -175,8 +300,10 @@ public final class ChangeApiHandler implements HttpHandler {
         String run = ChangeJson.text(body, "expectedRunId");
         long revision = nonNegative(body, "expectedJudgmentRevision");
         return switch (decision) {
-            case "APPROVE" -> new ChangeDecision.ApproveDelivery(expected, digest, head, run, revision, actor, reason);
-            case "REJECT" -> new ChangeDecision.RejectDelivery(expected, digest, head, run, revision, actor, reason);
+            case "APPROVE" -> new ChangeDecision.ApproveDelivery(expected, digest, head, run, revision,
+                    actor, actorType, reason);
+            case "REJECT" -> new ChangeDecision.RejectDelivery(expected, digest, head, run, revision,
+                    actor, actorType, reason);
             default -> throw new IllegalArgumentException("未知 Delivery decision");
         };
     }
@@ -193,7 +320,7 @@ public final class ChangeApiHandler implements HttpHandler {
         return version.longValue();
     }
 
-    private static ObjectNode view(ChangeTaskView view) {
+    private ObjectNode view(ChangeTaskView view, Principal principal) {
         ObjectNode json = ChangeJson.MAPPER.valueToTree(view.task());
         json.remove("id");
         if (json.path("draftJob").isObject()) {
@@ -202,6 +329,9 @@ public final class ChangeApiHandler implements HttpHandler {
             job.remove(java.util.List.of("input", "lease"));
         }
         json.put("changeId", view.task().id().value());
+        String projectId = ChangeProject.id(view.task().repository());
+        json.put("projectId", projectId);
+        json.set("permissions", ChangeJson.MAPPER.valueToTree(authorizer.permissions(principal, projectId)));
         json.put("judgmentRevision", view.task().judgmentRevision());
         json.set("deliveryVerdict", ChangeJson.MAPPER.valueToTree(view.task().deliveryVerdict()));
         json.put("deliveryApprovalValid", view.task().run() != null && view.task().spec() != null
@@ -209,6 +339,33 @@ public final class ChangeApiHandler implements HttpHandler {
         json.set("deliveryHistory", ChangeJson.MAPPER.valueToTree(view.deliveryHistory()));
         json.set("delivery", ChangeJson.MAPPER.valueToTree(view.delivery()));
         return json;
+    }
+
+    private ChangeTask authorizeTask(ChangeTaskId id, Principal principal, ChangePermission permission) {
+        ChangeTask task = queries.find(id).orElseThrow(() -> new ChangeNotFoundException(id));
+        authorizer.require(principal, ChangeProject.id(task.repository()), permission);
+        return task;
+    }
+
+    private String project(ChangeTaskId id) {
+        return ChangeProject.id(queries.find(id).orElseThrow(() -> new ChangeNotFoundException(id)).repository());
+    }
+
+    private static Principal principal(HttpExchange exchange) {
+        Object value = exchange.getAttribute(RuntimeApiServer.PRINCIPAL_ATTRIBUTE);
+        if (!(value instanceof Principal principal)) {
+            throw new IllegalStateException("Runtime API 未建立可信 Principal");
+        }
+        return principal;
+    }
+
+    /** Legacy actorId is an assertion only; it never selects the actor. */
+    private static void requireCompatibleActor(JsonNode body, Principal principal) {
+        if (!body.has("actorId")) return;
+        String supplied = ChangeJson.text(body, "actorId");
+        if (!supplied.equals(principal.subjectId())) {
+            throw new ChangeForbiddenException("actorId 与服务端认证主体不一致");
+        }
     }
 
     private static JsonNode body(HttpExchange exchange) throws IOException {

@@ -2,13 +2,19 @@ package com.paicli.change;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.paicli.runtime.api.*;
+import com.paicli.runtime.auth.LocalPrincipalAdapter;
+import com.paicli.runtime.auth.Principal;
+import com.paicli.runtime.auth.PrincipalType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import java.net.URI;
 import java.net.http.*;
 import java.nio.file.*;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import static com.paicli.spec.SpecRunResult.HumanDecision.*;
 import static com.paicli.spec.SpecRunResult.Verdict.*;
 import static org.junit.jupiter.api.Assertions.*;
@@ -21,13 +27,27 @@ class HumanEvidenceApiTest {
              var threads = new RuntimeThreadStore(root.resolve("threads.db"))) {
             var workflow = new DefaultChangeWorkflow(store, store, HumanEvidenceTestSupport.specs(root));
             workflow.connect(id -> {}, scm, task -> task.run().headSha());
-            var handler = new ChangeApiHandler(workflow, store, new MockWorkItemAdapter(root, workflow), new ChangeArtifactReader(root), true);
             var task = HumanEvidenceTestSupport.finished(workflow, root, "http", true, NEEDS_HUMAN, "PASS");
+            String project = ChangeProject.id(task.repository());
+            var memberships = new InMemoryProjectMemberships();
+            memberships.put(new ProjectMembership(project, "reviewer", Set.of(ProjectRole.APPROVER)));
+            memberships.put(new ProjectMembership(project, "review-bot", Set.of(ProjectRole.APPROVER)));
+            var handler = new ChangeApiHandler(workflow, store, new MockWorkItemAdapter(root, workflow),
+                    new ChangeArtifactReader(root), true, new ChangeAuthorizer(memberships));
+            var identities = new LocalPrincipalAdapter(Map.of(
+                    "m2-local-test", new Principal("reviewer", "Reviewer", PrincipalType.HUMAN,
+                            "test", Instant.now().plusSeconds(60), false),
+                    "m2-service-test", new Principal("review-bot", "Review bot", PrincipalType.SERVICE,
+                            "test", Instant.now().plusSeconds(60), false)));
             var input = HumanEvidenceTestSupport.input(task, "AC-H1", PASS);
-            String body = ChangeJson.MAPPER.writeValueAsString(input);
-            try (var server = new RuntimeApiServer(threads, p -> p, 0, "m2-local-test", handler)) {
+            var request = (ObjectNode) ChangeJson.MAPPER.valueToTree(input);
+            request.remove("actorId");
+            request.remove("actorType");
+            String body = request.toString();
+            try (var server = new RuntimeApiServer(threads, p -> p, 0, identities, handler)) {
                 server.start(); String base = "http://127.0.0.1:" + server.port() + "/v1/changes/" + task.id().value();
                 assertEquals(401, send(base + "/human-evidence", body, "wrong").statusCode());
+                assertEquals(403, send(base + "/human-evidence", body, "m2-service-test").statusCode());
                 for (String field : List.of("expectedVersion", "expectedRunId", "expectedJudgmentRevision", "expectedSpecDigest", "expectedHeadSha", "reason")) {
                     var invalid = (ObjectNode) ChangeJson.MAPPER.readTree(body); invalid.remove(field);
                     assertEquals(400, send(base + "/human-evidence", invalid.toString(), "m2-local-test").statusCode(), field);

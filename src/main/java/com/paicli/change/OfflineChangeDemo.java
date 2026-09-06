@@ -37,9 +37,12 @@ public final class OfflineChangeDemo {
                 "title", "退款超时边界修复", "description", "退款超过 24 小时进入人工审核，24 小时整不进入；不能影响自动取消流程。",
                 "requester", "developer", "repository", Map.of("path", repository.toString(), "baseRef", "main"))));
         PaiCliConfig config = new PaiCliConfig(); // Do not call load(): no personal provider configuration.
+        // Explicit local-demo exception: one API key represents one operator, so no second approver exists.
+        config.getPaiChange().setForbidRequesterSelfApprovalForMediumAndHigh(false);
         var route = new PaiCliConfig.PaiChangeRouteConfig();
         route.setProvider("offline-demo"); route.setModel("deterministic-fixture");
         route.setRepairEnabled(true); route.setDeliveryApprovalRequired(true);
+        route.setToolPolicy(Boolean.getBoolean("paichange.demo.tool.approvals") ? "LOCKED_DOWN" : "STANDARD");
         config.getPaiChange().setRoutes(Map.of("LOW", route, "MEDIUM", route, "HIGH", route));
         FileChangeSpecModule specs = new FileChangeSpecModule(data, context -> {
             String source = resource("spec.md").replace("SPEC_ID", context.specId())
@@ -51,7 +54,19 @@ public final class OfflineChangeDemo {
     }
 
     private static ChangeWorkerRuntimeFactory runtime() {
-        return (task, workspace) -> {
+        return new ChangeWorkerRuntimeFactory() {
+            @Override
+            public SpecExecutionEngine create(ChangeTask task, WorkspaceProvisioner.WorkspaceLease workspace) {
+                return create(task, workspace, ChangeWorkerRuntimeContext.none());
+            }
+
+            @Override
+            public SpecExecutionEngine create(ChangeTask task, WorkspaceProvisioner.WorkspaceLease workspace,
+                                              ChangeWorkerRuntimeContext context) {
+                com.paicli.tool.ToolRegistry tools = context != null && context.toolGovernanceEnabled()
+                    ? new GovernedToolRegistry(context.toolApprovals(), task, workspace.workspaceRoot(), context.isolation())
+                    : new com.paicli.tool.ToolRegistry();
+            tools.setProjectPath(workspace.workspaceRoot().toString());
             SpecDraftSession unused = new SpecDraftSession(request -> { throw new IllegalStateException("Worker cannot draft"); },
                     document -> { throw new IllegalStateException("Offline demo has no terminal review"); });
             return new SpecRunCoordinator(workspace.workspaceRoot(), workspace.evidenceRoot().resolve("runs"),
@@ -60,13 +75,28 @@ public final class OfflineChangeDemo {
                         try {
                             boolean repair = phase == SpecRunCoordinator.ReActPhase.REPAIR;
                             String source = resource("RefundPolicy.java").replace("hours > 48", repair ? "hours > 24" : "hours >= 24");
-                            Files.writeString(workspace.workspaceRoot().resolve("payment/RefundPolicy.java"), source);
+                            String output = tools.executeTool("write_file", ChangeJson.MAPPER.createObjectNode()
+                                    .put("path", "payment/RefundPolicy.java").put("content", source).toString());
+                            if (output.startsWith("[HITL]") || output.startsWith("🛡️")) {
+                                return SpecRunCoordinator.ReActExecutionResult.failed(output);
+                            }
                             return SpecRunCoordinator.ReActExecutionResult.completed("离线模拟 " + phase + "：已写入退款策略");
                         } catch (IOException error) { throw new IllegalStateException(error); }
-                    }, new SpecVerifier(workspace.workspaceRoot(), command -> verify(workspace.workspaceRoot(), command)),
+                    }, new SpecVerifier(workspace.workspaceRoot(), command -> {
+                        if (tools instanceof GovernedToolRegistry governed) {
+                            return governed.executeCommandForVerification(command);
+                        }
+                        return verify(workspace.workspaceRoot(), command);
+                    }),
                     (criterion, changes) -> SpecRunCoordinator.HumanJudgment.skipped("Offline fixture has no Human Criterion"),
                     new SpecRunCoordinator.RunOptions(task.route().repairEnabled()
-                            ? SpecRunCoordinator.RepairPolicy.ENABLED : SpecRunCoordinator.RepairPolicy.DISABLED, attempt -> { }));
+                            ? SpecRunCoordinator.RepairPolicy.ENABLED : SpecRunCoordinator.RepairPolicy.DISABLED,
+                            attempt -> { }, identity -> {
+                                if (tools instanceof GovernedToolRegistry governed) {
+                                    governed.approvalHandler().bindRunIdentity(identity);
+                                }
+                            }));
+            }
         };
     }
 

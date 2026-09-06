@@ -4,6 +4,8 @@
 
 ## 身份与 API
 
+本节保留 M2 交付时的请求示例。M5 已将其中 `actorId` 改为可选一致性断言：HTTP 操作者始终来自服务端认证 Principal；新客户端应省略该字段。详见 [M5 实施记录](paichange-m5-implementation.md)。
+
 `POST /v1/changes/{changeId}/human-evidence` 每次追加一条 Human Criterion 判断；再次提交同一 Criterion 是更正，旧记录保留。请求示例：
 
 ```json
@@ -21,12 +23,12 @@
 }
 ```
 
-- decision 为 `PASS / FAIL / SKIPPED`。理由必填，最多 16000 字符；actorId 必填，最多 200 字符。一次最多 32 个引用。
+- decision 为 `PASS / FAIL / SKIPPED`。理由必填，最多 16000 字符；一次最多 32 个引用。M2 当时 actorId 必填，M5 后应省略，若兼容保留则必须等于认证 subject。
 - 只接受锁定 Spec 的 Human Criterion。确定性 Criterion、未知 Criterion、未知 Artifact ID 返回 422；缺字段、错误类型、非法枚举、未知字段返回 400。所有身份版本不匹配返回 409，不自动重放。
 - 引用只能选择 `GET /artifacts` 返回的 `artifactRefs`：`locked-spec`、`run-result`、`code-diff`、`evidence:<evidenceId>`。接口不接受路径、URL、附件；实际内容从当前任务关联解析，复用产物根、符号链接、digest 和每文件 4 MiB 限制。
 - 可补录状态为 `DELIVERY_REVIEW / FAILED / PUBLISHING / COMPLETED`，且必须已有持久化 Run；已拒绝、取消、执行中任务不能通过补录重新开启。
 - 保存返回 200，表示记录和重算已提交；发布由独立后台步骤完成。该请求不会直接发布 success。
-- `delivery-decisions` 的 APPROVE/REJECT 现在必须同时提交 `expectedVersion / expectedSpecDigest / expectedRunId / expectedHeadSha / expectedJudgmentRevision`，原有 decision、actorId、reason 保留。旧 HTTP 客户端缺少 run/判断版本返回 400，须随 Web 一并升级。
+- `delivery-decisions` 的 APPROVE/REJECT 必须同时提交 `expectedVersion / expectedSpecDigest / expectedRunId / expectedHeadSha / expectedJudgmentRevision`，decision/reason 保留；actorId 已在 M5 改为可选一致性断言。旧 HTTP 客户端缺少 run/判断版本返回 400，须随 Web 一并升级。
 
 详情新增 `humanReview`（全部人工记录及判断历史）、`judgmentRevision`、`deliveryVerdict`、`deliveryApprovalValid`、`deliveryHistory`。`run.verdict` 始终是原始 Run Verdict；页面分别展示它与当前交付判断。`deliveryApprovalValid` 表示持久化身份绑定匹配，实际批准和发布仍重新读取当前分支 head、锁定文件与 Run 产物，不能把查询快照视作后续发布授权。
 
@@ -102,4 +104,4 @@ mvn test -Pquick
 
 ## 保留的边界
 
-actorId 仍是本地可信模式输入，不提供服务端真人身份认证；职责分离沿用现有审批策略。没有上传、URL 抓取、组织工具策略、Worker HITL、真实 SCM、生产沙箱或不可变对象存储。已有固定退款演示 fixture 不含 Human Criterion，继续展示原离线修复流程；M2 浏览器验收使用独立测试 fixture。没有运行付费模型评测。
+M2 交付时 actorId 仍是本地输入；该限制已由 M5 的服务端 Principal、项目 RBAC 与职责分离替代。仍没有上传、URL 抓取、组织工具策略、Worker HITL、真实 SCM、生产沙箱或不可变对象存储。已有固定退款演示 fixture 不含 Human Criterion，继续展示原离线修复流程；M2 浏览器验收使用独立测试 fixture。没有运行付费模型评测。

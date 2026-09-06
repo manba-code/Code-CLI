@@ -16,8 +16,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
-public final class SqliteChangeStore implements ChangeStore, ChangeEventStore, AutoCloseable {
-    private static final ObjectMapper JSON = new ObjectMapper();
+public final class SqliteChangeStore implements ChangeStore, ChangeEventStore, ToolGovernanceStore, AutoCloseable {
+    private static final ObjectMapper JSON = ChangeJson.MAPPER;
     private final Connection connection;
 
     public SqliteChangeStore(Path dbPath) throws SQLException {
@@ -269,6 +269,29 @@ public final class SqliteChangeStore implements ChangeStore, ChangeEventStore, A
                     )
                     """);
             statement.execute("CREATE INDEX IF NOT EXISTS idx_change_events_change ON change_events(change_id, id)");
+            statement.execute("""
+                    CREATE TABLE IF NOT EXISTS project_tool_policies (
+                        project_id TEXT PRIMARY KEY,
+                        version INTEGER NOT NULL,
+                        policy_json TEXT NOT NULL CHECK (json_valid(policy_json)),
+                        updated_at TEXT NOT NULL,
+                        actor_id TEXT NOT NULL,
+                        actor_type TEXT NOT NULL
+                    )
+                    """);
+            statement.execute("""
+                    CREATE TABLE IF NOT EXISTS tool_approvals (
+                        id TEXT PRIMARY KEY,
+                        change_id TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        approval_json TEXT NOT NULL CHECK (json_valid(approval_json)),
+                        created_at TEXT NOT NULL,
+                        decided_at TEXT,
+                        FOREIGN KEY(change_id) REFERENCES change_tasks(id)
+                    )
+                    """);
+            statement.execute("CREATE INDEX IF NOT EXISTS idx_tool_approvals_change ON tool_approvals(change_id, created_at)");
+            statement.execute("CREATE INDEX IF NOT EXISTS idx_tool_approvals_pending ON tool_approvals(status, created_at)");
         }
         ensureExecutionColumns();
         ensurePhaseFourColumns();
@@ -277,6 +300,172 @@ public final class SqliteChangeStore implements ChangeStore, ChangeEventStore, A
         ensureColumn("change_approvals", "judgment_revision", "INTEGER NOT NULL DEFAULT 0");
         ensureColumn("human_review_json", "TEXT");
         ensureColumn("delivery_binding_json", "TEXT");
+    }
+
+    @Override
+    public synchronized ProjectToolPolicy policy(String projectId) {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "SELECT policy_json FROM project_tool_policies WHERE project_id = ?")) {
+            statement.setString(1, projectId);
+            try (ResultSet rows = statement.executeQuery()) {
+                return rows.next()
+                        ? fromJson(rows.getString(1), ProjectToolPolicy.class)
+                        : ProjectToolPolicy.defaults(projectId, Instant.EPOCH);
+            }
+        } catch (SQLException e) {
+            throw persistenceFailure("读取项目工具策略失败", e);
+        }
+    }
+
+    @Override
+    public synchronized ProjectToolPolicy updatePolicy(String projectId, long expectedVersion,
+                                                        List<ProjectToolPolicy.Rule> rules, Instant now,
+                                                        String actorId, String actorType) {
+        ProjectToolPolicy current = policy(projectId);
+        if (current.version() != expectedVersion) throw new ChangeConflictException("工具策略版本已过期");
+        ProjectToolPolicy updated = new ProjectToolPolicy(projectId, expectedVersion + 1, rules, now);
+        try (PreparedStatement statement = connection.prepareStatement("""
+                INSERT INTO project_tool_policies(project_id, version, policy_json, updated_at, actor_id, actor_type)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(project_id) DO UPDATE SET version=excluded.version, policy_json=excluded.policy_json,
+                    updated_at=excluded.updated_at, actor_id=excluded.actor_id, actor_type=excluded.actor_type
+                WHERE project_tool_policies.version = ?
+                """)) {
+            statement.setString(1, projectId);
+            statement.setLong(2, updated.version());
+            statement.setString(3, json(updated));
+            statement.setString(4, now.toString());
+            statement.setString(5, actorId);
+            statement.setString(6, actorType);
+            statement.setLong(7, expectedVersion);
+            if (statement.executeUpdate() == 0) throw new ChangeConflictException("工具策略版本已过期");
+            return updated;
+        } catch (SQLException e) {
+            throw persistenceFailure("保存项目工具策略失败", e);
+        }
+    }
+
+    @Override
+    public synchronized ToolApproval createApproval(ToolApproval approval) {
+        return inTransaction(() -> {
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    INSERT INTO tool_approvals(id, change_id, status, approval_json, created_at, decided_at)
+                    VALUES (?, ?, ?, ?, ?, NULL)
+                    """)) {
+                statement.setString(1, approval.id());
+                statement.setString(2, approval.changeId().value());
+                statement.setString(3, approval.status().name());
+                statement.setString(4, json(approval));
+                statement.setString(5, approval.createdAt().toString());
+                statement.executeUpdate();
+            }
+            appendEvent(toolEvent(approval, "tool.approval_requested", "WORKER", "change-worker"));
+            return approval;
+        });
+    }
+
+    @Override
+    public synchronized ToolApproval recordDeniedCall(ToolApproval denial) {
+        if (denial.status() != ToolApproval.Status.REJECTED) throw new IllegalArgumentException("必须记录拒绝结果");
+        return inTransaction(() -> {
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    INSERT INTO tool_approvals(id, change_id, status, approval_json, created_at, decided_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """)) {
+                statement.setString(1, denial.id());
+                statement.setString(2, denial.changeId().value());
+                statement.setString(3, denial.status().name());
+                statement.setString(4, json(denial));
+                statement.setString(5, denial.createdAt().toString());
+                statement.setString(6, denial.decidedAt() == null ? null : denial.decidedAt().toString());
+                statement.executeUpdate();
+            }
+            appendEvent(toolEvent(denial, "tool.policy_denied", "SYSTEM", "tool-policy"));
+            return denial;
+        });
+    }
+
+    @Override
+    public synchronized Optional<ToolApproval> findApproval(String approvalId) {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "SELECT approval_json FROM tool_approvals WHERE id = ?")) {
+            statement.setString(1, approvalId);
+            try (ResultSet rows = statement.executeQuery()) {
+                return rows.next() ? Optional.of(fromJson(rows.getString(1), ToolApproval.class)) : Optional.empty();
+            }
+        } catch (SQLException e) {
+            throw persistenceFailure("读取工具审批失败", e);
+        }
+    }
+
+    @Override
+    public synchronized List<ToolApproval> approvals(ChangeTaskId changeId) {
+        List<ToolApproval> result = new ArrayList<>();
+        try (PreparedStatement statement = connection.prepareStatement(
+                "SELECT approval_json FROM tool_approvals WHERE change_id = ? ORDER BY created_at, id")) {
+            statement.setString(1, changeId.value());
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) result.add(fromJson(rows.getString(1), ToolApproval.class));
+            }
+            return List.copyOf(result);
+        } catch (SQLException e) {
+            throw persistenceFailure("列出工具审批失败", e);
+        }
+    }
+
+    @Override
+    public synchronized ToolApproval updateApproval(ToolApproval approval, ToolApproval.Status expectedStatus) {
+        return inTransaction(() -> {
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    UPDATE tool_approvals SET status = ?, approval_json = ?, decided_at = ?
+                    WHERE id = ? AND status = ?
+                    """)) {
+                statement.setString(1, approval.status().name());
+                statement.setString(2, json(approval));
+                statement.setString(3, approval.decidedAt() == null ? null : approval.decidedAt().toString());
+                statement.setString(4, approval.id());
+                statement.setString(5, expectedStatus.name());
+                if (statement.executeUpdate() == 0) throw new ChangeConflictException("工具审批状态已变化");
+            }
+            appendEvent(toolEvent(approval, "tool.approval_" + approval.status().name().toLowerCase(java.util.Locale.ROOT),
+                    approval.approverType().isBlank() ? "SYSTEM" : approval.approverType(),
+                    approval.approverId().isBlank() ? "change-worker" : approval.approverId()));
+            return approval;
+        });
+    }
+
+    @Override
+    public synchronized List<ToolApproval> pendingApprovals() {
+        List<ToolApproval> result = new ArrayList<>();
+        try (PreparedStatement statement = connection.prepareStatement(
+                "SELECT approval_json FROM tool_approvals WHERE status = 'PENDING' ORDER BY created_at, id");
+             ResultSet rows = statement.executeQuery()) {
+            while (rows.next()) result.add(fromJson(rows.getString(1), ToolApproval.class));
+            return List.copyOf(result);
+        } catch (SQLException e) {
+            throw persistenceFailure("列出未决工具审批失败", e);
+        }
+    }
+
+    private ChangeEvent toolEvent(ToolApproval approval, String type, String actorType, String actorId) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("SELECT state FROM change_tasks WHERE id = ?")) {
+            statement.setString(1, approval.changeId().value());
+            try (ResultSet rows = statement.executeQuery()) {
+                if (!rows.next()) throw new ChangeNotFoundException(approval.changeId());
+                ChangeState state = ChangeState.valueOf(rows.getString(1));
+                var payload = ChangeJson.MAPPER.createObjectNode();
+                payload.put("approvalId", approval.id()).put("callId", approval.callId())
+                        .put("runId", approval.runId()).put("toolName", approval.toolName())
+                        .put("argumentsDigest", approval.argumentsDigest())
+                        .put("argumentsPreview", approval.argumentsPreview())
+                        .put("workingDirectory", approval.workingDirectory())
+                        .put("specDigest", approval.specDigest()).put("policyVersion", approval.policyVersion())
+                        .put("profile", approval.profile().name()).put("ruleId", approval.ruleId())
+                        .put("status", approval.status().name()).put("reason", approval.decisionReason());
+                return new ChangeEvent(0, approval.changeId(), type, actorType, actorId,
+                        state, state, payload.toString(), approval.decidedAt() == null ? approval.createdAt() : approval.decidedAt());
+            }
+        }
     }
 
     private static void bindTask(PreparedStatement statement, ChangeTask task) throws SQLException {

@@ -665,8 +665,8 @@ Git       Prompt    异步后台    图片
 
 ## PaiChange 本地演示平台（Phase 1–6）✅
 
-后续开发计划 M1、M2 已完成：见 [PaiChange 后续开发计划](docs/paichange-next-development-plan.md)。Draft 异步生成、持久化调度、重试/取消、重启恢复与 Web 状态展示已验收（quick 911 tests，0 failures/errors，5 skipped）。M2 已增加 Human Evidence 补录、更正历史、确定性交付判断重算、审批失效及版本化 Mock Check 发布（平台针对性 63、Node 11 项通过；quick 923 tests，0 failures/errors，5 skipped；浏览器验收通过）；详见 [M2 实施记录](docs/paichange-m2-implementation.md)。工具策略与审批、真实 SCM、身份 RBAC、执行隔离与存储部署仍待开发；真实共享试点须满足身份、工具策略和最小隔离的依赖门槛。
+后续开发计划 M1、M2、M3、M5、M6a 已完成代码切片：见 [PaiChange 后续开发计划](docs/paichange-next-development-plan.md)。Draft 异步生成、Human Evidence、可信 Principal/RBAC 和项目工具策略已分别验收。M6a 新增任务级 Docker 命令/Verifier 执行平面、资源/超时/进程树限制、默认拒绝与项目 internal 代理出口、短期文件型 Secret seam，以及控制面 Evidence 哈希归档与发布前复核，详见 [M6a 实施记录](docs/paichange-m6a-implementation.md)。目标主机已用 digest 固定镜像实测双任务攻击面、internal 假代理 ACL/审计、错误网络标签 fail closed、cgroup 资源限制、取消/异常/Secret 到期清理、应用级 orphan 恢复及 Evidence 重启复核；除先前 Docker 29 mount 兼容问题外，本轮又修复小写 proxy 兼容、并发取消锁和 non-root Secret tmpfs 属主问题。M6a 针对性 36 项、M1/M2/M3/M5 扩展回归 133 项、Node Web 16 项、quick 964 项（5 skipped）均无失败/错误，打包和应用重启浏览器验收通过。Docker Desktop daemon 重启仍待单独授权，因此该项尚未闭环。真实 SCM（M4）与生产存储部署（M6b）仍待开发。
 
 2026-09-04：独立 ChangeTask、契约审批、风险路由、Git worktree Worker、验证与受控修复、Delivery Approval、SQLite Mock Check，以及同源最小 Web 已落地。`-Dpaichange.demo=true` 可显式运行离线退款 fixture，Draft/ReAct 使用确定性替身；不代表真实模型收益验证。
 
-真实 Jira/GitLab/GitHub、RBAC、组织工具策略、Worker HITL 与生产沙箱仍未交付。启动、验收和边界见 README 的 PaiChange 部分及 `docs/paichange-platform-refactoring-plan.md` §27。
+真实 Jira/GitLab/GitHub、具体 OIDC/生产组织目录和 M6b 存储部署仍未交付。M6a Docker 只形成有限的单机任务执行边界，不等于生产策略分发、microVM、多租户强隔离或绝对安全。启动、验收和边界见 README 的 PaiChange 部分、`docs/paichange-m3-implementation.md`、`docs/paichange-m5-implementation.md`、`docs/paichange-m6a-implementation.md` 及 `docs/paichange-platform-refactoring-plan.md` §27。

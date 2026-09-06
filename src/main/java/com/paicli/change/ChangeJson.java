@@ -37,6 +37,10 @@ public final class ChangeJson {
     }
 
     public static ChangeRequest request(JsonNode body) {
+        return request(body, text(body, "actorId"), "LEGACY");
+    }
+
+    public static ChangeRequest request(JsonNode body, String actorId, String actorType) {
         object(body, "request");
         JsonNode repository = body.path("repository");
         object(repository, "repository");
@@ -61,7 +65,7 @@ public final class ChangeJson {
         }
         return new ChangeRequest(text(body, "idempotencyKey"), ref,
                 new RepositoryRef(text(repository, "path"), text(repository, "baseRef")),
-                text(body, "title"), text(body, "requirement"), text(body, "actorId"),
+                text(body, "title"), text(body, "requirement"), actorId, actorType,
                 optionalText(body, "projectContext"), optionalText(body, "referencedContext"));
     }
 

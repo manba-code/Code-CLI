@@ -18,8 +18,14 @@ public final class ChangeArtifactReader {
     private static final int MAX_BYTES = 4 * 1024 * 1024;
     private record Root(Path configured, Path real) { }
     private final List<Root> roots;
+    private final TrustedEvidenceStore integrity;
 
     public ChangeArtifactReader(Path... roots) throws IOException {
+        this(null, roots);
+    }
+
+    public ChangeArtifactReader(TrustedEvidenceStore integrity, Path... roots) throws IOException {
+        this.integrity = integrity;
         List<Root> trusted = new ArrayList<>();
         for (Path root : roots) {
             Files.createDirectories(root);
@@ -36,6 +42,8 @@ public final class ChangeArtifactReader {
         var revisions = out.putArray("revisions");
         out.putNull("draft"); out.putNull("lockedSpec"); out.putNull("revisionDiff");
         out.putNull("codeDiff"); out.putNull("result");
+        out.put("evidenceIntegrity", integrity == null ? "NOT_MEASURED" : "NOT_APPLICABLE");
+        out.putNull("evidenceManifestSha256");
         out.putArray("verifiers"); out.putArray("criteria");
         out.putArray("criterionResults"); out.putArray("verificationAttempts"); out.putArray("evidence");
         if (task.spec() != null) {
@@ -89,6 +97,11 @@ public final class ChangeArtifactReader {
         }
         if (task.run() != null) {
             RunRef run = task.run();
+            if (integrity != null) {
+                integrity.verify(task.id(), run.runId(), run.evidencePath());
+                out.put("evidenceIntegrity", "VERIFIED");
+                out.put("evidenceManifestSha256", integrity.manifestSha256(task.id(), run.runId()));
+            }
             JsonNode result;
             try { result = ChangeJson.MAPPER.readTree(text(run.evidencePath().resolve("result.json"))); }
             catch (com.fasterxml.jackson.core.JsonProcessingException e) { throw new IOException("持久化 Evidence JSON 损坏", e); }

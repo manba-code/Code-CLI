@@ -2,6 +2,11 @@ package com.paicli.runtime.api;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.paicli.runtime.auth.AuthenticationException;
+import com.paicli.runtime.auth.AuthenticationRequest;
+import com.paicli.runtime.auth.LocalApiKeyPrincipalAdapter;
+import com.paicli.runtime.auth.Principal;
+import com.paicli.runtime.auth.PrincipalAdapter;
 import com.paicli.runtime.task.TaskRunner;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -15,10 +20,12 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class RuntimeApiServer implements AutoCloseable {
+    public static final String PRINCIPAL_ATTRIBUTE = RuntimeApiServer.class.getName() + ".principal";
+    public static final String AUTH_MODE_ATTRIBUTE = RuntimeApiServer.class.getName() + ".authMode";
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private final RuntimeThreadStore store;
     private final TaskRunner runner;
-    private final String apiKey;
+    private final PrincipalAdapter identities;
     private final HttpServer server;
     private final ExecutorService executor = Executors.newCachedThreadPool(r -> {
         Thread thread = new Thread(r, "paicli-runtime-api");
@@ -30,21 +37,27 @@ public class RuntimeApiServer implements AutoCloseable {
         this(store, runner, port, apiKey, null);
     }
 
+    public RuntimeApiServer(RuntimeThreadStore store, TaskRunner runner, int port,
+                            PrincipalAdapter identities) throws IOException {
+        this(store, runner, port, identities, null);
+    }
+
     public RuntimeApiServer(RuntimeThreadStore store, TaskRunner runner, int port, String apiKey,
                             ChangeApiHandler changes) throws IOException {
-        if (apiKey == null || apiKey.isBlank()) {
-            throw new IllegalArgumentException("Runtime API 需要配置 PAICLI_RUNTIME_API_KEY 或 -Dpaicli.runtime.api.key");
-        }
+        this(store, runner, port, new LocalApiKeyPrincipalAdapter(apiKey), changes);
+    }
+
+    public RuntimeApiServer(RuntimeThreadStore store, TaskRunner runner, int port,
+                            PrincipalAdapter identities, ChangeApiHandler changes) throws IOException {
         this.store = store;
         this.runner = runner;
-        this.apiKey = apiKey;
+        this.identities = java.util.Objects.requireNonNull(identities, "identities");
         this.server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
         this.server.createContext("/v1/threads", this::handleThreads);
         if (changes != null) {
             this.server.createContext("/changes", new ChangeWebHandler());
             this.server.createContext("/v1/changes", exchange -> {
-                if (!authorized(exchange)) {
-                    writeJson(exchange, 401, "{\"error\":\"unauthorized\"}");
+                if (!authenticate(exchange)) {
                     return;
                 }
                 changes.handle(exchange);
@@ -71,10 +84,7 @@ public class RuntimeApiServer implements AutoCloseable {
 
     private void handleThreads(HttpExchange exchange) throws IOException {
         try {
-            if (!authorized(exchange)) {
-                writeJson(exchange, 401, "{\"error\":\"unauthorized\"}");
-                return;
-            }
+            if (!authenticate(exchange)) return;
             String method = exchange.getRequestMethod();
             String path = exchange.getRequestURI().getPath();
             if ("POST".equals(method) && "/v1/threads".equals(path)) {
@@ -142,10 +152,19 @@ public class RuntimeApiServer implements AutoCloseable {
         }
     }
 
-    private boolean authorized(HttpExchange exchange) {
-        String auth = exchange.getRequestHeaders().getFirst("Authorization");
-        String direct = exchange.getRequestHeaders().getFirst("X-PaiCLI-API-Key");
-        return ("Bearer " + apiKey).equals(auth) || apiKey.equals(direct);
+    private boolean authenticate(HttpExchange exchange) throws IOException {
+        try {
+            Principal principal = identities.authenticate(new AuthenticationRequest(
+                    exchange.getRequestHeaders().getFirst("Authorization"),
+                    exchange.getRequestHeaders().getFirst("X-PaiCLI-API-Key")));
+            exchange.setAttribute(PRINCIPAL_ATTRIBUTE, principal);
+            exchange.setAttribute(AUTH_MODE_ATTRIBUTE, identities.mode());
+            return true;
+        } catch (AuthenticationException error) {
+            exchange.getResponseHeaders().set("WWW-Authenticate", "Bearer realm=\"PaiCLI Runtime API\"");
+            writeJson(exchange, 401, "{\"error\":\"unauthorized\",\"message\":\"认证失败或登录态已过期\"}");
+            return false;
+        }
     }
 
     private static String threadId(String path) {

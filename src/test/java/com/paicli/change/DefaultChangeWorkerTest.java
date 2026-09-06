@@ -21,6 +21,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -116,6 +117,75 @@ class DefaultChangeWorkerTest {
                 .contains("worktree unavailable"));
     }
 
+    @Test
+    void taskTimeoutAbortsIsolationAndReleasesWorkspaceWithoutCompleting() {
+        InMemoryChangeStore store = new InMemoryChangeStore();
+        DefaultChangeWorkflow workflow = workflow(store);
+        ChangeTask ready = ready(workflow, "worker-timeout");
+        workflow.queueForExecution(ready.id(), ready.version());
+        AtomicBoolean aborted = new AtomicBoolean();
+        AtomicBoolean released = new AtomicBoolean();
+        WorkerIsolation.Session session = new WorkerIsolation.Session() {
+            @Override public boolean isolated() { return true; }
+            @Override public Duration taskTimeout() { return Duration.ofMillis(25); }
+            @Override public com.paicli.tool.CommandExecutionResult executeCommand(String command, Duration timeout) {
+                throw new AssertionError("no command");
+            }
+            @Override public WorkerIsolation.NetworkDecision networkDecision(String toolName, String argumentsJson) {
+                return WorkerIsolation.NetworkDecision.deny("none");
+            }
+            @Override public void abort(String reason) { aborted.set(true); }
+            @Override public void close() { aborted.set(true); }
+        };
+        WorkerIsolation isolation = new WorkerIsolation() {
+            @Override public Session open(ChangeTask task, WorkspaceProvisioner.WorkspaceLease workspace) { return session; }
+            @Override public Capabilities capabilities() { return Capabilities.disabled(); }
+        };
+        WorkspaceProvisioner workspaces = new FakeWorkspaceProvisioner(tempDir) {
+            @Override public void release(WorkspaceLease lease) { released.set(true); }
+        };
+        ChangeWorkerRuntimeFactory runtime = (task, workspace) -> context -> {
+            try { Thread.sleep(5_000); }
+            catch (InterruptedException error) { Thread.currentThread().interrupt(); }
+            throw new IllegalStateException("late worker result");
+        };
+        DefaultChangeWorker worker = new DefaultChangeWorker(workflow, workspaces, runtime,
+                ChangeWorkerRuntimeContext.none(), isolation, null);
+
+        assertThrows(IllegalStateException.class, () -> worker.run(ready.id()));
+
+        assertTrue(aborted.get());
+        assertTrue(released.get());
+        assertEquals(ChangeState.FAILED, workflow.get(ready.id()).task().state());
+        assertTrue(workflow.get(ready.id()).events().get(workflow.get(ready.id()).events().size() - 1)
+                .payloadJson().contains("任务总超时"));
+    }
+
+    @Test
+    void evidenceArchiveFailurePreventsBusinessCompletion() throws Exception {
+        InMemoryChangeStore store = new InMemoryChangeStore();
+        DefaultChangeWorkflow workflow = workflow(store);
+        ChangeTask ready = ready(workflow, "worker-evidence-failure");
+        workflow.queueForExecution(ready.id(), ready.version());
+        FakeWorkspaceProvisioner workspaces = new FakeWorkspaceProvisioner(tempDir);
+        Path database = tempDir.resolve("evidence-failure.db");
+        try (SqliteChangeStore ignored = new SqliteChangeStore(database);
+             TrustedEvidenceStore evidence = new TrustedEvidenceStore(database, tempDir.resolve("trusted-evidence"))) {
+            ChangeWorkerRuntimeFactory runtime = (task, workspace) -> context -> {
+                Path run = Files.createDirectories(workspace.evidenceRoot().resolve("runs/run-invalid"));
+                // Deliberately claim SAVED without the two required files: the control plane must reject it.
+                return passedResult(context, run, "run-invalid");
+            };
+            DefaultChangeWorker worker = new DefaultChangeWorker(workflow, workspaces, runtime,
+                    ChangeWorkerRuntimeContext.none(), WorkerIsolation.none(), evidence);
+
+            assertThrows(IllegalStateException.class, () -> worker.run(ready.id()));
+        }
+
+        assertEquals(ChangeState.FAILED, workflow.get(ready.id()).task().state());
+        assertEquals(null, workflow.get(ready.id()).task().run());
+    }
+
     private DefaultChangeWorkflow workflow(InMemoryChangeStore store) {
         ChangeSpecModule specs = new ChangeSpecModule() {
             @Override
@@ -200,7 +270,7 @@ class DefaultChangeWorkerTest {
         return null;
     }
 
-    private static final class FakeWorkspaceProvisioner implements WorkspaceProvisioner {
+    private static class FakeWorkspaceProvisioner implements WorkspaceProvisioner {
         private final Path root;
         private final AtomicInteger sequence = new AtomicInteger();
 

@@ -18,6 +18,10 @@ public final class MockWorkItemAdapter {
     }
 
     public ChangeTaskId submit(String fixture) throws IOException {
+        return submit(fixture, null, null);
+    }
+
+    public ChangeTaskId submit(String fixture, String actorId, String actorType) throws IOException {
         if (fixture == null || !fixture.matches("[A-Za-z0-9_-]+\\.json")) {
             throw new IllegalArgumentException("fixture 必须是本地 JSON 文件名");
         }
@@ -39,7 +43,9 @@ public final class MockWorkItemAdapter {
         body.set("repository", input.path("repository"));
         body.put("title", ChangeJson.text(input, "title"));
         body.put("requirement", ChangeJson.text(input, "description"));
-        body.put("actorId", ChangeJson.text(input, "requester"));
-        return workflow.submit(ChangeJson.request(body));
+        String requester = actorId == null || actorId.isBlank() ? ChangeJson.text(input, "requester") : actorId;
+        body.put("actorId", requester);
+        return workflow.submit(ChangeJson.request(body, requester,
+                actorType == null || actorType.isBlank() ? "LEGACY" : actorType));
     }
 }

@@ -10,11 +10,17 @@ public sealed interface ChangeDecision
 
     String actorId();
 
-    record ApproveSpec(long expectedVersion, String expectedDigest, String actorId, String reason)
+    String actorType();
+
+    record ApproveSpec(long expectedVersion, String expectedDigest, String actorId, String actorType, String reason)
             implements ChangeDecision {
+        public ApproveSpec(long expectedVersion, String expectedDigest, String actorId, String reason) {
+            this(expectedVersion, expectedDigest, actorId, "LEGACY", reason);
+        }
         public ApproveSpec {
             expectedDigest = requireText(expectedDigest, "expectedDigest");
             actorId = requireText(actorId, "actorId");
+            actorType = requireText(actorType, "actorType");
             reason = normalize(reason);
         }
     }
@@ -23,20 +29,29 @@ public sealed interface ChangeDecision
             long expectedVersion,
             String expectedDigest,
             String actorId,
+            String actorType,
             String supplement
     ) implements ChangeDecision {
+        public SupplementSpec(long expectedVersion, String expectedDigest, String actorId, String supplement) {
+            this(expectedVersion, expectedDigest, actorId, "LEGACY", supplement);
+        }
         public SupplementSpec {
             expectedDigest = requireText(expectedDigest, "expectedDigest");
             actorId = requireText(actorId, "actorId");
+            actorType = requireText(actorType, "actorType");
             supplement = requireText(supplement, "supplement");
         }
     }
 
-    record RejectSpec(long expectedVersion, String expectedDigest, String actorId, String reason)
+    record RejectSpec(long expectedVersion, String expectedDigest, String actorId, String actorType, String reason)
             implements ChangeDecision {
+        public RejectSpec(long expectedVersion, String expectedDigest, String actorId, String reason) {
+            this(expectedVersion, expectedDigest, actorId, "LEGACY", reason);
+        }
         public RejectSpec {
             expectedDigest = requireText(expectedDigest, "expectedDigest");
             actorId = requireText(actorId, "actorId");
+            actorType = requireText(actorType, "actorType");
             reason = normalize(reason);
         }
     }
@@ -48,14 +63,21 @@ public sealed interface ChangeDecision
             String expectedRunId,
             long expectedJudgmentRevision,
             String actorId,
+            String actorType,
             String reason
     ) implements ChangeDecision {
+        public ApproveDelivery(long expectedVersion, String expectedSpecDigest, String expectedHeadSha,
+                               String expectedRunId, long expectedJudgmentRevision, String actorId, String reason) {
+            this(expectedVersion, expectedSpecDigest, expectedHeadSha, expectedRunId,
+                    expectedJudgmentRevision, actorId, "LEGACY", reason);
+        }
         public ApproveDelivery {
             expectedSpecDigest = requireText(expectedSpecDigest, "expectedSpecDigest");
             expectedHeadSha = requireText(expectedHeadSha, "expectedHeadSha");
             expectedRunId = requireText(expectedRunId, "expectedRunId");
             if (expectedJudgmentRevision < 0) throw new IllegalArgumentException("判断版本必须非负");
             actorId = requireText(actorId, "actorId");
+            actorType = requireText(actorType, "actorType");
             reason = normalize(reason);
         }
     }
@@ -67,14 +89,21 @@ public sealed interface ChangeDecision
             String expectedRunId,
             long expectedJudgmentRevision,
             String actorId,
+            String actorType,
             String reason
     ) implements ChangeDecision {
+        public RejectDelivery(long expectedVersion, String expectedSpecDigest, String expectedHeadSha,
+                              String expectedRunId, long expectedJudgmentRevision, String actorId, String reason) {
+            this(expectedVersion, expectedSpecDigest, expectedHeadSha, expectedRunId,
+                    expectedJudgmentRevision, actorId, "LEGACY", reason);
+        }
         public RejectDelivery {
             expectedSpecDigest = requireText(expectedSpecDigest, "expectedSpecDigest");
             expectedHeadSha = requireText(expectedHeadSha, "expectedHeadSha");
             expectedRunId = requireText(expectedRunId, "expectedRunId");
             if (expectedJudgmentRevision < 0) throw new IllegalArgumentException("判断版本必须非负");
             actorId = requireText(actorId, "actorId");
+            actorType = requireText(actorType, "actorType");
             reason = normalize(reason);
         }
     }

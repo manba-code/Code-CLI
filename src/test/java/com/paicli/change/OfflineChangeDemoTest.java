@@ -30,7 +30,10 @@ class OfflineChangeDemoTest {
             assertEquals(404, raw("GET", "/changes/../../pom.xml", null, false).statusCode());
             assertEquals(404, raw("GET", "/changes?key=never", null, false).statusCode());
             assertEquals(200, raw("GET", "/changes/app.js", null, false).statusCode());
-            assertTrue(send("GET", "/v1/changes/capabilities", null, 200).path("offlineDemo").asBoolean());
+            JsonNode capabilities = send("GET", "/v1/changes/capabilities", null, 200);
+            assertTrue(capabilities.path("offlineDemo").asBoolean());
+            assertTrue(capabilities.path("evidenceIntegrity").asBoolean());
+            assertFalse(capabilities.path("executionIsolation").asBoolean());
             assertEquals(400, raw("POST", "/v1/changes", "{}", true).statusCode());
             JsonNode first = create();
             String path = "/v1/changes/" + first.path("changeId").asText();
@@ -97,16 +100,80 @@ class OfflineChangeDemoTest {
         }
     }
 
+    @Test void lockedDownDemoWaitsForExactToolApprovalsAcrossInitialRepairAndVerifier() throws Exception {
+        String previous = System.getProperty("paichange.demo.tool.approvals");
+        System.setProperty("paichange.demo.tool.approvals", "true");
+        try {
+            Path runRoot = root.resolve("tool-approval");
+            try (var platform = OfflineChangeDemo.create(runRoot);
+                 var threads = new RuntimeThreadStore(runRoot.resolve("threads.db"));
+                 var server = new RuntimeApiServer(threads, p -> p, 0, "test-only-key", platform.handler())) {
+                platform.start(); server.start(); base = "http://127.0.0.1:" + server.port();
+                JsonNode review = create();
+                String path = "/v1/changes/" + review.path("changeId").asText();
+                JsonNode started = send("POST", path + "/spec-decisions",
+                        specDecision(review, "APPROVE").toString(), 200);
+                assertEquals("LOCKED_DOWN", started.path("route").path("toolPolicy").asText());
+
+                java.util.Set<String> approvedIds = new java.util.HashSet<>();
+                for (int i = 0; i < 4; i++) {
+                    JsonNode pending = awaitToolApproval(path, approvedIds);
+                    assertFalse(pending.path("argumentsPreview").asText().contains("hours >= 24"));
+                    String body = ChangeJson.MAPPER.writeValueAsString(Map.of(
+                            "decision", "APPROVE", "reason", "offline browser acceptance",
+                            "expectedPolicyVersion", pending.path("policyVersion").asLong(),
+                            "expectedArgumentsDigest", pending.path("argumentsDigest").asText(),
+                            "expectedCallId", pending.path("callId").asText(),
+                            "expectedRunId", pending.path("runId").asText(),
+                            "expectedSpecDigest", pending.path("specDigest").asText()));
+                    send("POST", path + "/tool-approvals/" + pending.path("id").asText() + "/decisions", body, 200);
+                    approvedIds.add(pending.path("id").asText());
+                }
+
+                JsonNode delivery = await(path, "DELIVERY_REVIEW");
+                assertEquals("PASSED", delivery.path("run").path("verdict").asText());
+                JsonNode approvals = send("GET", path + "/tool-approvals", null, 200).path("toolApprovals");
+                assertEquals(4, approvals.size());
+                approvals.forEach(item -> assertEquals("APPROVED", item.path("status").asText()));
+                JsonNode done = send("POST", path + "/delivery-decisions",
+                        deliveryDecision(delivery, "APPROVE"), 200);
+                assertEquals("COMPLETED", done.path("state").asText());
+                JsonNode events = send("GET", path + "/events", null, 200).path("events");
+                assertTrue(events.toString().contains("tool.approval_requested"));
+                assertTrue(events.toString().contains("tool.approval_approved"));
+                assertFalse(events.toString().contains("hours >= 24"));
+            }
+        } finally {
+            if (previous == null) System.clearProperty("paichange.demo.tool.approvals");
+            else System.setProperty("paichange.demo.tool.approvals", previous);
+        }
+    }
+
+    private JsonNode awaitToolApproval(String taskPath, java.util.Set<String> seen) throws Exception {
+        long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+        while (System.nanoTime() < deadline) {
+            JsonNode items = send("GET", taskPath + "/tool-approvals", null, 200).path("toolApprovals");
+            for (JsonNode item : items) {
+                if (item.path("status").asText().equals("PENDING") && !seen.contains(item.path("id").asText())) {
+                    return item;
+                }
+            }
+            Thread.sleep(25);
+        }
+        throw new AssertionError("pending tool approval not observed");
+    }
+
     private JsonNode create() throws Exception {
         JsonNode created = send("POST", "/v1/changes", "{\"fixture\":\"offline-refund.json\"}", 201);
         return await("/v1/changes/" + created.path("changeId").asText(), "SPEC_REVIEW");
     }
     private ObjectNode specDecision(JsonNode task, String decision) throws Exception {
         ObjectNode body = (ObjectNode) ChangeJson.MAPPER.readTree(ChangeApiHandlerTest.specDecision(task, "techlead"));
+        body.remove("actorId");
         return body.put("decision", decision);
     }
     private String deliveryDecision(JsonNode task, String decision) throws Exception {
-        return ChangeJson.MAPPER.writeValueAsString(Map.of("decision", decision, "actorId", "techlead",
+        return ChangeJson.MAPPER.writeValueAsString(Map.of("decision", decision,
                 "expectedVersion", task.path("version").asLong(), "expectedSpecDigest", task.path("spec").path("digest").asText(),
                 "expectedRunId", task.path("run").path("runId").asText(), "expectedJudgmentRevision", task.path("judgmentRevision").asLong(),
                 "expectedHeadSha", task.path("run").path("headSha").asText()));

@@ -260,6 +260,7 @@ public final class SpecRunCoordinator implements SpecExecutionEngine {
                 lockedSpec.revision(),
                 lockedSpec.specDigest(),
                 lockedSpec.path());
+        runOptions.runIdentityObserver().onCreated(identity);
         WorkspaceChangeTracker.Baseline baseline;
         String executionInput;
         try {
@@ -930,19 +931,30 @@ public final class SpecRunCoordinator implements SpecExecutionEngine {
         void onCompleted(SpecRunResult.VerificationAttempt attempt);
     }
 
+    @FunctionalInterface
+    public interface RunIdentityObserver {
+        void onCreated(SpecRunResult.RunIdentity identity);
+    }
+
     public record RunOptions(
             RepairPolicy repairPolicy,
-            VerificationAttemptObserver verificationAttemptObserver
+            VerificationAttemptObserver verificationAttemptObserver,
+            RunIdentityObserver runIdentityObserver
     ) {
+        public RunOptions(RepairPolicy repairPolicy, VerificationAttemptObserver verificationAttemptObserver) {
+            this(repairPolicy, verificationAttemptObserver, identity -> { });
+        }
+
         public RunOptions {
             repairPolicy = repairPolicy == null ? RepairPolicy.ENABLED : repairPolicy;
             verificationAttemptObserver = verificationAttemptObserver == null
                     ? attempt -> { }
                     : verificationAttemptObserver;
+            runIdentityObserver = runIdentityObserver == null ? identity -> { } : runIdentityObserver;
         }
 
         public static RunOptions defaults() {
-            return new RunOptions(RepairPolicy.ENABLED, attempt -> { });
+            return new RunOptions(RepairPolicy.ENABLED, attempt -> { }, identity -> { });
         }
     }
 
