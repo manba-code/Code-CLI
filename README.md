@@ -412,7 +412,7 @@ M3 已实现项目级版本工具策略、三 profile 强制执行、持久化�
 当前启动输出以命令行实际产物为准：
 
 ```text
-   ████████    PaiCLI π  v16.1.0
+   ████████    PaiCLI π  v16.1.1
      ██  ██    Model step-3.5-flash-2603 (step)
      ██  ██    MCP 4/4 · 61 tools · 2/2 skills · ReAct
      ██  ██    ReAct · Plan · MCP · Browser · Image
@@ -868,7 +868,7 @@ I
 ### 第三期：当前运行效果
 
 ```text
-   ████████    PaiCLI π  v16.1.0
+   ████████    PaiCLI π  v16.1.1
      ██  ██    Model glm-5.1 (glm)
      ██  ██    MCP 4/4 · 61 tools · 2/2 skills · ReAct
      ██  ██    ReAct · Plan · MCP · Browser · Image

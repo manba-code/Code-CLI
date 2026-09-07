@@ -37,7 +37,7 @@
 - 离线演示只由 JVM 属性 `paichange.demo=true` 启用，不新增 `/demo` 命令、不读取个人 provider 配置或启动 MCP；默认使用新的系统临时目录，可用 `paichange.demo.dir` 复用目录。仅接受固定退款 fixture，补充文本保留为记录，固定验收条件不随自然语言改变。重新演示用新目录，不删除已有任务。演示完整步骤与 Phase 6 验收见 README 和实施计划 §27。
 - PaiChange 隔离边界：M3 的项目级策略与持久化 Worker HITL 是宿主控制面；M6a 只把不可信 shell/command Verifier 放进任务容器，Java 编排、LLM、文件工具、审批、SQLite 与 Evidence 归档留在宿主。文件工具仍受任务 worktree + PathGuard 约束。Docker/宿主内核/控制面/预置镜像/代理均在信任基内，不能把容器称为绝对安全边界；当前主机含 daemon 重启的 Docker/代理验收不能替代部署环境的生产镜像、代理/DNS/TLS、daemon 加固、容量与更广泛恢复验收。数据目录通过 `PAICHANGE_DATA_DIR` / `paichange.data.dir` 配置，同目录仅一个服务进程。
 - 下一步：按 `docs/paichange-m8-resume-release-plan.md` 在获得专用仓库与明确授权后完成 GitHub/GitLab 真实闭环，观察公开 CI 并创建 Release Tag；OAuth / sampling / recovery 保留为后续 MCP 增强，不阻塞本地实现
-- Banner 版本：`v16.1.0`，Maven 产物：`paicli-1.0-SNAPSHOT.jar`（两者不一致是正常状态）
+- Banner 版本：`v16.1.1`，Maven 产物：`paicli-1.0-SNAPSHOT.jar`（两者不一致是正常状态）
 - 新安装或没有 `~/.paicli/config.json` 时默认 provider/model 为 `deepseek / DeepSeek-V4-pro`；已有持久配置继续优先，不自动覆盖用户选择。
 
 ## 运行前提
