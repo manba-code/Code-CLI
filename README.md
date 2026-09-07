@@ -317,7 +317,7 @@ M7a 在 M5/M6b seam 上补齐生产身份最小切片：单 issuer OIDC Bearer J
 
 M7b 在上述 seam 上增加运行保障 module，不改业务 Workflow/RBAC/OIDC/成员目录：`GET /health/live`、`GET /health/ready` 和 `/metrics` 分别提供进程存活、PostgreSQL/queue/S3/SCM/JWKS 分项 readiness 与无敏感 label 的 Prometheus 指标；生产启动要求远端 TLS、显式 RPO/RTO、有效 queue lease 和已存在且身份匹配的 GitHub/GitLab checkout。成员管理员可从 `/v1/changes/projects/{projectId}/members/audit/export` 导出带 SHA-256/条数头的有界 JSONL，权限仍逐请求读取成员目录。`ProductionRecoveryVerifier` 对恢复后的 PostgreSQL V2、全部 S3 Evidence 内容/metadata/manifest、COMPLETED publication 和发布身份做 fail-closed 复核。本地脚本使用 PostgreSQL 17.6、主/备两个 MinIO、假 OIDC/JWKS 和假 GitLab，删除原数据库/bucket 后恢复；本机小 fixture 从停写恢复点计算的实测 RPO 2 秒、RTO 2 秒、备份耗时 1 秒（目标 300/600 秒），只构成本地演练证据。M7b 容器 profile 5 项、独立恢复 1 项、M6b 兼容容器 1 项及 quick 983 项（16 skipped）均通过。配置、指标/告警、脱敏、备份恢复、故障、升级/回滚和剩余真实环境验收见 [M7b 实施记录](docs/paichange-m7b-implementation.md)。
 
-M8 本地实现已补齐 GitHub Adapter、单 provider 装配、假 GitHub/真实 Git push 闭环以及普通/容器/Tag GitHub Actions。M8 最终完成仍要求在另行授权后执行 GitHub/GitLab 真实测试仓库验收，并实际运行 Tag Release；实施边界见 [M8 收口计划](docs/paichange-m8-resume-release-plan.md)。
+M8 已补齐 GitHub Adapter、单 provider 装配、假 GitHub/真实 Git push 闭环以及普通/容器/Tag GitHub Actions。2026-09-07 已在真实 [GitHub Issue #1](https://github.com/manba-code/Code-CLI/issues/1) 完成精确任务分支、[PR #3](https://github.com/manba-code/Code-CLI/pull/3)、head-bound Commit Status、响应不明后的重启远端对账与幂等验收；[普通 CI](https://github.com/manba-code/Code-CLI/actions/runs/34078784313)、[容器矩阵](https://github.com/manba-code/Code-CLI/actions/runs/34089756890)、`v16.1.1` Release、JAR/SHA-256 和无凭据启动 smoke 也已通过。诊断尝试 [PR #2](https://github.com/manba-code/Code-CLI/pull/2) 属于不同 ChangeTask/publication，未合并且按验收禁令保留。M8 最终完成只剩另行授权的真实 GitLab 验收；实施边界见 [M8 收口计划](docs/paichange-m8-resume-release-plan.md)。
 
 #### Web 与离线演示
 

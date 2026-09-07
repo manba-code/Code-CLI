@@ -211,16 +211,16 @@ mvn package -DskipTests
 
 ## 9. 完成清单
 
-- [ ] 当前 M3–M7b 改动已审查、分组提交，工作区干净。
+- [x] 当前 M3–M8 改动已审查、分组提交；临时真实验收 harness 在证据落档后删除。
 - [x] GitHub Issue/branch/PR/status Adapter 完成。
 - [x] `mock|gitlab|github` 单选装配和生产启动校验完成。
 - [x] GitHub 假服务故障与幂等闭环通过。
-- [ ] 真实 GitHub 测试仓库闭环通过并保存脱敏证据。
+- [x] 真实 GitHub 测试仓库闭环通过并保存脱敏证据（Issue #1、PR #3、head/status/publication 见实施记录）。
 - [ ] 真实 GitLab 测试仓库闭环通过并保存脱敏证据。
-- [x] GitHub Actions 普通 CI、容器手动 CI、Tag Release 文件已实现；托管运行仍待观察。
-- [ ] README 首屏、架构图、五分钟 demo、真实链接和限制说明完成（首屏、离线 demo 和限制已更新；真实链接待验收）。
+- [x] GitHub Actions 普通 CI、容器手动 CI、Tag Release 文件已实现且托管运行通过。
+- [ ] README 首屏、架构图、五分钟 demo、真实链接和限制说明完成（GitHub 真实链接已补充；GitLab 链接与录屏待验收）。
 - [x] quick、Web、container、package 全部通过，未运行付费模型评测。
-- [ ] Release Tag 和可下载 JAR/SHA-256 已生成。
+- [x] `v16.1.1` Release Tag 和可下载 JAR/SHA-256 已生成并独立核验。
 
 以上全部完成后，停止新增简历版本功能。后续能力只进入独立路线图，不阻塞项目投递和面试。
 
