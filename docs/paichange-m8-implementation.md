@@ -1,6 +1,6 @@
-# PaiChange M8：GitHub/GitLab 与简历发布本地收口
+# PaiChange M8：GitHub-first 与简历发布收口
 
-> 状态：本地实现、真实 GitHub、普通/容器 CI 与 Release 已完成；真实 GitLab 待验收
+> 状态：已完成；真实 GitHub、普通/容器 CI 与 Release 均已验收
 
 ## 实现范围
 
@@ -51,6 +51,6 @@ GitHub Actions 文件：
 
 手动容器矩阵 [run 34089756890](https://github.com/manba-code/Code-CLI/actions/runs/34089756890) 绑定分支 head `b4ee84924971ad9fe0a8facca79f83101df390ce`，M6b、M7a、M7b 三个 job 均一次通过。脱敏 Surefire Artifact 复核数字为 M6b 1 test、M7a 1 test、M7b 6 tests，全部 0 failures、0 errors、0 skipped；三份 Artifact 均由 GitHub 返回独立 SHA-256 digest。
 
-## 尚未完成
+## 边界与后续
 
-真实 GitLab 验收仍需要专用 project、Issue IID、最小权限 Token 和操作者明确授权；本轮按授权只执行 GitHub。真实 GitLab MR URL 和录屏尚未生成。登录页、Refresh Token、SCIM、多 IdP、Jira、Webhook、自动合并、HA、Kubernetes、MCP OAuth、完整 LSP 和微信媒体不属于本期。
+M8 采用 GitHub-first 完成定义，真实 GitLab 不再是退出条件。既有 GitLab Adapter、配置和假服务回归继续保留为兼容能力；未来若恢复真实 GitLab，需独立提供专用 project、Issue IID、最小权限 Token 与明确写入授权，其结果不得反向改写本次 GitHub 验收结论。登录页、Refresh Token、SCIM、多 IdP、Jira、Webhook、自动合并、HA、Kubernetes、MCP OAuth、完整 LSP 和微信媒体不属于本期。

@@ -301,7 +301,7 @@ export PAICHANGE_GITHUB_REMOTE=origin
 export PAICHANGE_GITHUB_TIMEOUT_SECONDS=15
 ```
 
-本地 checkout 必须是可解析 base ref 的 Git 工作树，remote 必须与所选 provider 的仓库身份一致；HTTP(S) remote 不得内嵌凭据。系统不自动 clone、不配置分支保护、也不合并 PR/MR。GitHub 使用 `github:<owner>/<repository>:issue:<number>` 幂等导入，GitLab 保持既有 IID 语义。两者的真实实例验收均等待专用测试仓库、Issue、最小权限 Token 和明确真实写入授权；本轮只使用 loopback 假服务和临时 bare remote。
+本地 checkout 必须是可解析 base ref 的 Git 工作树，remote 必须与所选 provider 的仓库身份一致；HTTP(S) remote 不得内嵌凭据。系统不自动 clone、不配置分支保护、也不合并 PR/MR。GitHub 使用 `github:<owner>/<repository>:issue:<number>` 幂等导入，GitLab 保持既有 IID 语义。M8 的真实实例验收范围已收敛为 GitHub；GitLab Adapter 与假服务回归继续保留，但真实 GitLab 不作为本期退出条件。
 
 发布前重新核对锁定 Spec、分支 head、持久化原始 Verdict/Evidence、当前交付判断和有效审批；HIGH 必须有 Delivery Approval。`NEEDS_HUMAN` 仅发布 pending，Delivery Approval 不能覆盖它；当前交付判断失败仅发布 failure。发布失败保持未完成状态，后台可安全重试。`ConfiguredScm` 在唯一装配点配对 WorkItem/SCM adapter；Workflow、Worker、API 和 RBAC 不含 provider 分支。GitHub/GitLab 都先推送精确 Worker 分支、回读远端 head、对账或创建 open PR/MR，再发布绑定 head SHA 与 publication identity 的 commit status。超时、响应丢失或本地 ledger/完成事件落账失败后先远端对账，不盲目重复写入。
 
@@ -317,7 +317,7 @@ M7a 在 M5/M6b seam 上补齐生产身份最小切片：单 issuer OIDC Bearer J
 
 M7b 在上述 seam 上增加运行保障 module，不改业务 Workflow/RBAC/OIDC/成员目录：`GET /health/live`、`GET /health/ready` 和 `/metrics` 分别提供进程存活、PostgreSQL/queue/S3/SCM/JWKS 分项 readiness 与无敏感 label 的 Prometheus 指标；生产启动要求远端 TLS、显式 RPO/RTO、有效 queue lease 和已存在且身份匹配的 GitHub/GitLab checkout。成员管理员可从 `/v1/changes/projects/{projectId}/members/audit/export` 导出带 SHA-256/条数头的有界 JSONL，权限仍逐请求读取成员目录。`ProductionRecoveryVerifier` 对恢复后的 PostgreSQL V2、全部 S3 Evidence 内容/metadata/manifest、COMPLETED publication 和发布身份做 fail-closed 复核。本地脚本使用 PostgreSQL 17.6、主/备两个 MinIO、假 OIDC/JWKS 和假 GitLab，删除原数据库/bucket 后恢复；本机小 fixture 从停写恢复点计算的实测 RPO 2 秒、RTO 2 秒、备份耗时 1 秒（目标 300/600 秒），只构成本地演练证据。M7b 容器 profile 5 项、独立恢复 1 项、M6b 兼容容器 1 项及 quick 983 项（16 skipped）均通过。配置、指标/告警、脱敏、备份恢复、故障、升级/回滚和剩余真实环境验收见 [M7b 实施记录](docs/paichange-m7b-implementation.md)。
 
-M8 已补齐 GitHub Adapter、单 provider 装配、假 GitHub/真实 Git push 闭环以及普通/容器/Tag GitHub Actions。2026-09-07 已在真实 [GitHub Issue #1](https://github.com/manba-code/Code-CLI/issues/1) 完成精确任务分支、[PR #3](https://github.com/manba-code/Code-CLI/pull/3)、head-bound Commit Status、响应不明后的重启远端对账与幂等验收；[普通 CI](https://github.com/manba-code/Code-CLI/actions/runs/34078784313)、[容器矩阵](https://github.com/manba-code/Code-CLI/actions/runs/34089756890)、`v16.1.1` Release、JAR/SHA-256 和无凭据启动 smoke 也已通过。诊断尝试 [PR #2](https://github.com/manba-code/Code-CLI/pull/2) 属于不同 ChangeTask/publication，未合并且按验收禁令保留。M8 最终完成只剩另行授权的真实 GitLab 验收；实施边界见 [M8 收口计划](docs/paichange-m8-resume-release-plan.md)。
+M8 GitHub-first 发布收口已完成：GitHub Adapter、单 provider 装配、假 GitHub/真实 Git push 闭环以及普通/容器/Tag GitHub Actions 均已落地。2026-09-07 已在真实 [GitHub Issue #1](https://github.com/manba-code/Code-CLI/issues/1) 完成精确任务分支、[PR #3](https://github.com/manba-code/Code-CLI/pull/3)、head-bound Commit Status、响应不明后的重启远端对账与幂等验收；[普通 CI](https://github.com/manba-code/Code-CLI/actions/runs/34090362296)、[容器矩阵](https://github.com/manba-code/Code-CLI/actions/runs/34089756890)、`v16.1.1` Release、JAR/SHA-256 和无凭据启动 smoke 也已通过。诊断尝试 [PR #2](https://github.com/manba-code/Code-CLI/pull/2) 属于不同 ChangeTask/publication，未合并且按验收禁令保留。现有 GitLab Adapter 与离线回归作为兼容能力保留，真实 GitLab 已从 M8 完成条件中剔除；实施边界见 [M8 收口计划](docs/paichange-m8-resume-release-plan.md)。
 
 #### Web 与离线演示
 
@@ -349,7 +349,7 @@ M3 工具审批浏览器验收使用全新的演示目录，并在启动参数�
 
 2026-09-04 验证：Phase 1–6 联合针对性 149 项全通过；`mvn test -Pquick` 为 899 项、0 failures/errors、5 skipped；浏览器完成创建、补充、双页面 409、注入防护、修复证据与 Mock success 交付验收。
 
-离线 fixture 位于 `src/main/resources/paichange-demo/`，仅替代 Draft 与 ReAct；验证实际运行本地 Java fixture，SCM 仅写本地 SQLite。演示模式只允许创建固定 `offline-refund.json`，不接受任意仓库创建请求，即使配置了 GitHub/GitLab、M6b 生产存储或 M7a OIDC 也不会联网。离线模式拥有 M3 工具策略、M5 本地 Principal 边界和 M6a Evidence 哈希归档，但默认不开 Docker；单 Key 和显式自批例外都不能用于共享部署。M6b 存储和 M7a 身份均只完成本地容器最小闭环；真实 GitHub/GitLab/IdP、目标环境备份恢复、监控和容量仍未验收，不能把离线演示描述为生产平台或真实模型提效证据。
+离线 fixture 位于 `src/main/resources/paichange-demo/`，仅替代 Draft 与 ReAct；验证实际运行本地 Java fixture，SCM 仅写本地 SQLite。演示模式只允许创建固定 `offline-refund.json`，不接受任意仓库创建请求，即使配置了 GitHub/GitLab、M6b 生产存储或 M7a OIDC 也不会联网。离线模式拥有 M3 工具策略、M5 本地 Principal 边界和 M6a Evidence 哈希归档，但默认不开 Docker；单 Key 和显式自批例外都不能用于共享部署。M8 已完成真实 GitHub 闭环，但 M6b 存储和 M7a 身份仍只完成本地容器最小闭环；真实 IdP、目标环境备份恢复、监控和容量仍未验收，不能把离线演示描述为生产平台或真实模型提效证据。
 
 M1 已实现 Draft 异步生成、取消、失败重试和重启恢复。SQLite 自动增量添加 Draft 调度列；调度与任务/事件同事务，默认两个并发、每 generation 最多三次基础设施 attempt、每次 600 秒超时，失败退避 1/2 秒。内容资格纠错仍单独最多两次。HTTP 取消终止当前生成请求；不可取消实现的迟到结果不会覆盖当前版本。迁移、崩溃窗口和操作说明见 [M1 实施记录](docs/paichange-m1-implementation.md)。
 
