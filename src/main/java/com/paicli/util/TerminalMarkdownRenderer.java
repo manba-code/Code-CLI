@@ -491,7 +491,7 @@ public final class TerminalMarkdownRenderer {
         return max;
     }
 
-    private int displayWidth(String value) {
+    static int displayWidth(String value) {
         if (value == null || value.isEmpty()) {
             return 0;
         }
@@ -504,7 +504,7 @@ public final class TerminalMarkdownRenderer {
         return width;
     }
 
-    private int codePointWidth(int cp) {
+    private static int codePointWidth(int cp) {
         if (Character.isISOControl(cp)) {
             return 0;
         }
@@ -522,7 +522,7 @@ public final class TerminalMarkdownRenderer {
         };
     }
 
-    private boolean isWideSymbol(int cp) {
+    private static boolean isWideSymbol(int cp) {
         return (cp >= 0x1100 && cp <= 0x115F)
                 || (cp >= 0x2329 && cp <= 0x232A)
                 || (cp >= 0x2E80 && cp <= 0xA4CF)
