@@ -1,8 +1,8 @@
-# PaiChange M8：GitHub / GitLab 与简历发布收口计划
+# PaiChange M8：GitHub-first 与简历发布收口计划
 
-> 状态：本地实现完成，真实 SCM 与托管 Release 待验收
+> 状态：已完成；真实 GitHub、托管 CI 与 Release 均已形成公开证据
 > 目标：完成简历和面试演示所必需的最后一段产品闭环  
-> 当前基线：PaiCLI 主 Agent 能力与 PaiChange M1–M7b 本地闭环已经完成；GitLab Adapter 已通过假服务测试但尚未连接真实实例，GitHub Adapter 与公开 CI 尚未实现  
+> 当前基线：PaiCLI 主 Agent 能力与 PaiChange M1–M7b 本地闭环已经完成；M8 保留 GitLab 兼容代码，但以 GitHub 作为唯一真实 SCM 验收和发布平台
 > 原则：复用现有 Workflow、RBAC、OIDC、Evidence、存储和 Worker seam，不以“发布收口”为名重写业务工作流
 
 ## 1. 产品方向与本期完成定义
@@ -11,10 +11,10 @@ PaiCLI 是能理解代码、调用工具并修改仓库的 Java Coding Agent；P
 
 M8 完成后，项目应能诚实演示并声明：
 
-1. 同一套 ChangeWorkflow 可以从 GitHub Issue 或 GitLab Issue 导入任务。
-2. Worker 只向服务端配置的目标仓库和任务分支推送，并创建或复用 PR/MR。
-3. Check/Status 始终绑定已验证的 head SHA；远端超时、重复投递或本地落账失败不会重复创建 PR/MR，也不会误标 `COMPLETED`。
-4. GitHub 与 GitLab 各有一次真实测试仓库闭环证据，本地离线 Mock 继续可用。
+1. 同一套 ChangeWorkflow 可以从 GitHub Issue 导入任务，既有 GitLab Adapter 作为兼容实现保留。
+2. Worker 只向服务端配置的目标仓库和任务分支推送，并创建或复用 GitHub PR。
+3. Commit Status 始终绑定已验证的 head SHA；远端超时、重复投递或本地落账失败不会重复创建 PR，也不会误标 `COMPLETED`。
+4. GitHub 有一次真实测试仓库闭环证据，本地离线 Mock 和既有 GitLab 假服务回归继续可用。
 5. 公开 CI 能在每次 push/PR 上运行确定性回归、构建可执行 JAR，并在版本 Tag 上生成可下载且带校验和的发布物。
 
 ## 2. 必须范围与明确非目标
@@ -24,9 +24,9 @@ M8 完成后，项目应能诚实演示并声明：
 - GitHub Issue、branch、Pull Request、Commit Status/Check 的最小 Adapter。
 - `PAICHANGE_SCM=mock|gitlab|github` 的单提供方服务端配置与启动校验。
 - GitHub 假 HTTP 服务 + 临时 bare remote 的确定性端到端测试。
-- GitHub、GitLab 各一次真实测试仓库验收。
+- GitHub 一次真实测试仓库验收；真实 GitLab 明确不属于 M8 退出条件。
 - GitHub Actions 的 quick、Web、package、容器手动验收和 Tag release。
-- README 首屏、架构图、五分钟演示、真实 PR/MR 证据链接和版本 Tag。
+- README 首屏、架构图、五分钟演示、真实 GitHub PR 证据链接和版本 Tag。
 - 当前 M3–M7b 工作区变更完成审查、分组提交，仓库恢复为干净状态。
 
 ### 2.2 本期不做
@@ -43,19 +43,20 @@ M8 完成后，项目应能诚实演示并声明：
 
 | 能力 | 当前事实 | M8 退出状态 |
 |---|---|---|
-| GitLab | `GitLabWorkItemAdapter` / `GitLabScmAdapter` 已完成，假 GitLab 与真实临时 Git push 已通过 | 在专用真实项目完成 Issue → branch → MR → status 闭环 |
-| GitHub | 尚无 GitHub Adapter | 与 GitLab 对等的最小 Issue → branch → PR → status 闭环 |
-| SCM 装配 | `ChangePlatform` 生产路径当前硬性要求 GitLab | 支持 mock/gitlab/github 单选，默认仍为 mock |
-| CI | 当前没有 `.github/workflows` | PR/push 自动回归，Tag 自动构建发布物 |
-| 发布物 | Maven 可生成 shaded JAR，但没有版本发布流水线 | Release 附带 JAR、SHA-256、变更摘要和验证结果 |
-| 演示证据 | 离线 demo 与本地容器证据完整 | README 能在五分钟内复现；真实 GitHub/GitLab 链接可核验 |
+| GitLab | Adapter、配置和假服务回归已完成 | 作为兼容能力保留；真实实例验收独立于 M8 |
+| GitHub | Adapter、假服务与真实 Issue → branch → PR → status 均已完成 | 已达到 M8 退出状态 |
+| SCM 装配 | 支持 `mock|gitlab|github` 严格单选 | 已达到 M8 退出状态，默认仍为 mock |
+| CI | 普通、容器和 Tag workflow 均已托管运行 | 已达到 M8 退出状态 |
+| 发布物 | `v16.1.1` Release 附带 JAR 与 SHA-256 | 已独立下载核验 |
+| 演示证据 | README、真实 GitHub PR/CI/Release 链接可核验 | 已达到 GitHub-first 退出状态 |
 
 ## 4. 角色与用例
 
 ![PaiChange M8 业务用例图](images/paichange-m8-usecase.svg)
 
 - **开发者/审批者**：从 Issue 发起变更、选择当前部署配置的代码托管平台、审阅 Evidence 和 PR/MR Check。
-- **GitHub/GitLab**：保存分支、PR/MR 和 commit status，并提供远端 head 供平台对账。
+- **GitHub**：当前真实验收与发布平台，保存分支、PR 和 commit status，并提供远端 head 供平台对账。
+- **GitLab**：仅保留 Adapter、配置和离线回归兼容性，不纳入 M8 真实验收。
 - **GitHub Actions**：对代码提交执行确定性回归、构建发布物；真实 SCM 写入验收只允许手动触发。
 
 ## 5. Module 与 seam 设计
@@ -130,21 +131,21 @@ M8 完成后，项目应能诚实演示并声明：
 
 退出标准：GitHub 与 GitLab 共享一组 adapter contract；provider 特有测试只验证远端协议差异。
 
-### M8.3：真实 GitHub 与 GitLab 验收
+### M8.3：真实 GitHub 验收
 
-为两个平台分别准备专用测试仓库、测试 Issue、受保护 base branch 和最小权限 Token。真实验收必须由操作者显式启用，默认测试和 CI 不得连接外部 SCM。
+为 GitHub 准备专用测试仓库、测试 Issue、base branch 和最小权限 Token。真实验收必须由操作者显式启用，默认测试和 CI 不得连接外部 SCM。真实 GitLab 不属于 M8 退出条件。
 
-每个平台执行并保存：
+执行并保存：
 
 1. 从真实 Issue 创建 Change。
 2. 锁定 Spec，完成确定性 Worker/Verifier/Evidence 流程和必要审批。
-3. 推送唯一任务分支并创建一个 PR/MR。
+3. 推送唯一任务分支并创建一个 PR。
 4. 发布绑定当前 head SHA 的 pending/success 或 failure 状态。
-5. 重放同一 publication，证明 PR/MR 数和发布身份不增加。
+5. 重放同一 publication，证明 PR 数和发布身份不增加。
 6. 制造一次 Token 无权限、head 前进或远端暂不可用，证明任务保持未完成。
-7. 轮换/撤销 Token 后确认旧 Token 失效且日志、事件和导出中无凭据。
+7. 使用无效或无权限 Token 确认 fail closed，且日志、事件和导出中无凭据。
 
-退出证据：PR/MR URL、Issue URL、脱敏运行记录、head SHA、publication identity、测试命令与结果。不得把真实 Token 写入文档或测试报告。
+退出证据：PR URL、Issue URL、脱敏运行记录、head SHA、publication identity、测试命令与结果。不得把真实 Token 写入文档或测试报告。
 
 ### M8.4：GitHub Actions CI 与 Release
 
@@ -154,20 +155,20 @@ M8 完成后，项目应能诚实演示并声明：
 2. `container-integration.yml`：仅 `workflow_dispatch` 或定时运行 M6b/M7a/M7b 容器测试；失败时上传无 Secret 的日志，始终清理容器与网络。
 3. `release.yml`：版本 Tag 触发，在 quick 通过后构建 JAR，生成 SHA-256 和变更摘要并发布 GitHub Release。
 
-CI 不运行付费模型 Profile，不使用个人模型 Key，不运行真实 GitHub/GitLab 写入验收。真实验收使用单独受保护环境并要求人工批准。
+CI 不运行付费模型 Profile，不使用个人模型 Key，也不运行真实 GitHub 写入验收。真实验收使用单独受保护环境并要求人工批准。
 
 退出标准：全新 clone 只依赖 Java 17、Maven 和 Node 即可完成普通 CI；Release 下载的 JAR 校验和正确且能打印版本/帮助。
 
 ### M8.5：简历与面试演示材料
 
 1. README 首屏用一句话说明“Java Coding Agent + 受控变更交付平台”。
-2. 增加架构图，清楚区分 Agent 执行面、PaiChange 控制面、PostgreSQL/S3 和 GitHub/GitLab。
-3. 提供五分钟离线 demo，以及真实 GitHub/GitLab 演示链接；两者不得混写为同一验证等级。
+2. 增加架构图，清楚区分 Agent 执行面、PaiChange 控制面、PostgreSQL/S3 和 GitHub。
+3. 提供五分钟离线 demo，以及真实 GitHub 演示链接；两者不得混写为同一验证等级。
 4. 列出关键工程指标：当前 quick 数、容器测试、RPO/RTO 本地演练结果和 fail-closed 故障类型。
-5. 准备 2–3 分钟录屏或截图：Issue → ChangeSpec → Evidence → Approval → PR/MR Check。
+5. 以公开 Issue、PR、Status、CI 与 Release 链接作为主要演示证据；录屏或截图为可选材料，不阻塞退出。
 6. 明确限制：真实效果量化未证明，HA/Kubernetes/SCIM 等未实现。
 
-退出标准：面试官不需要本地配置真实 Token，也能理解架构、运行离线 demo、查看 CI 与真实 PR/MR 证据。
+退出标准：面试官不需要本地配置真实 Token，也能理解架构、运行离线 demo、查看 CI 与真实 GitHub PR 证据。
 
 ## 7. 配置草案
 
@@ -196,7 +197,7 @@ Token 只接受环境变量，不提供 JVM property 或 HTTP 参数入口。Git
 | 假 GitHub 端到端 | Issue、push、PR、status、超时对账、重启 | 仅 loopback |
 | M7b 容器回归 | PostgreSQL、S3、OIDC、SCM readiness 与恢复 | 仅本机容器 |
 | quick/Web/package | 全项目确定性回归与可执行 JAR | 否 |
-| 真实 SCM 验收 | GitHub/GitLab 各一条完整链路及故障样例 | 是，显式授权 |
+| 真实 SCM 验收 | GitHub 一条完整链路及故障样例 | 是，显式授权 |
 
 每次 M8 交付至少运行：
 
@@ -211,16 +212,15 @@ mvn package -DskipTests
 
 ## 9. 完成清单
 
-- [ ] 当前 M3–M7b 改动已审查、分组提交，工作区干净。
+- [x] 当前 M3–M8 改动已审查、分组提交；临时真实验收 harness 在证据落档后删除。
 - [x] GitHub Issue/branch/PR/status Adapter 完成。
 - [x] `mock|gitlab|github` 单选装配和生产启动校验完成。
 - [x] GitHub 假服务故障与幂等闭环通过。
-- [ ] 真实 GitHub 测试仓库闭环通过并保存脱敏证据。
-- [ ] 真实 GitLab 测试仓库闭环通过并保存脱敏证据。
-- [x] GitHub Actions 普通 CI、容器手动 CI、Tag Release 文件已实现；托管运行仍待观察。
-- [ ] README 首屏、架构图、五分钟 demo、真实链接和限制说明完成（首屏、离线 demo 和限制已更新；真实链接待验收）。
+- [x] 真实 GitHub 测试仓库闭环通过并保存脱敏证据（Issue #1、PR #3、head/status/publication 见实施记录）。
+- [x] GitHub Actions 普通 CI、容器手动 CI、Tag Release 文件已实现且托管运行通过。
+- [x] README 首屏、架构图、五分钟 demo、GitHub 真实链接和限制说明完成；录屏/截图为可选材料。
 - [x] quick、Web、container、package 全部通过，未运行付费模型评测。
-- [ ] Release Tag 和可下载 JAR/SHA-256 已生成。
+- [x] `v16.1.1` Release Tag 和可下载 JAR/SHA-256 已生成并独立核验。
 
 以上全部完成后，停止新增简历版本功能。后续能力只进入独立路线图，不阻塞项目投递和面试。
 
@@ -228,6 +228,6 @@ mvn package -DskipTests
 
 完成 M8 后可以写：
 
-> 独立设计并实现 Java Coding Agent 与受控变更交付平台，接入 GitHub/GitLab，实现 Issue-to-PR/MR、Spec-to-Evidence、人工审批、RBAC、Docker 隔离、PostgreSQL/S3 持久化及故障恢复，并通过近千项自动化测试与真实测试仓库闭环验证。
+> 独立设计并实现 Java Coding Agent 与受控变更交付平台，接入 GitHub，实现 Issue-to-PR、Spec-to-Evidence、人工审批、RBAC、Docker 隔离、PostgreSQL/S3 持久化及故障恢复，并通过近千项自动化测试与真实 GitHub 仓库闭环验证。
 
 不得写“生产级高可用”“已在企业大规模落地”“ChangeSpec 显著提效”或“绝对安全沙箱”，除非未来取得对应真实证据。

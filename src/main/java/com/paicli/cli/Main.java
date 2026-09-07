@@ -104,7 +104,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
 /**
- * PaiCLI v16.1.0 - Terminal-First Agent IDE
+ * PaiCLI v16.1.1 - Terminal-First Agent IDE
  * 支持 ReAct、Plan-and-Execute、Memory、RAG、Multi-Agent、HITL、并行工具调用、多模型切换、MCP、CDP 会话复用
  * 第 15 期新增：Skill 系统（三层加载 + load_skill 工具 + SkillContextBuffer 注入）、内置 web-access skill
  * 第 16 期新增：TUI 界面（Lanterna 3）、文件树浏览、代码高亮、对话历史可视化、配置管理面板
@@ -115,7 +115,7 @@ import java.util.regex.Pattern;
  * HITL 增强：路径围栏（PathGuard）、命令快速拒绝（CommandGuard）、操作审计链（AuditLog）—— 见 com.paicli.policy
  */
 public class Main {
-    private static final String VERSION = "16.1.0";
+    private static final String VERSION = "16.1.1";
     private static final String ENV_FILE = ".env";
     private static final String LOG_DIR_PROPERTY = "paicli.log.dir";
     private static final String LOG_LEVEL_PROPERTY = "paicli.log.level";
@@ -206,6 +206,9 @@ public class Main {
     }
 
     public static void main(String[] args) {
+        if (handleInformationalCommand(args, System.out)) {
+            return;
+        }
         configureAwtForCli();
         if (WechatCommandMain.isWechatCommand(args)) {
             configureLogging();
@@ -880,6 +883,28 @@ public class Main {
             System.err.println("❌ 终端初始化失败: " + e.getMessage());
             System.exit(1);
         }
+    }
+
+    static boolean handleInformationalCommand(String[] args, PrintStream out) {
+        if (args == null || args.length != 1 || out == null) {
+            return false;
+        }
+        return switch (args[0].toLowerCase(Locale.ROOT)) {
+            case "--help", "-h", "help" -> {
+                out.println("PaiCLI v" + VERSION);
+                out.println("Usage:");
+                out.println("  java -jar paicli-1.0-SNAPSHOT.jar");
+                out.println("  java -jar paicli-1.0-SNAPSHOT.jar serve --http [--port <port>]");
+                out.println("  java -jar paicli-1.0-SNAPSHOT.jar wechat <setup|start|status|logout>");
+                out.println("  java -jar paicli-1.0-SNAPSHOT.jar --help | --version");
+                yield true;
+            }
+            case "--version", "-v", "version" -> {
+                out.println("PaiCLI v" + VERSION);
+                yield true;
+            }
+            default -> false;
+        };
     }
 
     private static boolean isRuntimeServeCommand(String[] args) {

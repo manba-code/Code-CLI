@@ -37,4 +37,3 @@ jobs:
           path: |
             target/surefire-reports/
             target/paicli-1.0-SNAPSHOT.jar
-
