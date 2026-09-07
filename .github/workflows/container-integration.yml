@@ -30,4 +30,3 @@ jobs:
           name: paichange-${{ matrix.suite }}-reports
           if-no-files-found: warn
           path: target/surefire-reports/
-
