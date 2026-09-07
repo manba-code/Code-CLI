@@ -73,6 +73,18 @@ test('GitLab capability imports one configured issue IID without accepting repos
   await f.finish();
 });
 
+test('GitHub capability imports one configured issue number without accepting repository fields', async () => {
+  const f = await fixture({capabilities:{offlineDemo:false,scm:'GITHUB'}});
+  assert.equal(f.el('normal-fields').hidden,true);
+  assert.equal(f.el('work-item-field').hidden,false);
+  assert.equal(f.el('idempotency-field').hidden,true);
+  assert.match(f.el('scm-badge').textContent,/GitHub/);
+  assert.match(f.el('work-item-label').textContent,/GitHub Issue number/);
+  f.el('work-item').value = '43'; f.submit();
+  assert.deepEqual(JSON.parse(f.requests[0].body),{workItem:'43'});
+  await f.finish();
+});
+
 test('HTTP failure restores buttons and retry retains the same creation request', async () => {
   const f = await fixture(); f.submit(); await f.finish(500);
   assert.equal(f.el('create-button').disabled, false);

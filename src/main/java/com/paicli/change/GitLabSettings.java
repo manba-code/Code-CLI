@@ -7,7 +7,7 @@ import java.util.Objects;
 
 /** Server-side GitLab configuration. Tokens are accepted only from process settings, never HTTP input. */
 public record GitLabSettings(URI baseUrl, String projectId, String token, Path repository,
-                             String baseRef, String remote, Duration timeout) {
+                             String baseRef, String remote, Duration timeout) implements RemoteScmSettings {
     public GitLabSettings {
         baseUrl = Objects.requireNonNull(baseUrl, "baseUrl").normalize();
         if (!("http".equalsIgnoreCase(baseUrl.getScheme()) || "https".equalsIgnoreCase(baseUrl.getScheme()))
@@ -43,8 +43,12 @@ public record GitLabSettings(URI baseUrl, String projectId, String token, Path r
                 Duration.ofSeconds(seconds));
     }
 
-    public static boolean enabled() {
-        return "gitlab".equalsIgnoreCase(setting("paichange.scm", "PAICHANGE_SCM", "mock"));
+    @Override public String provider() { return "GitLab"; }
+    @Override public String repositoryIdentity() { return projectId; }
+    @Override public String expectedRemoteHost() { return baseUrl.getHost(); }
+    @Override public String toString() {
+        return "GitLabSettings[baseUrl=" + baseUrl + ", projectId=" + projectId + ", token=<redacted>, repository="
+                + repository + ", baseRef=" + baseRef + ", remote=" + remote + ", timeout=" + timeout + "]";
     }
 
     private static String setting(String property, String environment, String fallback) {

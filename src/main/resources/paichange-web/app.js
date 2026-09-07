@@ -278,11 +278,11 @@
   function newRequest() {
     creation = null; creationId = null;
     $('idempotency').value = demo ? 'offline-refund-v1' : crypto.randomUUID();
-    if (scm === 'GITLAB') $('work-item').value = '';
+    if (scm === 'GITLAB' || scm === 'GITHUB') $('work-item').value = '';
     $('create-status').hidden = true;
     $('create-status').textContent = '';
   }
-  $('connect').addEventListener('submit', async event => { event.preventDefault(); if (busy) return; key = $('key').value; $('key').value = ''; await guarded(async () => { const cap = await api('/capabilities'); demo = cap.offlineDemo; scm = cap.scm || 'MOCK'; principal = cap.principal; const gitlab = scm === 'GITLAB'; $('mode').textContent = (demo?'离线模拟执行':'真实模型执行') + ' · ' + (cap.executionIsolation?'Docker 隔离':'宿主本地执行') + ' · ' + (cap.evidenceIntegrity?'Evidence 哈希校验':'普通 Evidence') + ' · ' + principal.displayName + ' · ' + principal.type; $('normal-fields').hidden = demo || gitlab; $('work-item-field').hidden = !gitlab; $('idempotency-field').hidden = gitlab; $('title').disabled = demo || gitlab; $('requirement').disabled = demo || gitlab; $('repository').disabled = demo || gitlab; $('base-ref').disabled = demo || gitlab; $('work-item').disabled = !gitlab; $('work-item').required = gitlab; $('demo-info').hidden = !demo; $('scm-badge').textContent = gitlab ? 'GitLab SCM · 单一项目' : 'Mock SCM · localhost'; $('scm-footer').textContent = gitlab ? 'GitLab MR + commit status · 不自动合并或部署' : '本地演示 · Mock Check 不构成真实分支保护 · 不自动部署'; newRequest(); await list();
+  $('connect').addEventListener('submit', async event => { event.preventDefault(); if (busy) return; key = $('key').value; $('key').value = ''; await guarded(async () => { const cap = await api('/capabilities'); demo = cap.offlineDemo; scm = cap.scm || 'MOCK'; principal = cap.principal; const remote = scm === 'GITLAB' || scm === 'GITHUB'; const github = scm === 'GITHUB'; $('mode').textContent = (demo?'离线模拟执行':'真实模型执行') + ' · ' + (cap.executionIsolation?'Docker 隔离':'宿主本地执行') + ' · ' + (cap.evidenceIntegrity?'Evidence 哈希校验':'普通 Evidence') + ' · ' + principal.displayName + ' · ' + principal.type; $('normal-fields').hidden = demo || remote; $('work-item-field').hidden = !remote; $('idempotency-field').hidden = remote; $('title').disabled = demo || remote; $('requirement').disabled = demo || remote; $('repository').disabled = demo || remote; $('base-ref').disabled = demo || remote; $('work-item').disabled = !remote; $('work-item').required = remote; $('work-item-label').textContent = github ? 'GitHub Issue number' : 'GitLab Issue IID'; $('work-item-help').textContent = '仓库、base ref 与 ' + (github?'GitHub repository':'GitLab project') + ' 均来自服务端配置。'; $('demo-info').hidden = !demo; $('scm-badge').textContent = remote ? (github ? 'GitHub SCM · 单一仓库' : 'GitLab SCM · 单一项目') : 'Mock SCM · localhost'; $('scm-footer').textContent = remote ? (github ? 'GitHub PR + commit status · 不自动合并或部署' : 'GitLab MR + commit status · 不自动合并或部署') : '本地演示 · Mock Check 不构成真实分支保护 · 不自动部署'; newRequest(); await list();
     const restored = location.hash.slice(1);
     if (/^change_[A-Za-z0-9_-]+$/.test(restored)) await load(restored);
     notice((cap.localTrustedMode?'本地单操作者兼容模式；该 API Key 不是共享部署身份方案。':'已按项目成员关系登录。') + (demo?' Draft / ReAct 为确定性替身，无真实模型调用。':' 创建或执行任务可能调用已配置模型。')); }); });
@@ -290,7 +290,7 @@
   $('refresh').addEventListener('click',() => guarded(async () => { await list(); if (selected) await load(selected); notice('已刷新，请重新确认审批内容。'); }));
   $('new-request').addEventListener('click',() => { if (!busy) { newRequest(); notice('已准备新请求；离线 fixture 仍按固定键幂等。'); } });
   $('create').addEventListener('submit',event => { event.preventDefault(); guarded(async () => {
-    if (!creation) creation = demo?{fixture:'offline-refund.json'}:(scm === 'GITLAB'?{workItem:$('work-item').value}:{idempotencyKey:$('idempotency').value,title:$('title').value,requirement:$('requirement').value,repository:{path:$('repository').value,baseRef:$('base-ref').value}});
+    if (!creation) creation = demo?{fixture:'offline-refund.json'}:((scm === 'GITLAB' || scm === 'GITHUB')?{workItem:$('work-item').value}:{idempotencyKey:$('idempotency').value,title:$('title').value,requirement:$('requirement').value,repository:{path:$('repository').value,baseRef:$('base-ref').value}});
     setCreating(true);
     creationNotice('正在提交并保存任务，请稍候。Spec 草稿将在后台生成。');
     let saved = false;

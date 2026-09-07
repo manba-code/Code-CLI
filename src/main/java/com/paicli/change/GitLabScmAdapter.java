@@ -1,17 +1,12 @@
 package com.paicli.change;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.sql.SQLException;
-import java.util.ArrayList;
-import java.util.Base64;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.TimeUnit;
 
 /** Single-project GitLab SCM adapter with remote reconciliation before every non-idempotent write. */
 public final class GitLabScmAdapter implements ScmAdapter {
@@ -194,43 +189,7 @@ public final class GitLabScmAdapter implements ScmAdapter {
     interface BranchPusher { void push(GitLabSettings settings, String branch, String headSha) throws Exception; }
 
     private static void pushBranch(GitLabSettings settings, String branch, String headSha) throws Exception {
-        Path repository = settings.repository();
-        String localHead = git(repository, null, "rev-parse", "--verify", "refs/heads/" + branch + "^{commit}");
-        if (!headSha.equals(localHead.trim())) throw new ChangeConflictException("本地任务分支 headSha 已变化");
-        String remoteUrl = git(repository, null, "remote", "get-url", settings.remote()).trim();
-        ProcessBuilder builder = new ProcessBuilder("git", "-C", repository.toString(), "push", "--porcelain",
-                settings.remote(), "refs/heads/" + branch + ":refs/heads/" + branch);
-        if (remoteUrl.startsWith("http://") || remoteUrl.startsWith("https://")) {
-            if (java.net.URI.create(remoteUrl).getUserInfo() != null) {
-                throw new ChangeValidationException("GitLab remote URL 不得内嵌凭据");
-            }
-            String basic = Base64.getEncoder().encodeToString(("oauth2:" + settings.token()).getBytes(StandardCharsets.UTF_8));
-            builder.environment().put("GIT_CONFIG_COUNT", "1");
-            builder.environment().put("GIT_CONFIG_KEY_0", "http.extraHeader");
-            builder.environment().put("GIT_CONFIG_VALUE_0", "Authorization: Basic " + basic);
-        }
-        run(builder, "推送 GitLab 任务分支失败");
-    }
-
-    private static String git(Path repository, String error, String... args) throws Exception {
-        List<String> command = new ArrayList<>(List.of("git", "-C", repository.toString()));
-        command.addAll(List.of(args));
-        return run(new ProcessBuilder(command), error == null ? "读取 Git 配置失败" : error);
-    }
-
-    private static String run(ProcessBuilder builder, String error) throws Exception {
-        Process process = builder.redirectErrorStream(true).start();
-        try {
-            if (!process.waitFor(30, TimeUnit.SECONDS)) {
-                process.descendants().forEach(ProcessHandle::destroyForcibly); process.destroyForcibly();
-                throw new IOException(error + "：命令超时");
-            }
-            byte[] output = process.getInputStream().readAllBytes();
-            if (process.exitValue() != 0) throw new IOException(error + " (exit=" + process.exitValue() + ")");
-            return new String(output, StandardCharsets.UTF_8);
-        } catch (InterruptedException e) {
-            process.descendants().forEach(ProcessHandle::destroyForcibly); process.destroyForcibly();
-            Thread.currentThread().interrupt(); throw new IOException(error + "：命令被中断", e);
-        }
+        GitBranchPusher.push(settings.repository(), settings.remote(), branch, headSha,
+                "oauth2", settings.token(), "GitLab");
     }
 }

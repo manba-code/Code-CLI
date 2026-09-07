@@ -40,7 +40,7 @@ public final class ChangeOperations {
     }
 
     public HealthSnapshot liveness() {
-        return new HealthSnapshot(closed ? "DOWN" : "UP", Instant.now(), uptimeSeconds(),
+        return new HealthSnapshot(closed ? "DOWN" : "UP", Instant.now(), uptimeSeconds(), scm.type(),
                 Map.of("process", new ComponentHealth(closed ? "DOWN" : "UP", closed ? "closed" : "")),
                 WorkerQueueMetrics.empty(), ChangeTaskMetrics.empty());
     }
@@ -68,7 +68,7 @@ public final class ChangeOperations {
         }
         boolean up = !closed && components.values().stream().allMatch(value -> value.status().equals("UP"));
         if (!up) readinessFailures.incrementAndGet();
-        return new HealthSnapshot(up ? "UP" : "DOWN", Instant.now(), uptimeSeconds(),
+        return new HealthSnapshot(up ? "UP" : "DOWN", Instant.now(), uptimeSeconds(), scm.type(),
                 Map.copyOf(components), queue, tasks);
     }
 
@@ -131,7 +131,7 @@ public final class ChangeOperations {
     }
 
     public record ComponentHealth(String status, String code) { }
-    public record HealthSnapshot(String status, Instant checkedAt, long uptimeSeconds,
+    public record HealthSnapshot(String status, Instant checkedAt, long uptimeSeconds, String scmProvider,
                                  Map<String, ComponentHealth> components, WorkerQueueMetrics queue,
                                  ChangeTaskMetrics tasks) { }
 }

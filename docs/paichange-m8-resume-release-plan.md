@@ -1,6 +1,6 @@
 # PaiChange M8：GitHub / GitLab 与简历发布收口计划
 
-> 状态：待实施  
+> 状态：本地实现完成，真实 SCM 与托管 Release 待验收
 > 目标：完成简历和面试演示所必需的最后一段产品闭环  
 > 当前基线：PaiCLI 主 Agent 能力与 PaiChange M1–M7b 本地闭环已经完成；GitLab Adapter 已通过假服务测试但尚未连接真实实例，GitHub Adapter 与公开 CI 尚未实现  
 > 原则：复用现有 Workflow、RBAC、OIDC、Evidence、存储和 Worker seam，不以“发布收口”为名重写业务工作流
@@ -212,14 +212,14 @@ mvn package -DskipTests
 ## 9. 完成清单
 
 - [ ] 当前 M3–M7b 改动已审查、分组提交，工作区干净。
-- [ ] GitHub Issue/branch/PR/status Adapter 完成。
-- [ ] `mock|gitlab|github` 单选装配和生产启动校验完成。
-- [ ] GitHub 假服务故障与幂等闭环通过。
+- [x] GitHub Issue/branch/PR/status Adapter 完成。
+- [x] `mock|gitlab|github` 单选装配和生产启动校验完成。
+- [x] GitHub 假服务故障与幂等闭环通过。
 - [ ] 真实 GitHub 测试仓库闭环通过并保存脱敏证据。
 - [ ] 真实 GitLab 测试仓库闭环通过并保存脱敏证据。
-- [ ] GitHub Actions 普通 CI、容器手动 CI、Tag Release 可用。
-- [ ] README 首屏、架构图、五分钟 demo、真实链接和限制说明完成。
-- [ ] quick、Web、container、package 全部通过，未运行付费模型评测。
+- [x] GitHub Actions 普通 CI、容器手动 CI、Tag Release 文件已实现；托管运行仍待观察。
+- [ ] README 首屏、架构图、五分钟 demo、真实链接和限制说明完成（首屏、离线 demo 和限制已更新；真实链接待验收）。
+- [x] quick、Web、container、package 全部通过，未运行付费模型评测。
 - [ ] Release Tag 和可下载 JAR/SHA-256 已生成。
 
 以上全部完成后，停止新增简历版本功能。后续能力只进入独立路线图，不阻塞项目投递和面试。

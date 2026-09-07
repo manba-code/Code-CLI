@@ -34,6 +34,7 @@ class ChangeOperationsTest {
             ChangeOperations operations = new ChangeOperations(persistence, jobs, evidence, scm,
                     new ProductionOperationsSettings(300, 600));
             assertEquals("UP", operations.readiness(identity).status());
+            assertEquals("MOCK", operations.readiness(identity).scmProvider());
             String metrics = operations.prometheus(identity);
             assertTrue(metrics.contains("paichange_worker_jobs_enqueued 0"));
             assertTrue(metrics.contains("paichange_declared_rpo_seconds 300"));
@@ -67,6 +68,7 @@ class ChangeOperationsTest {
                     HttpResponse.BodyHandlers.ofString());
             assertEquals(200, live.statusCode());
             assertEquals(200, ready.statusCode());
+            assertEquals("MOCK", ChangeJson.MAPPER.readTree(ready.body()).path("scmProvider").asText());
             assertEquals(200, metrics.statusCode());
             assertTrue(metrics.body().contains("paichange_readiness 1"));
             assertFalse(metrics.body().toLowerCase().contains("secret"));

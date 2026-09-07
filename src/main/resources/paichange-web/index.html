@@ -12,7 +12,7 @@
 <aside><div class="section-head"><h2>任务</h2><button id="refresh" class="secondary" type="button">刷新</button></div><button id="poll-toggle" class="secondary" type="button">暂停自动更新</button><div id="list"><p class="muted">连接后读取本地任务。</p></div>
 <details id="create-panel"><summary>创建 ChangeTask</summary><form id="create">
 <p id="demo-info" hidden>离线退款 fixture：首次边界验证失败 → 一次修复通过。同一 fixture 重复创建返回同一任务；重演请使用新数据目录。</p>
-<div id="work-item-field" hidden><label>GitLab Issue IID<input id="work-item" inputmode="numeric" pattern="[1-9][0-9]*" placeholder="例如 42"></label><p class="muted">仓库、base ref 与 GitLab project 均来自服务端配置。</p></div>
+<div id="work-item-field" hidden><label><span id="work-item-label">Issue number</span><input id="work-item" inputmode="numeric" pattern="[1-9][0-9]*" placeholder="例如 42"></label><p id="work-item-help" class="muted">仓库、base ref 与项目身份均来自服务端配置。</p></div>
 <div id="normal-fields"><label>标题<input id="title" value="修复退款超时规则" required></label><label>需求<textarea id="requirement" required>退款超过 24 小时进入人工审核，不影响自动取消流程。</textarea></label><label>本地仓库<input id="repository" placeholder="/absolute/path/to/repository"></label><label>Base ref<input id="base-ref" value="main"></label><p class="muted">发起人由当前服务端认证身份确定。</p></div>
 <label id="idempotency-field">幂等键<input id="idempotency" readonly></label><button id="create-button">创建任务</button><button id="new-request" type="button" class="secondary">新请求</button></form><p id="create-status" class="creation-status" role="status" aria-live="polite" hidden></p></details>
 </aside>

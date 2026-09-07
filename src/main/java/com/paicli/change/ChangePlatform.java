@@ -83,13 +83,12 @@ public final class ChangePlatform implements AutoCloseable {
                     ? ProductionStorageSettings.fromProcess() : null;
             ProductionOperationsSettings productionOperations = null;
             OidcSettings productionIdentities = null;
-            GitLabSettings productionGitlab = null;
+            ConfiguredScm.Configuration scmConfiguration = ConfiguredScm.load(offlineDemo, production != null);
             if (production != null) {
                 productionOperations = ProductionOperationsSettings.fromProcess();
                 productionIdentities = OidcSettings.fromProcess();
-                if (!GitLabSettings.enabled()) throw new IllegalStateException("M7b 生产模式要求 PAICHANGE_SCM=gitlab");
-                productionGitlab = GitLabSettings.fromProcess();
-                ProductionStartupValidator.validate(production, productionOperations, productionIdentities, productionGitlab);
+                ProductionStartupValidator.validate(production, productionOperations, productionIdentities,
+                        scmConfiguration.remote());
             }
             if (production == null) {
                 store = new SqliteChangeStore(database);
@@ -120,17 +119,10 @@ public final class ChangePlatform implements AutoCloseable {
             storageBackend = store.backend();
             isolation = DockerWorkerIsolation.fromConfig(root, config, secretProvider);
             workflow = new DefaultChangeWorkflow(store, store, specs, config, Clock.systemUTC());
-            WorkItemAdapter workItems;
-            if (!offlineDemo && GitLabSettings.enabled()) {
-                GitLabSettings gitlab = productionGitlab == null ? GitLabSettings.fromProcess() : productionGitlab;
-                scm = production == null ? new GitLabScmAdapter(database, gitlab)
-                        : new GitLabScmAdapter(production.jdbcUrl(), production.user(), production.password(), gitlab);
-                workItems = new GitLabWorkItemAdapter(gitlab, workflow);
-            } else {
-                if (production != null) throw new IllegalStateException("M6b 生产存储当前要求 PAICHANGE_SCM=gitlab");
-                scm = new MockScmAdapter(database);
-                workItems = new MockWorkItemAdapter(fixtures, workflow);
-            }
+            ConfiguredScm.Adapters scmAdapters = ConfiguredScm.assemble(scmConfiguration, database, fixtures,
+                    workflow, production);
+            scm = scmAdapters.scm();
+            WorkItemAdapter workItems = scmAdapters.workItems();
             toolApprovals = new ToolApprovalCoordinator(store, store, effectiveAuthorizer);
             drafts = new com.paicli.runtime.task.DraftJobRunner(workflow, store);
             DefaultChangeWorker worker = new DefaultChangeWorker(workflow, workspaces, runtimes,
